@@ -3,15 +3,22 @@
 Готовые сниппеты. Копируй и наполняй. Все классы уже стилизованы в `style.css` — новые CSS писать
 не нужно.
 
-## Секция
+## Параграф
 ```html
 <section class="section" id="kebab-id">
-  <h2>Заголовок секции</h2>
-  <h3>Подзаголовок</h3>
+  <h2>Заголовок параграфа</h2>
   <p>Текст. Внутри — <code>inline-код</code>, <strong>акцент</strong>, <em>пояснение</em>.</p>
 </section>
 ```
-Оглавление (`#toc`) строится автоматически из `.section > h2` и `> h3`. Давай секциям осмысленные `id`.
+Оглавление (`#toc`) строится автоматически из `.section > h2` — по одной записи на параграф. Давай
+параграфам осмысленные `id`.
+
+**Подпараграфов нет** (`группа → глава → параграф`). Для мелкого подпункта внутри параграфа — текстовый
+ран-ин `<p class="subhead">…</p>`: это не заголовок и не уровень навигации (в оглавление не попадает).
+```html
+<p class="subhead">Короткий ярлык подпункта</p>
+<p>Пояснение…</p>
+```
 
 ## Callout (акцентные блоки)
 Варианты класса: `info` (ℹ️), `tip` (💡), `warn` (⚠️), `danger` (🛑).
@@ -92,6 +99,40 @@ flowchart LR
 <div class="cap">Подпись к схеме</div>
 </div>
 ```
+
+## Задачи (карточки с коллапсируемым решением)
+
+Секция с практическими задачами. Условие видно всегда, решение скрыто под «▶ Показать решение».
+```html
+<section class="section" id="tasks">
+  <h2>Задачи</h2>
+
+  <div class="task-card">
+    <p class="task-problem"><strong>Задача 1.</strong> Описание задачи — конкретное, как условие на LeetCode.</p>
+    <details class="task-solution">
+      <summary>Показать решение</summary>
+      <div class="task-ans">
+        <pre><code class="language-kotlin">fun solution(): ReturnType {
+    // решение
+}</code></pre>
+        <p>Объяснение: суть решения, сложность, подводные камни.</p>
+      </div>
+    </details>
+  </div>
+
+  <div class="task-card">
+    <p class="task-problem"><strong>Задача 2.</strong> …</p>
+    <details class="task-solution">
+      <summary>Показать решение</summary>
+      <div class="task-ans">
+        <pre><code class="language-kotlin">// …</code></pre>
+        <p>Объяснение: …</p>
+      </div>
+    </details>
+  </div>
+</section>
+```
+Размещай перед `<div class="sources">`. Экранируй `<`, `>`, `&` в `<code>` как `&lt; &gt; &amp;`.
 
 ## Источники (в конце страницы)
 Приоритет: developer.android.com, kotlinlang.org. 4–8 реальных ссылок.

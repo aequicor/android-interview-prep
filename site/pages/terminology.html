@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    (() => {
+      const key = "aip-theme";
+      let theme = null;
+      try { theme = localStorage.getItem(key); } catch(e) {}
+      if (theme !== "dark" && theme !== "light") {
+        theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <title>Терминология инженера · Android-собес</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+</head>
+<body data-page="terminology">
+  <div class="layout">
+    <aside id="sidebar"></aside>
+    <div id="content">
+      <article class="page">
+        <div class="breadcrumb"></div>
+        <header class="page-head">
+          <span class="eyebrow">Справочник · Терминология</span>
+          <h1>Терминология инженера</h1>
+          <p class="lead">Точные технические определения терминов, которые встречаются на собеседовании. Сквозной справочник ко всем темам сайта.</p>
+          <div class="meta">
+            <span class="tag lvl-mid">Базовый словарь</span>
+            <span class="tag lvl-sen">50+ терминов</span>
+          </div>
+        </header>
+
+        <section class="section" id="how">
+          <h2>Как пользоваться</h2>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Знать определение недостаточно — подкрепляй примером из кода.</strong> Определения здесь намеренно краткие и точные; развёрнутые объяснения и примеры — на тематических страницах.</div>
+          </div>
+          <p>Термины сгруппированы по областям: <a href="#design">проектирование и ООП</a>, <a href="#kotlin">язык Kotlin и JVM</a>, <a href="#concurrency">конкурентность</a>, <a href="#perf">производительность и данные</a>, <a href="#netsec">сеть и безопасность</a>.</p>
+        </section>
+
+        <section class="section" id="design">
+          <h2>Проектирование и ООП</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Термин</th><th>Определение</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Абстракция</strong></td><td>Описание объекта через минимальное множество наблюдаемых свойств, достаточных для работы с ним, при сокрытии всех прочих деталей реализации.</td></tr>
+                <tr><td><strong>Реализация</strong></td><td>Конкретное воплощение абстракции, удовлетворяющее всем обязательствам её контракта.</td></tr>
+                <tr><td><strong>Контракт</strong></td><td>Тройка ⟨предусловие, постусловие, инварианты⟩, которой обязана удовлетворять каждая реализация типа или метода.</td></tr>
+                <tr><td><strong>Инвариант</strong></td><td>Логический предикат, истинный для любого наблюдаемого состояния объекта: до вызова каждого публичного метода и после его завершения.</td></tr>
+                <tr><td><strong>Эвристика</strong></td><td>Правило принятия решений, дающее приемлемый результат в типичных случаях без гарантии оптимальности.</td></tr>
+                <tr><td><strong>Связанность (coupling)</strong></td><td>Степень, в которой корректность модуля A зависит от внутреннего устройства модуля B.</td></tr>
+                <tr><td><strong>Сплочённость (cohesion)</strong></td><td>Степень, в которой все элементы модуля служат единственной чётко определённой ответственности.</td></tr>
+                <tr><td><strong>is-a</strong></td><td>Отношение подтипирования T₁ &lt;: T₂: любой экземпляр T₁ может использоваться там, где ожидается T₂ (принцип подстановки Лисков).</td></tr>
+                <tr><td><strong>has-a</strong></td><td>Отношение агрегации: объект A содержит ссылку на объект B как часть своего состояния.</td></tr>
+                <tr><td><strong>can-do</strong></td><td>Отношение удовлетворения интерфейса: тип A предоставляет все операции, объявленные интерфейсом I, независимо от иерархии наследования.</td></tr>
+                <tr><td><strong>Полиморфизм</strong></td><td>Свойство операции работать с операндами разных типов. Подтиповой (динамический) — диспетчеризация по фактическому типу в рантайме; параметрический (статический) — единый код для всех типов, удовлетворяющих ограничению.</td></tr>
+                <tr><td><strong>Инкапсуляция</strong></td><td>Связывание состояния объекта с операциями над ним при ограничении прямого доступа к состоянию извне с целью сохранения инвариантов.</td></tr>
+                <tr><td><strong>Dependency Injection (DI)</strong></td><td>Паттерн, при котором зависимости объекта передаются ему вызывающим кодом, а не создаются объектом самостоятельно.</td></tr>
+                <tr><td><strong>Inversion of Control (IoC)</strong></td><td>Принцип, при котором управление потоком выполнения и создание объектов передаётся инфраструктурному компоненту, а не прикладному коду.</td></tr>
+                <tr><td><strong>Boilerplate</strong></td><td>Код, структурно обязательный для работы системы, но не содержащий специфичной для задачи логики.</td></tr>
+                <tr><td><strong>Побочный эффект (side effect)</strong></td><td>Любое изменение наблюдаемого состояния системы, произошедшее при вычислении выражения помимо формирования возвращаемого значения.</td></tr>
+                <tr><td><strong>Чистая функция (pure function)</strong></td><td>Функция, удовлетворяющая двум условиям: (1) детерминирована — равные аргументы всегда дают равный результат; (2) не производит побочных эффектов.</td></tr>
+                <tr><td><strong>Идемпотентность</strong></td><td>Свойство операции f: f(f(x)) = f(x) для любого допустимого x; повторное применение не изменяет результат.</td></tr>
+                <tr><td><strong>GoF</strong></td><td>Gang of Four — четыре автора «Design Patterns: Elements of Reusable Object-Oriented Software» (1994), систематизировавших 23 структурных, порождающих и поведенческих паттерна.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section" id="kotlin">
+          <h2>Язык Kotlin и JVM</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Термин</th><th>Определение</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Стирание типов (type erasure)</strong></td><td>Механизм компиляции JVM, при котором параметры обобщённых типов удаляются из байткода; в рантайме все параметризованные типы представлены стёртым базовым типом.</td></tr>
+                <tr><td><strong>reified</strong></td><td>Модификатор параметра типа <code>inline</code>-функции, предписывающий компилятору подставить фактический тип в каждое место вызова; делает параметр доступным как <code>T::class</code> и допускает <code>is T</code>.</td></tr>
+                <tr><td><strong>Платформенный тип (<code>T!</code>)</strong></td><td>Тип значения из кода без аннотаций nullability (типично — Java); компилятор Kotlin не определяет его nullable-статус и перекладывает ответственность на разработчика.</td></tr>
+                <tr><td><strong>Неизменяемость (immutability)</strong></td><td>Свойство объекта: ни одно его наблюдаемое поле не изменяется после завершения конструктора.</td></tr>
+                <tr><td><strong>== vs ===</strong></td><td><code>==</code> — структурное равенство, делегирует к <code>equals()</code>; <code>===</code> — ссылочное равенство, истинно тогда и только тогда, когда оба операнда указывают на один объект в памяти.</td></tr>
+                <tr><td><strong>Контракт equals/hashCode</strong></td><td>Обязательное свойство: <code>a.equals(b) → a.hashCode() == b.hashCode()</code>. Обратное необязательно. Нарушение делает объект некорректным ключом в хеш-коллекциях.</td></tr>
+                <tr><td><strong>Боксинг (boxing)</strong></td><td>Преобразование значения примитивного типа JVM в экземпляр соответствующего ссылочного типа-обёртки, сопровождаемое аллокацией в heap.</td></tr>
+                <tr><td><strong>Ленивая инициализация</strong></td><td>Стратегия вычисления значения: отложить его до первого обращения, после чего кэшировать результат для всех последующих обращений.</td></tr>
+                <tr><td><strong>Higher-order function</strong></td><td>Функция, принимающая другую функцию в качестве аргумента или возвращающая функцию как значение.</td></tr>
+                <tr><td><strong>suspend / Continuation</strong></td><td><code>suspend</code>-функция компилируется в конечный автомат с явной передачей <code>Continuation&lt;T&gt;</code> — объекта, инкапсулирующего оставшуюся часть вычисления; каждая точка приостановки соответствует состоянию автомата.</td></tr>
+                <tr><td><strong>Делегирование (<code>by</code>)</strong></td><td>Механизм компилятора: реализация методов интерфейса или тела свойства генерируется как прямые вызовы к объекту-делегату.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section" id="concurrency">
+          <h2>Конкурентность и многопоточность</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Термин</th><th>Определение</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Гонка (race condition)</strong></td><td>Ситуация, при которой корректность программы зависит от относительного порядка операций нескольких потоков, а этот порядок не зафиксирован синхронизацией.</td></tr>
+                <tr><td><strong>Атомарность</strong></td><td>Свойство операции: с точки зрения любого другого потока она выполняется мгновенно и неделимо — наблюдается либо полностью до, либо полностью после.</td></tr>
+                <tr><td><strong>CAS (Compare-And-Swap)</strong></td><td>Атомарная инструкция: если текущее значение ячейки равно ожидаемому, заменить его новым; в противном случае — ничего не делать. Возвращает признак успеха.</td></tr>
+                <tr><td><strong>ABA-проблема</strong></td><td>Дефект CAS: между чтением ожидаемого значения A и самим CAS другой поток изменил ячейку A→B→A; операция ошибочно считает, что изменений не было.</td></tr>
+                <tr><td><strong>Thread-safety</strong></td><td>Свойство объекта или операции: при произвольном конкурентном доступе из нескольких потоков без внешней синхронизации инварианты объекта сохраняются, а результаты соответствуют некоторому последовательному порядку операций.</td></tr>
+                <tr><td><strong>volatile</strong></td><td>Гарантия модели памяти: запись в переменную устанавливает отношение happens-before со всеми последующими чтениями той же переменной. Не обеспечивает атомарность составных операций.</td></tr>
+                <tr><td><strong>happens-before</strong></td><td>Частичный порядок на множестве операций в модели памяти: A happens-before B означает, что все записи, сделанные до A включительно, видимы после B.</td></tr>
+                <tr><td><strong>Deadlock</strong></td><td>Состояние системы потоков, при котором каждый поток заблокирован в ожидании ресурса, удерживаемого другим потоком из того же множества; прогресс невозможен без внешнего вмешательства.</td></tr>
+                <tr><td><strong>Structured concurrency</strong></td><td>Модель, в которой время жизни дочерних асинхронных задач строго ограничено временем жизни порождающего scope; отмена и ошибки распространяются по дереву задач детерминированно.</td></tr>
+                <tr><td><strong>Backpressure</strong></td><td>Состояние потокового конвейера, при котором скорость производства элементов превышает скорость их потребления; требует явной стратегии: буферизации, сброса или замедления источника.</td></tr>
+                <tr><td><strong>Мемоизация</strong></td><td>Оптимизация чистой функции: сохранять возвращаемое значение, индексированное аргументами, и возвращать кэшированный результат при повторном вызове с теми же аргументами.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section" id="perf">
+          <h2>Производительность и данные</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Термин</th><th>Определение</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Latency vs Throughput</strong></td><td>Latency — время от инициации операции до получения её результата. Throughput — количество операций, завершаемых системой в единицу времени. Метрики независимы и могут противоречить друг другу.</td></tr>
+                <tr><td><strong>Cold / warm / hot start</strong></td><td>Cold: процесс приложения отсутствует, требуется полная инициализация. Warm: процесс существует, но целевая Activity уничтожена. Hot: Activity присутствует в back stack и восстанавливается без пересоздания.</td></tr>
+                <tr><td><strong>Jank</strong></td><td>Пропуск кадра вывода, возникающий когда время подготовки кадра превышает бюджет: ~16 мс при 60 Гц или ~8 мс при 120 Гц.</td></tr>
+                <tr><td><strong>Утечка памяти (memory leak)</strong></td><td>Объект, более не используемый прикладным кодом, остаётся достижимым из GC root через непреднамеренную ссылку; сборщик мусора не освобождает занятую им память.</td></tr>
+                <tr><td><strong>GC (сборщик мусора)</strong></td><td>Подсистема рантайма, автоматически идентифицирующая и освобождающая heap-память объектов, недостижимых из GC roots.</td></tr>
+                <tr><td><strong>Single source of truth (SSOT)</strong></td><td>Архитектурный принцип: каждый элемент состояния имеет ровно один авторитетный источник; все остальные компоненты получают его значение только оттуда и не хранят собственных копий.</td></tr>
+                <tr><td><strong>Offline-first</strong></td><td>Архитектурный подход: мутации применяются к локальному хранилищу немедленно и синхронно; репликация на сервер происходит асинхронно при наличии сети.</td></tr>
+                <tr><td><strong>Пагинация</strong></td><td>Разбиение упорядоченного набора результатов на конечные по размеру страницы, загружаемые по мере необходимости, а не целиком.</td></tr>
+                <tr><td><strong>Debounce / Throttle</strong></td><td>Debounce: эмитировать значение только после паузы не менее T мс после последнего события. Throttle: эмитировать не более одного значения за интервал T мс, игнорируя остальные.</td></tr>
+                <tr><td><strong>Кэш hit/miss</strong></td><td>Hit: запрошенный элемент найден в кэше, обращение к источнику не требуется. Miss: элемент в кэше отсутствует; необходимо обращение к источнику с последующим сохранением результата.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section" id="netsec">
+          <h2>Сеть и безопасность</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Термин</th><th>Определение</th></tr></thead>
+              <tbody>
+                <tr><td><strong>TLS handshake</strong></td><td>Протокол установления защищённого соединения: стороны согласовывают версию и cipher suite, выполняют обмен ключами (ECDHE) и аутентификацию сервера по X.509-сертификату, после чего переходят к симметричному шифрованию трафика.</td></tr>
+                <tr><td><strong>Симметричное vs асимметричное шифрование</strong></td><td>Симметричное: один и тот же ключ используется для шифрования и дешифрования. Асимметричное: пара ключей — открытый и закрытый; знание открытого ключа не позволяет восстановить закрытый.</td></tr>
+                <tr><td><strong>Certificate / public-key pinning</strong></td><td>Ограничение доверия на стороне клиента: принимать только заранее зафиксированный сертификат или публичный ключ, отвергая все прочие, включая выданные доверенными CA.</td></tr>
+                <tr><td><strong>mTLS (mutual TLS)</strong></td><td>Расширение TLS, при котором сертификат предъявляет не только сервер, но и клиент; обе стороны взаимно верифицируют подлинность друг друга.</td></tr>
+                <tr><td><strong>Хеш</strong></td><td>Детерминированная функция H: {0,1}* → {0,1}ⁿ фиксированной выходной длины, обладающая свойствами: устойчивость к прообразу, устойчивость ко второму прообразу, устойчивость к коллизиям.</td></tr>
+                <tr><td><strong>HMAC</strong></td><td>Конструкция кода аутентификации сообщений на основе хеш-функции: HMAC(K, m) = H((K ⊕ opad) ‖ H((K ⊕ ipad) ‖ m)). Подтверждает целостность m и то, что отправитель владеет ключом K.</td></tr>
+                <tr><td><strong>Token (JWT)</strong></td><td>Самодостаточный токен в формате JSON, подписанный (JWS) или зашифрованный (JWE); подпись верифицируется получателем локально без обращения к эмитенту.</td></tr>
+                <tr><td><strong>Android Keystore</strong></td><td>Системный сервис, реализующий хранение и использование криптографических ключей в изолированном аппаратном окружении (TEE или StrongBox); ключевой материал не экспортируется в адресное пространство приложения.</td></tr>
+                <tr><td><strong>Обфускация</strong></td><td>Преобразование программы, сохраняющее её семантику, но снижающее понятность исходного или промежуточного представления для обратного проектирования.</td></tr>
+                <tr><td><strong>MITM (man-in-the-middle)</strong></td><td>Атака, при которой злоумышленник встраивается в канал связи между двумя сторонами, перехватывает сообщения и опционально модифицирует их, оставаясь незамеченным ни одной из сторон.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section" id="tasks">
+          <h2>Задачи</h2>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 1.</strong> Приложение падает с <code>IllegalStateException: Can not perform this action after onSaveInstanceState</code> при показе диалога из колбэка сети. Объясни причину и напиши обёртку над <code>commitAllowingStateLoss</code>, которая безопасно показывает <code>DialogFragment</code> только тогда, когда <code>Activity</code> гарантированно жива.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">fun FragmentActivity.showDialogSafely(
+    dialog: DialogFragment,
+    tag: String
+) {
+    if (isFinishing || isDestroyed) return
+    // lifecycle.currentState < STARTED означает, что onSaveInstanceState уже вызван
+    if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return
+    dialog.show(supportFragmentManager, tag)
+}
+
+// Пример вызова из колбэка Retrofit (уже на главном потоке):
+lifecycleScope.launch {
+    val result = api.fetchData()
+    showDialogSafely(ResultDialog.newInstance(result), "result")
+}</code></pre>
+                <p>Объяснение: Android сохраняет back stack во время <code>onSaveInstanceState</code>; коммит транзакции после этой точки приводит к краши, потому что сохранённое состояние уже зафиксировано. Проверка <code>Lifecycle.State.STARTED</code> гарантирует, что мы находимся в промежутке между <code>onStart</code> и <code>onSaveInstanceState</code>. <code>commitAllowingStateLoss</code> только глушит исключение, но не фиксирует транзакцию надёжно — диалог может просто потеряться после рестора.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 2.</strong> Воспроизведи и исправь утечку памяти: <code>Activity</code> содержит <code>Handler(Looper.getMainLooper())</code> с отложенным сообщением на 30 секунд. Покажи, почему <code>Handler</code> удерживает <code>Activity</code>, и напиши корректную реализацию с <code>WeakReference</code>.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">// ПЛОХО: анонимный Handler захватывает this (Activity) в замыкании
+class LeakyActivity : AppCompatActivity() {
+    private val handler = Handler(Looper.getMainLooper())
+
+    override fun onStart() {
+        super.onStart()
+        handler.postDelayed({
+            // this — неявная ссылка на LeakyActivity
+            title = "Done"
+        }, 30_000)
+    }
+}
+
+// ХОРОШО: явный WeakReference + отмена в onStop
+class SafeActivity : AppCompatActivity() {
+
+    private val handler = Handler(Looper.getMainLooper())
+    private val ref = WeakReference(this)
+
+    private val updateTitle = Runnable {
+        ref.get()?.title = "Done"
+    }
+
+    override fun onStart() {
+        super.onStart()
+        handler.postDelayed(updateTitle, 30_000)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        handler.removeCallbacks(updateTitle) // гарантируем отмену
+    }
+}</code></pre>
+                <p>Объяснение: <code>Handler</code> кладёт <code>Runnable</code> в очередь главного <code>Looper</code>. Если лямбда захватывает <code>Activity</code> напрямую, GC не может собрать её до срабатывания таймера — это классическая утечка через GC root (MessageQueue). <code>WeakReference</code> разрывает сильную ссылку; <code>removeCallbacks</code> в <code>onStop</code> страхует от случаев, когда <code>Activity</code> уходит до срабатывания.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 3.</strong> Предскажи вывод программы и объясни, почему он именно такой. Затем исправь её так, чтобы вывод был <code>true</code>.</p>
+            <pre><code class="language-kotlin">data class User(val id: Int, val name: String)
+
+fun main() {
+    val a = User(1, "Alice")
+    val b = User(1, "Alice")
+    val map = HashMap&lt;User, String&gt;()
+    map[a] = "admin"
+
+    a.javaClass.getDeclaredField("id").let {
+        it.isAccessible = true
+        it.set(a, 99)  // мутируем поле id через рефлексию
+    }
+
+    println(map.containsKey(b))  // ???
+}</code></pre>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">// Вывод: false
+//
+// Причина: hashCode объекта a вычислен при вставке в HashMap (id=1).
+// После мутации id=99 его hashCode изменился — HashMap ищет a в другом бакете
+// и не находит. b имеет id=1 и правильный hashCode, но в этом бакете нет записи.
+//
+// Исправление: не мутировать ключи хеш-коллекций.
+// Если ключи должны меняться — удали старую запись перед мутацией и вставь заново.
+
+fun main() {
+    val a = User(1, "Alice")
+    val b = User(1, "Alice")
+    val map = HashMap&lt;User, String&gt;()
+    map[a] = "admin"
+
+    map.remove(a)                       // убираем до мутации
+    a.javaClass.getDeclaredField("id").let {
+        it.isAccessible = true
+        it.set(a, 99)
+    }
+    // теперь a.id=99, b.id=1 — разные объекты, ищем b напрямую
+    map[b] = "admin"
+
+    println(map.containsKey(b))         // true
+}</code></pre>
+                <p>Объяснение: контракт <code>HashMap</code> требует, чтобы <code>hashCode</code> ключа не изменялся, пока объект находится в коллекции. Data-классы Kotlin вычисляют <code>hashCode</code> из всех <code>val</code>-параметров; рефлексия обходит это ограничение и приводит к «потере» ключа в коллекции — классическое нарушение контракта <code>equals/hashCode</code>.</p>
+              </div>
+            </details>
+          </div>
+
+        </section>
+
+        <div class="sources">
+          <h2>Источники</h2>
+          <ol>
+            <li><a href="https://developer.android.com/topic/architecture" target="_blank" rel="noopener">Android Developers — Guide to app architecture</a> — SSOT, UDF, слои.</li>
+            <li><a href="https://kotlinlang.org/docs/home.html" target="_blank" rel="noopener">Kotlin Docs</a> — null-safety, дженерики, корутины, делегаты.</li>
+            <li><a href="https://kotlinlang.org/docs/shared-mutable-state-and-concurrency.html" target="_blank" rel="noopener">Kotlin — Shared mutable state and concurrency</a> — атомарность, CAS, гонки.</li>
+            <li><a href="https://refactoring.guru/design-patterns" target="_blank" rel="noopener">Refactoring.Guru — Design Patterns</a> — GoF-паттерны и принципы.</li>
+            <li><a href="https://developer.android.com/training/articles/security-tips" target="_blank" rel="noopener">Android Developers — Security tips</a> — Keystore, TLS, хранение секретов.</li>
+          </ol>
+        </div>
+      </article>
+    </div>
+    <aside id="toc"></aside>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="../assets/app.js?v=20260620-4"></script>
+</body>
+</html>

@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    (() => {
+      const key = "aip-theme";
+      let theme = null;
+      try { theme = localStorage.getItem(key); } catch(e) {}
+      if (theme !== "dark" && theme !== "light") {
+        theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <title>Алгоритмы и структуры данных · Android-собес</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+</head>
+<body data-page="algorithms">
+  <div class="layout">
+    <aside id="sidebar"></aside>
+    <div id="content">
+      <article class="page">
+        <div class="breadcrumb"></div>
+        <header class="page-head">
+          <span class="eyebrow">Алгоритмы и структуры данных</span>
+          <h1>Алгоритмы и структуры данных</h1>
+          <p class="lead">Big-O (асимптотическая оценка сложности), внутреннее устройство коллекций ArrayList (динамический массив), HashMap (хэш-таблица), TreeMap (отсортированная карта), потокобезопасные структуры и классические алгоритмы — бинарный поиск, two pointers (два указателя), DFS/BFS (поиск в глубину/поиск в ширину) и DP (dynamic programming, динамическое программирование). На собесе ждут не зубрёжку сложностей, а понимание trade-offs (компромиссов) и реализацию LRU-кэша (least recently used, вытеснение давно не использованных данных) «вживую».</p>
+          <div class="meta">
+            <span class="tag lvl-mid">Middle</span>
+            <span class="tag lvl-sen">Senior</span>
+            <span class="tag hot">Частый вопрос</span>
+          </div>
+        </header>
+
+        <section class="section" id="bigo">
+          <h2>Big-O: время, память, амортизация</h2>
+          <p>Big-O описывает <strong>асимптотику худшего случая</strong> — как растёт число операций при увеличении входа <code>n</code>, отбрасывая константы и младшие члены. <code>O(2n + 5)</code> — это <code>O(n)</code>. Кроме времени всегда оценивай <strong>память</strong> (auxiliary space): рекурсия с глубиной <code>n</code> — это <code>O(n)</code> на стеке, даже если «лишних» массивов нет.</p>
+          <p class="subhead">Амортизированная сложность</p>
+          <p>Амортизация — это <em>усреднённая</em> стоимость операции по длинной серии вызовов. Классика — <code>ArrayList.add()</code>: обычно <code>O(1)</code>, но изредка случается дорогое расширение массива <code>O(n)</code>. Если ёмкость удваивается, суммарная стоимость <code>n</code> вставок — <code>O(n)</code>, значит на одну вставку приходится <strong>амортизированные <code>O(1)</code></strong>. Важно не путать с «средним случаем»: амортизация — это гарантия по серии, а не вероятностное ожидание.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart LR
+  A["O(1)<br/>константа"] --> B["O(log n)<br/>лог"]
+  B --> C["O(n)<br/>линия"]
+  C --> D["O(n log n)<br/>сортировки"]
+  D --> E["O(n^2)<br/>вложенный цикл"]
+  E --> F["O(2^n)<br/>перебор"]
+  style A fill:#1b5e20,color:#fff
+  style B fill:#2e7d32,color:#fff
+  style C fill:#f9a825,color:#000
+  style E fill:#c62828,color:#fff
+  style F fill:#7f0000,color:#fff
+          </div>
+          <div class="cap">Классы роста от «дёшево» (зелёное) к «катастрофе» (красное)</div>
+          </div>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Ловушка на собесе.</strong> <code>list.contains(x)</code> внутри цикла по той же коллекции — это скрытый <code>O(n²)</code>. На 10 000 элементов это 100 млн операций на главном потоке → ANR. Решение: заменить <code>List</code> на <code>HashSet</code> для проверки вхождения и получить <code>O(n)</code>.</div>
+          </div>
+        </section>
+
+        <section class="section" id="complexity-table">
+          <h2>Таблица сложностей основных структур</h2>
+          <p>Это таблица, которую просят «нарисовать по памяти» чаще всего. Учи её осознанно: <code>O(1)</code> у <code>HashMap</code> — <em>амортизированный средний</em>, в худшем случае (все коллизии в один бакет) до Java 8 был <code>O(n)</code>, с Java 8 при treeify — <code>O(log n)</code>.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Структура</th><th>Доступ по индексу</th><th>Поиск значения</th><th>Вставка</th><th>Удаление</th><th>Память</th></tr></thead>
+              <tbody>
+                <tr><td><code>ArrayList</code></td><td><strong>O(1)</strong></td><td>O(n)</td><td>O(1)* / O(n) в середину</td><td>O(n)</td><td>O(n)</td></tr>
+                <tr><td><code>LinkedList</code></td><td>O(n)</td><td>O(n)</td><td>O(1) по итератору</td><td>O(1) по итератору</td><td>O(n) + ссылки</td></tr>
+                <tr><td><code>HashMap</code></td><td>—</td><td>O(1) сред. / O(log n) худш.</td><td>O(1) сред.</td><td>O(1) сред.</td><td>O(n)</td></tr>
+                <tr><td><code>LinkedHashMap</code></td><td>—</td><td>O(1) сред.</td><td>O(1) сред.</td><td>O(1) сред.</td><td>O(n) + ссылки</td></tr>
+                <tr><td><code>TreeMap</code></td><td>—</td><td><strong>O(log n)</strong></td><td>O(log n)</td><td>O(log n)</td><td>O(n)</td></tr>
+                <tr><td><code>HashSet</code></td><td>—</td><td>O(1) сред.</td><td>O(1) сред.</td><td>O(1) сред.</td><td>O(n)</td></tr>
+                <tr><td><code>ArrayDeque</code></td><td>O(1) с концов</td><td>O(n)</td><td>O(1)* с концов</td><td>O(1) с концов</td><td>O(n)</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p style="font-size:.86rem;opacity:.75">* — амортизированно (с учётом редких расширений). «сред.» — средний случай при равномерном хешировании.</p>
+        </section>
+
+        <section class="section" id="list">
+          <h2>ArrayList и LinkedList: что под капотом</h2>
+          <p class="subhead">ArrayList — динамический массив</p>
+          <p><code>ArrayList</code> хранит элементы в обычном массиве <code>Object[]</code>. Доступ по индексу — <code>O(1)</code> (арифметика смещения, отличная локальность кэша). Главный механизм — <strong>рост ёмкости</strong>: когда массив заполнен, создаётся новый размером <code>oldCapacity + (oldCapacity >> 1)</code> — то есть в <strong>1.5 раза</strong> (в Java; в Kotlin под капотом тот же <code>java.util.ArrayList</code>), и все элементы копируются через <code>Arrays.copyOf</code>. Это и даёт амортизированные <code>O(1)</code> на <code>add()</code> в конец, но <code>O(n)</code> на вставку/удаление в середину (нужен сдвиг хвоста).</p>
+          <div class="code-label">CapacityDemo.kt</div>
+<pre><code class="language-kotlin">// Если знаешь итоговый размер — задай ёмкость сразу, избежишь N расширений
+val list = ArrayList&lt;Int&gt;(10_000)        // не будет рекопирований
+repeat(10_000) { list.add(it) }
+
+// add в конец — амортизированный O(1)
+list.add(42)
+// вставка в середину — O(n): сдвигаются все элементы правее
+list.add(0, -1)                          // дорого: сдвиг всего массива</code></pre>
+          <p class="subhead">LinkedList — двусвязный список</p>
+          <p><code>LinkedList</code> — узлы <code>Node</code>, каждый хранит <code>value</code>, <code>prev</code> и <code>next</code>. Вставка/удаление по <em>уже имеющемуся</em> итератору — <code>O(1)</code> (перецепил две ссылки). Но доступ по индексу — <code>O(n)</code>: нужно идти от головы или хвоста. На практике в Android <code>LinkedList</code> почти всегда проигрывает <code>ArrayList</code>: ссылки разбросаны по куче, кэш-промахи убивают производительность, а память больше (два указателя на узел). Для очереди/дека бери <code>ArrayDeque</code>, а не <code>LinkedList</code>.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart LR
+  H["head"] --> N1["Node A"]
+  N1 -->|next| N2["Node B"]
+  N2 -->|next| N3["Node C"]
+  N3 -->|prev| N2
+  N2 -->|prev| N1
+  N3 --> T["tail"]
+          </div>
+          <div class="cap">LinkedList: каждый узел знает соседей слева и справа</div>
+          </div>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Ответ на «когда LinkedList?».</strong> Честный ответ Senior-уровня: «почти никогда». Единственный реальный кейс — частые вставки/удаления в начало или середину при последовательном обходе итератором. Во всех остальных случаях <code>ArrayList</code> быстрее за счёт локальности данных.</div>
+          </div>
+        </section>
+
+        <section class="section" id="hashmap">
+          <h2>HashMap: бакеты, коллизии, treeify</h2>
+          <p>Это «вопрос-маркер»: по тому, как кандидат рассказывает про <code>HashMap</code>, видно глубину. Внутри — массив бакетов <code>Node[] table</code> (по умолчанию 16). Индекс бакета вычисляется как <code>(n - 1) &amp; hash</code>, где <code>hash</code> — это <strong>перемешанный</strong> хеш ключа: <code>h = key.hashCode(); h ^ (h &gt;&gt;&gt; 16)</code> (старшие биты подмешиваются к младшим, чтобы плохие <code>hashCode()</code> не валились в один бакет).</p>
+          <p class="subhead">Коллизии: chaining → treeify</p>
+          <p>Если два ключа попали в один бакет (<strong>коллизия</strong>), они складываются в связный список (<em>chaining</em>). Поиск в бакете идёт перебором с проверкой <code>equals</code>. С <strong>Java 8</strong> добавлена оптимизация: если в одном бакете накопилось <code>&gt; 8</code> элементов (<code>TREEIFY_THRESHOLD</code>) <em>и</em> ёмкость таблицы <code>&ge; 64</code> (<code>MIN_TREEIFY_CAPACITY</code>), список превращается в <strong>красно-чёрное дерево</strong> — поиск в бакете становится <code>O(log n)</code> вместо <code>O(n)</code>. При уменьшении до <code>&lt; 6</code> (<code>UNTREEIFY_THRESHOLD</code>) дерево схлопывается обратно в список.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TB
+  T["table[16]"] --> B0["bucket 0"]
+  T --> B3["bucket 3"]
+  T --> B7["bucket 7 (treeified)"]
+  B0 --> E0["(key1, v) -> null"]
+  B3 --> C1["(keyA, v)"]
+  C1 -->|next| C2["(keyB, v)"]
+  C2 -->|next| C3["(keyC, v) -> null"]
+  B7 --> RB["Red-Black Tree<br/>&gt;8 коллизий"]
+          </div>
+          <div class="cap">Бакеты HashMap: пустой, цепочка (chaining) и treeified-бакет как красно-чёрное дерево</div>
+          </div>
+          <p class="subhead">Load factor и рехеш</p>
+          <p><strong>Load factor</strong> по умолчанию <code>0.75</code>. Когда число элементов превышает <code>capacity * loadFactor</code> (для 16 это <code>12</code>), запускается <strong>resize</strong>: ёмкость <em>удваивается</em>, создаётся новая таблица и все записи <strong>перераспределяются</strong> (rehash) — операция <code>O(n)</code>. Поэтому при известном размере задавай начальную ёмкость: <code>HashMap(expectedSize / 0.75 + 1)</code>, чтобы избежать серии resize.</p>
+          <p class="subhead">Контракт hashCode / equals</p>
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>Контракт, который ломают чаще всего.</strong> Если <code>a.equals(b)</code>, то обязательно <code>a.hashCode() == b.hashCode()</code>. Нарушишь — объект «потеряется» в <code>HashMap</code>: положили по одному хешу, ищем по другому. Обратное не требуется (равные хеши у неравных объектов = допустимая коллизия). И ещё: <strong>ключ должен быть иммутабельным</strong> по полям, входящим в <code>hashCode</code> — иначе после мутации он окажется «не в том бакете».</div>
+          </div>
+          <div class="code-label">UserKey.kt</div>
+<pre><code class="language-kotlin">// data class генерирует корректные equals/hashCode по полям в конструкторе
+data class UserKey(val id: Long, val region: String)
+
+val map = HashMap&lt;UserKey, String&gt;()
+map[UserKey(1, "RU")] = "Алиса"
+println(map[UserKey(1, "RU")])   // "Алиса" — равные ключи, равные хеши
+
+// ❌ антипаттерн: мутабельный ключ
+class BadKey(var id: Int)        // нет equals/hashCode + поле меняется
+// после badKey.id = 99 объект «теряется» в map</code></pre>
+        </section>
+
+        <section class="section" id="linked-tree-map">
+          <h2>LinkedHashMap и TreeMap</h2>
+          <p class="subhead">LinkedHashMap — хеш + порядок</p>
+          <p><code>LinkedHashMap</code> наследует <code>HashMap</code>, но дополнительно связывает записи <strong>двусвязным списком</strong>, сохраняя порядок. По умолчанию — <em>порядок вставки</em> (insertion-order). Если создать с <code>accessOrder = true</code>, записи переупорядочиваются при каждом <code>get</code>/<code>put</code> — самый «свежий» доступ уходит в хвост. Это даёт встроенный механизм <strong>LRU</strong>: переопредели <code>removeEldestEntry()</code>, и самый давний по доступу элемент будет вытесняться.</p>
+          <div class="code-label">LruByLinkedHashMap.kt</div>
+<pre><code class="language-kotlin">// LRU «из коробки»: accessOrder=true + removeEldestEntry
+fun &lt;K, V&gt; lruCache(capacity: Int): LinkedHashMap&lt;K, V&gt; =
+    object : LinkedHashMap&lt;K, V&gt;(capacity, 0.75f, /* accessOrder = */ true) {
+        override fun removeEldestEntry(eldest: Map.Entry&lt;K, V&gt;): Boolean =
+            size &gt; capacity     // как только переполнились — выкидываем самый старый
+    }</code></pre>
+          <p class="subhead">TreeMap — красно-чёрное дерево</p>
+          <p><code>TreeMap</code> хранит ключи в <strong>самобалансирующемся красно-чёрном дереве</strong>, всегда отсортированными по <code>Comparable</code>/<code>Comparator</code>. Все основные операции — <code>O(log n)</code> (медленнее <code>HashMap</code>), но взамен ты получаешь <strong>упорядоченный обход</strong> и навигационные методы: <code>firstKey()</code>, <code>ceilingKey()</code>, <code>floorKey()</code>, <code>headMap()</code>, <code>subMap()</code>. Бери его, когда нужны диапазонные запросы или «ближайший ключ ≥ x».</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Карта</th><th>Порядок</th><th>Сложность</th><th>Когда брать</th></tr></thead>
+              <tbody>
+                <tr><td><code>HashMap</code></td><td>Никакого</td><td>O(1) сред.</td><td>Дефолт: просто ключ → значение</td></tr>
+                <tr><td><code>LinkedHashMap</code></td><td>Вставки / доступа</td><td>O(1) сред.</td><td>Нужен порядок или LRU-кэш</td></tr>
+                <tr><td><code>TreeMap</code></td><td>Сортировка ключей</td><td>O(log n)</td><td>Диапазоны, «ближайший ключ», sorted-обход</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section" id="concurrent">
+          <h2>Потокобезопасные структуры</h2>
+          <p>Обычный <code>HashMap</code> и <code>ArrayList</code> <strong>не потокобезопасны</strong>: гонка при resize может зациклить или повредить структуру. Для конкурентного доступа есть специальные классы — и Senior должен понимать <em>как</em> они синхронизируются, а не только их имена.</p>
+          <p class="subhead">ConcurrentHashMap — без глобального лока</p>
+          <p>До Java 8 использовалась <strong>сегментация (lock-striping)</strong>: таблица делилась на сегменты, каждый со своим локом — параллельно работало столько потоков, сколько сегментов. С <strong>Java 8</strong> сегменты убрали: теперь синхронизация идёт <strong>на уровне отдельного бакета</strong>. Вставка в пустой бакет делается одним <strong>CAS</strong> (compare-and-swap) без блокировки; при коллизии поток берёт <code>synchronized</code> на <em>первом узле</em> этого бакета — лок затрагивает один бакет, а не всю таблицу. <strong>Чтения почти всегда lock-free</strong> (идут по <code>volatile</code>-ссылкам). Глобального лока нет ни при чтении, ни при записи — отсюда высокая пропускная способность.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TB
+  P["put(key, val)"] --> Q{"бакет пустой?"}
+  Q -->|да| CAS["CAS: установить первый узел<br/>(без блокировки)"]
+  Q -->|нет, коллизия| SY["synchronized на первом узле бакета"]
+  SY --> ADD["добавить в цепочку / дерево"]
+  R["get(key)"] --> VOL["чтение по volatile-ссылке<br/>(lock-free)"]
+          </div>
+          <div class="cap">ConcurrentHashMap (Java 8+): CAS для пустого бакета, узловой lock при коллизии, чтение без локов</div>
+          </div>
+          <p class="subhead">CopyOnWriteArrayList — снапшот при записи</p>
+          <p><code>CopyOnWriteArrayList</code> при <strong>каждой модификации копирует весь внутренний массив</strong> целиком, а затем подменяет ссылку. Чтения идут по неизменяемому снапшоту вообще без синхронизации и без <code>ConcurrentModificationException</code>. Цена — запись <code>O(n)</code> и всплеск памяти. Уместен там, где <strong>читают часто, а пишут редко</strong>: списки слушателей/observer'ов, конфиги. Для частых записей — категорически нет.</p>
+          <p class="subhead">Collections.synchronizedList и BlockingQueue</p>
+          <p><code>Collections.synchronizedList(list)</code> оборачивает любой список и синхронизирует каждый метод на одном мониторе — то есть это <strong>один глобальный лок</strong> на всю коллекцию (проще, но не масштабируется; плюс итерацию надо вручную оборачивать в <code>synchronized</code>). <code>BlockingQueue</code> (например, <code>ArrayBlockingQueue</code>, <code>LinkedBlockingQueue</code>) — основа паттерна producer-consumer: <code>put()</code> блокируется, если очередь полна, <code>take()</code> — если пуста.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Структура</th><th>Механизм</th><th>Чтение</th><th>Запись</th><th>Когда выбрать</th></tr></thead>
+              <tbody>
+                <tr><td><code>ConcurrentHashMap</code></td><td>CAS + узловой lock</td><td>lock-free</td><td>O(1) сред.</td><td>Дефолт для конкурентной мапы</td></tr>
+                <tr><td><code>Collections.synchronizedMap</code></td><td>Один глобальный лок</td><td>под локом</td><td>под локом</td><td>Простой кейс, низкая нагрузка</td></tr>
+                <tr><td><code>CopyOnWriteArrayList</code></td><td>Копия при записи</td><td>lock-free (снапшот)</td><td>O(n)</td><td>Много чтений, редкие записи (listeners)</td></tr>
+                <tr><td><code>Collections.synchronizedList</code></td><td>Один глобальный лок</td><td>под локом</td><td>под локом</td><td>Простой список, мало потоков</td></tr>
+                <tr><td><code>BlockingQueue</code></td><td>Lock + condition</td><td>блокирующее</td><td>блокирующее</td><td>Producer-consumer, пулы задач</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Нюанс ConcurrentHashMap.</strong> Атомарны только отдельные операции. Связка «проверил-потом-положил» (<code>if (!map.containsKey(k)) map.put(k, v)</code>) — это гонка. Используй атомарные методы: <code>putIfAbsent()</code>, <code>computeIfAbsent()</code>, <code>merge()</code>. И помни: ключи/значения в нём <strong>не могут быть null</strong>.</div>
+          </div>
+        </section>
+
+        <section class="section" id="algorithms">
+          <h2>Типовые алгоритмы для интервью</h2>
+          <p class="subhead">Бинарный поиск — O(log n)</p>
+          <p>Работает только на <strong>отсортированном</strong> массиве: на каждом шаге отбрасываем половину диапазона. Классическая ловушка — переполнение при <code>(lo + hi) / 2</code>; пиши <code>lo + (hi - lo) / 2</code>.</p>
+          <div class="code-label">BinarySearch.kt</div>
+<pre><code class="language-kotlin">fun binarySearch(a: IntArray, target: Int): Int {
+    var lo = 0; var hi = a.size - 1
+    while (lo &lt;= hi) {
+        val mid = lo + (hi - lo) / 2          // защита от переполнения
+        when {
+            a[mid] == target -&gt; return mid
+            a[mid] &lt; target  -&gt; lo = mid + 1
+            else             -&gt; hi = mid - 1
+        }
+    }
+    return -1
+}</code></pre>
+          <p class="subhead">Two pointers и sliding window</p>
+          <p><strong>Two pointers</strong> — два указателя идут навстречу или в одну сторону, сводя <code>O(n²)</code> к <code>O(n)</code> (поиск пары с заданной суммой в сортированном массиве). <strong>Sliding window</strong> — частный случай: «окно» из двух указателей расширяется/сужается для задач на подотрезки (самая длинная подстрока без повторов, максимум суммы окна размера k).</p>
+          <div class="code-label">SlidingWindow.kt</div>
+<pre><code class="language-kotlin">// Максимальная сумма подмассива длины k — окно сдвигается за O(n)
+fun maxSum(a: IntArray, k: Int): Int {
+    var windowSum = a.take(k).sum()
+    var best = windowSum
+    for (i in k until a.size) {
+        windowSum += a[i] - a[i - k]          // добавили правый, убрали левый
+        best = maxOf(best, windowSum)
+    }
+    return best
+}</code></pre>
+          <p class="subhead">Стек, очередь, деревья, графы</p>
+          <p><strong>Стек</strong> (LIFO) — проверка скобок, обход в глубину без рекурсии, undo. <strong>Очередь</strong> (FIFO) — обход в ширину, планировщики. Для обоих в Kotlin/JVM бери <code>ArrayDeque</code>. Обходы дерева: <strong>DFS</strong> (in/pre/post-order, через рекурсию или стек) и <strong>BFS</strong> (по уровням, через очередь).</p>
+          <div class="code-label">TreeTraversal.kt</div>
+<pre><code class="language-kotlin">class TreeNode(val v: Int, val left: TreeNode? = null, val right: TreeNode? = null)
+
+// BFS — обход по уровням через очередь, O(n)
+fun bfs(root: TreeNode?): List&lt;Int&gt; {
+    val res = mutableListOf&lt;Int&gt;()
+    val queue = ArrayDeque&lt;TreeNode&gt;()
+    if (root != null) queue.add(root)
+    while (queue.isNotEmpty()) {
+        val node = queue.removeFirst()
+        res += node.v
+        node.left?.let { queue.add(it) }
+        node.right?.let { queue.add(it) }
+    }
+    return res
+}</code></pre>
+          <p>В <strong>графах</strong> те же DFS/BFS плюс <strong>топологическая сортировка</strong> (порядок вершин DAG, где зависимость идёт раньше зависимого — как порядок сборки модулей). BFS на невзвешенном графе даёт кратчайший путь по числу рёбер.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TB
+  A["Сборка app"] --> B["Модуль :core"]
+  A --> C["Модуль :network"]
+  C --> B
+  D["Модуль :feature"] --> A
+  D --> C
+          </div>
+          <div class="cap">Топосорт: порядок, в котором можно собирать модули, не нарушив зависимости</div>
+          </div>
+          <p class="subhead">Рекурсия и динамическое программирование</p>
+          <p><strong>DP</strong> применяют, когда у задачи есть <em>оптимальная подструктура</em> и <em>перекрывающиеся подзадачи</em>. Наивная рекурсия Фибоначчи — <code>O(2ⁿ)</code> из-за повторного пересчёта; <strong>мемоизация</strong> (кэш результатов, top-down) или <strong>табуляция</strong> (bottom-up) сводят её к <code>O(n)</code>.</p>
+          <div class="code-label">Fibonacci.kt</div>
+<pre><code class="language-kotlin">// O(2^n) — наивно, экспоненциальный взрыв вызовов
+fun fibSlow(n: Int): Long = if (n &lt; 2) n.toLong() else fibSlow(n - 1) + fibSlow(n - 2)
+
+// O(n) время, O(1) память — табуляция bottom-up
+fun fibFast(n: Int): Long {
+    if (n &lt; 2) return n.toLong()
+    var a = 0L; var b = 1L
+    repeat(n - 1) { val next = a + b; a = b; b = next }
+    return b
+}</code></pre>
+        </section>
+
+        <section class="section" id="lru">
+          <h2>Реализация LRU-кэша на Kotlin</h2>
+          <p>«Напиши LRU-кэш» — один из самых частых live-coding вопросов. Ключевая идея: чтобы и <code>get</code>, и <code>put</code> были <code>O(1)</code>, нужна <strong>связка</strong> <code>HashMap</code> (доступ по ключу за <code>O(1)</code>) + <strong>двусвязный список</strong> (порядок использования, перемещение узла в начало за <code>O(1)</code>). Самый недавно использованный — в голове, кандидат на вытеснение — в хвосте.</p>
+          <div class="code-label">LruCache.kt</div>
+<pre><code class="language-kotlin">class LruCache&lt;K, V&gt;(private val capacity: Int) {
+
+    private class Node&lt;K, V&gt;(val key: K, var value: V) {
+        var prev: Node&lt;K, V&gt;? = null
+        var next: Node&lt;K, V&gt;? = null
+    }
+
+    private val map = HashMap&lt;K, Node&lt;K, V&gt;&gt;()
+    private val head = Node&lt;K, V&gt;(/* dummy */ null as K, null as V)  // фиктивные
+    private val tail = Node&lt;K, V&gt;(null as K, null as V)             // границы
+
+    init { head.next = tail; tail.prev = head }
+
+    fun get(key: K): V? {
+        val node = map[key] ?: return null
+        moveToFront(node)                 // отметили как недавно использованный
+        return node.value
+    }
+
+    fun put(key: K, value: V) {
+        map[key]?.let { it.value = value; moveToFront(it); return }
+        val node = Node(key, value)
+        map[key] = node
+        addFront(node)
+        if (map.size &gt; capacity) {        // переполнились — выкидываем LRU из хвоста
+            val lru = tail.prev!!
+            remove(lru); map.remove(lru.key)
+        }
+    }
+
+    private fun addFront(n: Node&lt;K, V&gt;) {
+        n.prev = head; n.next = head.next
+        head.next!!.prev = n; head.next = n
+    }
+    private fun remove(n: Node&lt;K, V&gt;) {
+        n.prev!!.next = n.next; n.next!!.prev = n.prev
+    }
+    private fun moveToFront(n: Node&lt;K, V&gt;) { remove(n); addFront(n) }
+}</code></pre>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Что сказать после реализации.</strong> Упомяни, что в Android уже есть готовый <code>androidx.collection.LruCache</code> (и <code>DiskLruCache</code>), а «ручной» вариант с <code>LinkedHashMap(accessOrder = true)</code> короче (см. раздел выше). Понимание ручной реализации показывает, что ты знаешь <em>почему</em> это <code>O(1)</code>, а не просто дёргаешь библиотеку.</div>
+          </div>
+        </section>
+
+        <section class="section" id="video">
+          <h2>Видео-разбор</h2>
+                    <a class="ytcard" href="https://youtu.be/Z0JMABjXnww?t=0" target="_blank" rel="noopener">
+            <span class="yt-thumb" style="background-image:url('https://img.youtube.com/vi/Z0JMABjXnww/hqdefault.jpg')">
+              <span class="yt-play"></span>
+              <span class="yt-time">▶ с начала</span>
+            </span>
+            <span class="yt-meta">
+              <strong>Устройство HashMap (Java-собеседование)</strong>
+              <span class="yt-by">RU · разбор для собеса</span>
+              <span class="yt-why">Бакеты, хеширование, коллизии и treeify — то, что чаще всего спрашивают.</span>
+            </span>
+          </a>
+        </section>
+
+        <section class="section" id="faq">
+          <h2>Частые вопросы интервьюера</h2>
+
+          <details class="qa">
+            <summary>Что такое амортизированная сложность? Пример. <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>Это усреднённая стоимость операции по длинной серии вызовов, а не по одному вызову. Пример — <code>ArrayList.add()</code> в конец: обычно <code>O(1)</code>, но при заполнении массива происходит расширение и копирование за <code>O(n)</code>. Поскольку ёмкость растёт мультипликативно (в 1.5 раза), суммарная стоимость <code>n</code> вставок равна <code>O(n)</code>, то есть на одну вставку — амортизированные <code>O(1)</code>. В отличие от «среднего случая», это гарантия по серии, а не вероятностная оценка.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как устроен HashMap и что изменилось в Java 8? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Массив бакетов <code>Node[]</code> (по умолчанию 16). Индекс = <code>(n-1) &amp; hash</code>, где хеш дополнительно перемешивается (<code>h ^ (h &gt;&gt;&gt; 16)</code>). Коллизии складываются в связный список (chaining). В Java 8 добавлен <strong>treeify</strong>: если в бакете больше 8 элементов и ёмкость ≥ 64, список превращается в красно-чёрное дерево, и поиск в бакете становится <code>O(log n)</code> вместо <code>O(n)</code> — защита от деградации при плохом <code>hashCode</code> или hash-flooding атаках. Load factor 0.75: при заполнении выше порога таблица удваивается с полным rehash.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Какой контракт hashCode и equals? Что будет при нарушении? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>Правила: (1) если объекты равны по <code>equals</code>, их <code>hashCode</code> обязаны совпадать; (2) <code>hashCode</code> стабилен, пока объект не меняется; (3) неравные объекты <em>могут</em> иметь равный хеш (коллизия — норма). Если нарушить первое правило, объект «теряется» в <code>HashMap</code>: положили в один бакет, ищем в другом. Отдельная ловушка — мутабельный ключ: после изменения поля, входящего в хеш, он оказывается в «неправильном» бакете. Поэтому ключи делают иммутабельными (часто <code>data class</code>).</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Чем ConcurrentHashMap лучше synchronizedMap? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p><code>synchronizedMap</code> — это один глобальный лок на всю коллекцию: потоки сериализуются, throughput не масштабируется. <code>ConcurrentHashMap</code> (Java 8+) синхронизируется на уровне отдельного бакета: вставка в пустой бакет — атомарный CAS без блокировки, при коллизии — <code>synchronized</code> только на первом узле этого бакета. Чтения почти всегда lock-free (по volatile-ссылкам). Глобального лока нет, поэтому много потоков работают параллельно. Нюанс: атомарны лишь отдельные операции — для «check-then-act» нужны <code>computeIfAbsent</code>/<code>putIfAbsent</code>; null-ключи и null-значения запрещены.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Когда CopyOnWriteArrayList, а когда synchronizedList? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p><code>CopyOnWriteArrayList</code> копирует весь массив при каждой записи (<code>O(n)</code>), зато чтения и итерация — без локов и без <code>ConcurrentModificationException</code>. Идеален для сценария «много чтений, редкие записи»: списки слушателей, observer'ы, конфиги. <code>synchronizedList</code> — простая обёртка с одним локом на все операции; уместна при невысокой нагрузке, но итерацию надо вручную оборачивать в <code>synchronized(list)</code>. Если записей много — оба плохи, лучше пересмотреть структуру (например, очередь).</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>ArrayList или LinkedList — что выбрать? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>В подавляющем большинстве случаев — <code>ArrayList</code>: доступ по индексу <code>O(1)</code> и отличная локальность кэша (данные лежат подряд). <code>LinkedList</code> теоретически даёт <code>O(1)</code> вставку/удаление, но только по уже имеющемуся итератору, а доступ по индексу — <code>O(n)</code>; на практике кэш-промахи и накладные расходы на узлы делают его медленнее почти всегда. Для очереди или дека бери <code>ArrayDeque</code>, а не <code>LinkedList</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как реализовать LRU-кэш за O(1)? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Связка <code>HashMap</code> + двусвязный список. <code>HashMap</code> даёт доступ к узлу по ключу за <code>O(1)</code>, двусвязный список хранит порядок использования: при <code>get</code>/<code>put</code> узел перемещается в голову за <code>O(1)</code> (перецепка ссылок). При переполнении удаляется узел из хвоста (наименее недавно использованный) и его ключ из мапы. Фиктивные head/tail-узлы упрощают перецепку без проверок на null. Короткая альтернатива — <code>LinkedHashMap(accessOrder = true)</code> с переопределённым <code>removeEldestEntry</code>; в Android есть готовый <code>androidx.collection.LruCache</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Когда нужен TreeMap вместо HashMap? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Когда нужен <strong>порядок ключей</strong> или диапазонные запросы. <code>TreeMap</code> на красно-чёрном дереве держит ключи отсортированными и даёт навигацию: <code>firstKey</code>, <code>ceilingKey</code>/<code>floorKey</code> («ближайший ≥/≤ x»), <code>subMap</code>/<code>headMap</code>/<code>tailMap</code>, упорядоченный обход. Цена — все операции <code>O(log n)</code> вместо <code>O(1)</code>. Если порядок не нужен — <code>HashMap</code> быстрее. Если нужен порядок вставки/доступа (не сортировка) — <code>LinkedHashMap</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>В чём разница между DFS и BFS, и где что применять? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p><strong>DFS</strong> (в глубину) идёт максимально далеко по ветке, потом откатывается; реализуется рекурсией или стеком, память <code>O(h)</code> (высота). Подходит для проверки связности, поиска циклов, топосорта, обходов pre/in/post-order. <strong>BFS</strong> (в ширину) обходит по уровням через очередь, память <code>O(w)</code> (ширина); на невзвешенном графе даёт <strong>кратчайший путь по числу рёбер</strong>, используется для поиска ближайших, обхода по слоям. Оба — <code>O(V + E)</code> по времени.</p></div>
+          </details>
+
+        </section>
+
+        <section class="section" id="tasks">
+          <h2>Задачи</h2>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 1.</strong> Реализуй функцию, которая находит два числа в массиве <code>nums</code>, дающих в сумме <code>target</code>. Верни их индексы. Предполагай, что ровно одно решение существует, один элемент не использовать дважды. Сложность — лучше <code>O(n²)</code>.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">fun twoSum(nums: IntArray, target: Int): IntArray {
+    val seen = HashMap&lt;Int, Int&gt;()   // значение → индекс
+    for ((i, num) in nums.withIndex()) {
+        val complement = target - num
+        seen[complement]?.let { j -&gt; return intArrayOf(j, i) }
+        seen[num] = i
+    }
+    error("No solution")
+}</code></pre>
+                <p>Объяснение: за один проход кладём в <code>HashMap</code> каждое число и его индекс. Для текущего элемента ищем дополнение <code>target - num</code> — если оно уже в мапе, нашли пару. Сложность: время <code>O(n)</code>, память <code>O(n)</code>. Наивный двойной цикл даёт <code>O(n²)</code> — на больших массивах неприемлемо.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 2.</strong> Дан список целых чисел. Реализуй функцию <code>maxSlidingWindow(a: IntArray, k: Int): IntArray</code>, которая возвращает массив максимумов для каждого скользящего окна размера <code>k</code>. Вход: <code>[1, 3, -1, -3, 5, 3, 6, 7]</code>, <code>k = 3</code>; ожидаемый выход: <code>[3, 3, 5, 5, 6, 7]</code>. Сложность — лучше <code>O(n·k)</code>.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">fun maxSlidingWindow(a: IntArray, k: Int): IntArray {
+    val result = IntArray(a.size - k + 1)
+    val deque = ArrayDeque&lt;Int&gt;()   // хранит индексы, по убыванию значений
+
+    for (i in a.indices) {
+        // выкидываем индексы, вышедшие за левую границу окна
+        if (deque.isNotEmpty() &amp;&amp; deque.first() &lt; i - k + 1) {
+            deque.removeFirst()
+        }
+        // убираем с хвоста индексы, чьё значение меньше текущего
+        while (deque.isNotEmpty() &amp;&amp; a[deque.last()] &lt; a[i]) {
+            deque.removeLast()
+        }
+        deque.addLast(i)
+        if (i &gt;= k - 1) {
+            result[i - k + 1] = a[deque.first()]
+        }
+    }
+    return result
+}</code></pre>
+                <p>Объяснение: монотонная убывающая дека хранит индексы кандидатов на максимум. Голова деки — всегда максимум текущего окна. При сдвиге окна вправо выбрасываем устаревшие индексы из головы и меньшие элементы с хвоста. Сложность: <code>O(n)</code> время (каждый индекс добавляется и удаляется не более одного раза), <code>O(k)</code> память.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 3.</strong> Реализуй потокобезопасный LRU-кэш с ёмкостью <code>capacity</code>. Методы <code>get(key)</code> и <code>put(key, value)</code> должны работать за <code>O(1)</code> и безопасно вызываться из нескольких потоков одновременно. Покажи минимальный рабочий вариант на Kotlin.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.write
+import kotlin.concurrent.read
+
+class ThreadSafeLruCache&lt;K, V&gt;(capacity: Int) {
+
+    private val lock = ReentrantReadWriteLock()
+    private val cache: LinkedHashMap&lt;K, V&gt; =
+        object : LinkedHashMap&lt;K, V&gt;(capacity, 0.75f, true) {
+            override fun removeEldestEntry(eldest: Map.Entry&lt;K, V&gt;): Boolean =
+                size &gt; capacity
+        }
+
+    fun get(key: K): V? = lock.read { cache[key] }
+
+    fun put(key: K, value: V): Unit = lock.write { cache[key] = value }
+}</code></pre>
+                <p>Объяснение: <code>LinkedHashMap(accessOrder = true)</code> с переопределённым <code>removeEldestEntry</code> даёт LRU-логику. Для потокобезопасности — <code>ReentrantReadWriteLock</code>: несколько потоков читают одновременно (read-lock), запись блокирует всех. Альтернатива — оборачивать каждый метод в <code>synchronized</code>, но тогда параллельные чтения тоже сериализуются. Сложность операций: амортизированный <code>O(1)</code> без учёта блокировки.</p>
+              </div>
+            </details>
+          </div>
+
+        </section>
+
+        <div class="sources">
+          <h2>Источники</h2>
+          <ol>
+            <li><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/HashMap.html" target="_blank" rel="noopener">Oracle Java Docs — HashMap</a> — официальный контракт, load factor, поведение.</li>
+            <li><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/concurrent/ConcurrentHashMap.html" target="_blank" rel="noopener">Oracle Java Docs — ConcurrentHashMap</a> — атомарные методы, гарантии конкурентности.</li>
+            <li><a href="https://www.baeldung.com/java-hashmap-load-factor" target="_blank" rel="noopener">Baeldung — HashMap Load Factor</a> — разбор resize, capacity и порога.</li>
+            <li><a href="https://javaconceptoftheday.com/how-concurrenthashmap-works-internally-after-java-8/" target="_blank" rel="noopener">How ConcurrentHashMap Works Internally After Java 8</a> — CAS, узловой lock, отказ от сегментов.</li>
+            <li><a href="https://kotlinlang.org/api/latest/jvm/stdlib/kotlin.collections/" target="_blank" rel="noopener">Kotlin Stdlib — Collections</a> — коллекции Kotlin поверх JVM, ArrayDeque и др.</li>
+            <li><a href="https://developer.android.com/reference/androidx/collection/LruCache" target="_blank" rel="noopener">Android Developers — LruCache</a> — готовый LRU-кэш в Android.</li>
+            <li><a href="https://habr.com/ru/articles/782608/" target="_blank" rel="noopener">Хабр — Сложность алгоритмов. Разбор Big O</a> — нотации и оценка сложности на русском.</li>
+            <li><a href="https://refactoring.guru/ru" target="_blank" rel="noopener">Refactoring.Guru (RU)</a> — структуры данных и алгоритмы с визуализацией.</li>
+          </ol>
+        </div>
+      </article>
+    </div>
+    <aside id="toc"></aside>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="../assets/app.js?v=20260620-4"></script>
+</body>
+</html>

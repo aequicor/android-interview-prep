@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    (() => {
+      const key = "aip-theme";
+      let theme = null;
+      try { theme = localStorage.getItem(key); } catch(e) {}
+      if (theme !== "dark" && theme !== "light") {
+        theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <title>Хранение данных · Android-собес</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+</head>
+<body data-page="storage">
+  <div class="layout">
+    <aside id="sidebar"></aside>
+    <div id="content">
+      <article class="page">
+        <div class="breadcrumb"></div>
+        <header class="page-head">
+          <span class="eyebrow">Данные и сеть</span>
+          <h1>Хранение данных</h1>
+          <p class="lead">Где и как Android-приложение хранит состояние: от key-value (ключ-значение: SharedPreferences и DataStore) до реляционных БД (баз данных: Room/SQLite и SQLCipher) и файлов (scoped storage — ограниченное хранилище, MediaStore — медиакаталог, FileProvider — поставщик файлов). На собесе ждут не перечень API (программных интерфейсов), а понимание trade-offs (компромиссов): транзакционность, потокобезопасность, шифрование и миграции.</p>
+          <div class="meta">
+            <span class="tag lvl-mid">Middle</span>
+            <span class="tag lvl-sen">Senior</span>
+            <span class="tag hot">Частый вопрос</span>
+          </div>
+        </header>
+
+        <section class="section" id="sharedprefs">
+          <h2>SharedPreferences: наследие и его минусы</h2>
+          <p><code>SharedPreferences</code> — простое key-value-хранилище поверх XML-файла в приватной директории приложения. Долго был дефолтом для настроек, но в современных проектах его считают legacy. Понимать его всё ещё нужно: его минусы — это ровно те причины, по которым появился DataStore.</p>
+
+          <p class="subhead">apply() vs commit() — классический вопрос</p>
+<pre><code class="language-kotlin">val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+
+// commit(): синхронно пишет на диск в ТЕКУЩЕМ потоке, возвращает Boolean (успех/нет)
+val ok: Boolean = prefs.edit().putBoolean("dark", true).commit()
+
+// apply(): мгновенно обновляет in-memory, запись на диск — асинхронно в фоне;
+// возвращает Unit, об ошибке узнать НЕЛЬЗЯ
+prefs.edit().putBoolean("dark", true).apply()</code></pre>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Аспект</th><th><code>apply()</code></th><th><code>commit()</code></th></tr></thead>
+              <tbody>
+                <tr><td>Возврат</td><td><code>Unit</code> (результат неизвестен)</td><td><code>Boolean</code> (успех записи)</td></tr>
+                <tr><td>Запись на диск</td><td>Асинхронно, в фоновом потоке</td><td>Синхронно, в вызывающем потоке</td></tr>
+                <tr><td>Блокировка UI-потока</td><td>Не блокирует на запись... но см. ниже</td><td>Блокирует, если вызван на main</td></tr>
+                <tr><td>Сигнал об ошибке</td><td>Нет</td><td>Есть (<code>false</code>)</td></tr>
+                <tr><td>Рекомендация</td><td>По умолчанию для UI-кода</td><td>Когда важен факт записи (редко)</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>«apply не блокирует» — полуправда.</strong> Сама запись уходит в фон, но Android регистрирует её в очереди и <strong>дожидается завершения всех pending-<code>apply()</code> в момент <code>Activity.onPause()</code>/<code>onStop()</code> и в <code>QueuedWork</code></strong>. На медленном диске или при множестве записей это становится источником ANR. Именно про это любят спросить «а точно ли apply бесплатный?».</div>
+          </div>
+
+          <p class="subhead">Почему уходят на DataStore</p>
+          <ul>
+            <li><strong>Синхронное чтение.</strong> Первое обращение к любому ключу читает и парсит весь XML в память — на main-потоке это блокирующая операция (риск StrictMode-violation и подлагиваний).</li>
+            <li><strong>Нет нормальной обработки ошибок.</strong> <code>apply()</code> молча проглатывает сбои записи; повреждённый файл может привести к потере данных без уведомления.</li>
+            <li><strong>Нет транзакционности.</strong> Несколько <code>put</code> в одном <code>edit()</code> не образуют атомарной транзакции с гарантиями консистентности на уровне типобезопасности — легко получить рассогласованное состояние.</li>
+            <li><strong>Нет реактивности из коробки.</strong> Есть только <code>OnSharedPreferenceChangeListener</code> с ручной отпиской; нет <code>Flow</code>, нет типобезопасности, нет работы с корутинами.</li>
+          </ul>
+        </section>
+
+        <section class="section" id="datastore">
+          <h2>DataStore: современная замена</h2>
+          <p>Jetpack DataStore — рекомендованное Google key-value/типизированное хранилище. Полностью асинхронное на <strong>корутинах и Flow</strong>, транзакционное, безопасно обрабатывает повреждение данных и поставляется в двух вариантах.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Критерий</th><th>Preferences DataStore</th><th>Proto DataStore</th></tr></thead>
+              <tbody>
+                <tr><td>Схема</td><td>Динамические ключи, без схемы</td><td>Строгая схема (protobuf)</td></tr>
+                <tr><td>Типобезопасность</td><td>Нет (ключ → тип вручную)</td><td>Да (генерируемые классы)</td></tr>
+                <tr><td>Когда выбирать</td><td>Простые флаги/настройки, миграция со SharedPreferences</td><td>Структурированный объект, важна типобезопасность</td></tr>
+                <tr><td>Минус</td><td>Опечатка в ключе/типе — рантайм-ошибка</td><td>Нужен <code>.proto</code> + сериализатор</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="subhead">Preferences DataStore: чтение через Flow, запись через edit</p>
+          <div class="code-label">SettingsDataStore.kt</div>
+<pre><code class="language-kotlin">// один DataStore на процесс — через property-делегат на Context
+val Context.dataStore by preferencesDataStore(name = "settings")
+
+class SettingsRepository(private val context: Context) {
+    private object Keys { val DARK = booleanPreferencesKey("dark_theme") }
+
+    // чтение — холодный Flow, эмитит при каждом изменении
+    val darkTheme: Flow&lt;Boolean&gt; = context.dataStore.data
+        .catch { e -&gt;                                  // обработка повреждения файла
+            if (e is IOException) emit(emptyPreferences()) else throw e
+        }
+        .map { prefs -&gt; prefs[Keys.DARK] ?: false }
+
+    // запись — suspend, весь блок edit{} транзакционен и атомарен
+    suspend fun setDarkTheme(enabled: Boolean) {
+        context.dataStore.edit { prefs -&gt; prefs[Keys.DARK] = enabled }
+    }
+}</code></pre>
+
+          <p class="subhead">Proto DataStore: типобезопасный объект</p>
+          <div class="code-label">UserPrefsSerializer.kt</div>
+<pre><code class="language-kotlin">// UserPrefs генерируется из user_prefs.proto
+object UserPrefsSerializer : Serializer&lt;UserPrefs&gt; {
+    override val defaultValue: UserPrefs = UserPrefs.getDefaultInstance()
+    override suspend fun readFrom(input: InputStream): UserPrefs =
+        try { UserPrefs.parseFrom(input) }
+        catch (e: InvalidProtocolBufferException) { throw CorruptionException("proto", e) }
+    override suspend fun writeTo(t: UserPrefs, output: OutputStream) = t.writeTo(output)
+}
+
+val Context.userPrefs: DataStore&lt;UserPrefs&gt; by dataStore(
+    fileName = "user_prefs.pb",
+    serializer = UserPrefsSerializer
+)</code></pre>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Транзакционность на деле.</strong> Блок <code>edit { }</code> (или <code>updateData { }</code> у Proto) выполняется атомарно: DataStore читает текущее значение, применяет твою трансформацию и сериализует результат под единой блокировкой. Параллельные записи сериализуются, что исключает гонки и «потерянные обновления», которых не избежать в SharedPreferences.</div>
+          </div>
+
+          <p class="subhead">Миграция со SharedPreferences</p>
+          <p>DataStore умеет автоматически перенести существующие <code>SharedPreferences</code> при первом обращении через <code>SharedPreferencesMigration</code> — данные читаются один раз, переносятся в DataStore, старый файл удаляется.</p>
+          <div class="code-label">migration.kt</div>
+<pre><code class="language-kotlin">val Context.dataStore by preferencesDataStore(
+    name = "settings",
+    produceMigrations = { ctx -&gt;
+        listOf(SharedPreferencesMigration(ctx, "old_settings_prefs"))
+    }
+)
+// Первое чтение/запись DataStore выполнит миграцию ключей из old_settings_prefs
+// и пометит её завершённой, удалив исходный XML.</code></pre>
+        </section>
+
+        <section class="section" id="encrypted">
+          <h2>Шифрованное хранилище и Keystore</h2>
+          <p>Для чувствительных данных (токены, PII) нужно шифрование <strong>в покое (at rest)</strong>: даже если файл вытащат с устройства (root, бэкап), без ключа он бесполезен. Корень доверия — <strong>Android Keystore</strong>: ключи генерируются и хранятся в аппаратно-защищённой среде (TEE/StrongBox), их нельзя экспортировать — приложение лишь использует их для шифрования/дешифрования.</p>
+
+          <p class="subhead">EncryptedSharedPreferences и статус Jetpack Security</p>
+          <p>Исторически Google предлагал <code>EncryptedSharedPreferences</code> и <code>EncryptedFile</code> из библиотеки <strong>Jetpack Security (androidx.security:security-crypto)</strong> поверх Google <strong>Tink</strong>. Ключи-обёртки (master key) хранятся в Keystore.</p>
+          <div class="code-label">EncryptedPrefs.kt (legacy)</div>
+<pre><code class="language-kotlin">val masterKey = MasterKey.Builder(context)
+    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+    .build()
+
+val securePrefs = EncryptedSharedPreferences.create(
+    context, "secure_tokens", masterKey,
+    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
+)
+securePrefs.edit().putString("auth_token", token).apply()</code></pre>
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>Jetpack Security в maintenance, EncryptedSharedPreferences deprecated.</strong> Последний стабильный релиз библиотеки — апрель 2021; <code>EncryptedSharedPreferences</code> помечен deprecated начиная с <code>security-crypto:1.1.0-alpha07</code>. Известные проблемы: StrictMode-violations на main-потоке (синхронный init) и «keyset corruption» на некоторых OEM. Для новых проектов используй альтернативы — см. ниже.</div>
+          </div>
+
+          <p class="subhead">Чем заменить: шифрованный DataStore (Tink) и Keystore напрямую</p>
+          <p>Современный подход — <strong>отделить хранение от шифрования</strong>: класть данные в (Proto) DataStore, а сам поток байт шифровать через актуальную версию <strong>Tink</strong> перед записью на диск. Это даёт контроль над схемой ключей и обходит баги старого Tink в Jetpack Security. Альтернативы-обёртки: сообщество выпустило, например, <em>Ackee Guardian</em> как преемника Jetpack Security; на низком уровне можно использовать <code>KeyGenParameterSpec</code> + <code>Cipher</code> с ключом из Keystore.</p>
+          <div class="code-label">KeystoreCipher.kt</div>
+<pre><code class="language-kotlin">// Генерируем неэкспортируемый AES-ключ прямо в Android Keystore
+fun getOrCreateKey(alias: String): SecretKey {
+    val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+    (ks.getEntry(alias, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
+
+    val gen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+    gen.init(
+        KeyGenParameterSpec.Builder(alias,
+            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .build()
+    )
+    return gen.generateKey()   // приватный материал не покидает TEE
+}</code></pre>
+
+          <p class="subhead">Шифрование самой БД — SQLCipher</p>
+          <p>«Encrypted SQLite» из вопроса кандидата — это про <strong>SQLCipher</strong>: расширение SQLite, прозрачно шифрующее весь файл БД (AES-256) по парольной фразе. Подключается к Room через <code>SupportFactory</code> (<code>openHelperFactory</code>) — DAO и запросы не меняются.</p>
+          <div class="code-label">EncryptedRoom.kt</div>
+<pre><code class="language-kotlin">// passphrase лучше держать как ключ в Keystore, а не строкой в коде
+val passphrase: ByteArray = SQLiteDatabase.getBytes(secretChars)
+val factory = SupportFactory(passphrase)
+
+val db = Room.databaseBuilder(context, AppDatabase::class.java, "encrypted.db")
+    .openHelperFactory(factory)   // вся БД шифруется прозрачно
+    .build()</code></pre>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Ключ — слабое звено.</strong> Шифрование бесполезно, если passphrase зашит в коде или лежит в обычных prefs. Храни его как ключ в Android Keystore (или производи из биометрии/PIN). И помни: шифрование защищает <em>от извлечения файла</em>, но не от рантайм-доступа на скомпрометированном (rooted) устройстве, где процесс держит ключ в памяти.</div>
+          </div>
+        </section>
+
+        <section class="section" id="room">
+          <h2>Room и SQLite: реляционное хранилище</h2>
+          <p>Для структурированных данных со связями и сложными запросами — <strong>Room</strong>, official ORM-обёртка над SQLite. «Голый» SQLite работает со строковыми SQL без проверок, требует ручного маппинга <code>Cursor</code> и легко даёт ошибки в рантайме. Room проверяет SQL на этапе компиляции, генерирует boilerplate, интегрируется с корутинами/Flow и даёт инструменты для миграций.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Аспект</th><th>Голый SQLite</th><th>Room</th></tr></thead>
+              <tbody>
+                <tr><td>Проверка SQL</td><td>В рантайме (упадёт у пользователя)</td><td>Compile-time (упадёт у тебя)</td></tr>
+                <tr><td>Маппинг строк</td><td>Вручную через <code>Cursor</code></td><td>Автоматически в объекты</td></tr>
+                <tr><td>Реактивность</td><td>Нет</td><td><code>Flow</code>/<code>LiveData</code>-запросы</td></tr>
+                <tr><td>Корутины</td><td>Нет</td><td><code>suspend</code>-функции в DAO</td></tr>
+                <tr><td>Миграции</td><td>Полностью вручную</td><td><code>Migration</code> + экспорт схемы + тест-хелпер</td></tr>
+                <tr><td>Boilerplate</td><td>Много</td><td>Минимум (кодген)</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="subhead">Сущность, DAO, база</p>
+          <div class="code-label">UserDao.kt</div>
+<pre><code class="language-kotlin">@Entity(
+    tableName = "users",
+    indices = [Index(value = ["email"], unique = true)]   // ускоряет поиск + уникальность
+)
+data class User(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    val email: String
+)
+
+@Dao
+interface UserDao {
+    // реактивный запрос: эмитит новый список при любом изменении таблицы
+    @Query("SELECT * FROM users ORDER BY name")
+    fun observeAll(): Flow&lt;List&lt;User&gt;&gt;
+
+    @Query("SELECT * FROM users WHERE id = :id")
+    suspend fun getById(id: Long): User?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(user: User): Long
+
+    // атомарная операция из нескольких шагов
+    @Transaction
+    suspend fun replaceAll(users: List&lt;User&gt;) {
+        deleteAll(); insertAll(users)
+    }
+
+    @Query("DELETE FROM users") suspend fun deleteAll()
+    @Insert suspend fun insertAll(users: List&lt;User&gt;)
+}</code></pre>
+          <div class="diagram">
+          <div class="mermaid">
+classDiagram
+  class AppDatabase {
+    +userDao() UserDao
+    +orderDao() OrderDao
+  }
+  class UserDao {
+    +observeAll() Flow
+    +upsert(user) Long
+  }
+  class User {
+    +id Long
+    +name String
+    +email String
+  }
+  AppDatabase --> UserDao : предоставляет
+  UserDao ..> User : читает / пишет
+  User --> AppDatabase : @Entity таблица
+          </div>
+          <div class="cap">Слой данных Room: DB владеет DAO, DAO оперирует Entity-таблицами</div>
+          </div>
+
+          <p class="subhead">Миграции схемы</p>
+          <p>При изменении схемы повышаешь <code>version</code> и описываешь переход <code>Migration(from, to)</code> с явным SQL. Room экспортирует схему в JSON (<code>room.schemaLocation</code>) — это «история» БД, по которой работает тест миграций. Для простых случаев есть <code>@AutoMigration</code>; если объявлены оба пути на одну версию, приоритет у ручной миграции.</p>
+          <div class="code-label">migrations.kt</div>
+<pre><code class="language-kotlin">val MIGRATION_1_2 = object : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        // используем ПОЛНЫЕ запросы, а не константы DAO (схема могла измениться)
+        db.execSQL("ALTER TABLE users ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+    }
+}
+
+Room.databaseBuilder(context, AppDatabase::class.java, "app.db")
+    .addMigrations(MIGRATION_1_2)
+    // .fallbackToDestructiveMigration()  // ОПАСНО: дропнет данные при отсутствии пути
+    .build()</code></pre>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>fallbackToDestructiveMigration — не в проде.</strong> Если для версии нет <code>Migration</code>, Room по умолчанию падает с <code>IllegalStateException</code>. Деструктивный fallback «решает» это пересозданием БД с потерей всех данных пользователя. Допустимо для кэша/dev-сборок, недопустимо для пользовательских данных. Не забывай обновлять <strong>индексы</strong> внутри миграций.</div>
+          </div>
+
+          <p class="subhead">FTS, отношения и тестирование</p>
+          <p>Для полнотекстового поиска — <code>@Fts4</code>-сущности (виртуальная таблица FTS, поиск по <code>MATCH</code> вместо <code>LIKE %...%</code>). Связи описывают через <code>@Relation</code>/<code>@Embedded</code> и читают в <code>@Transaction</code>-методах. Миграции тестируют через <code>MigrationTestHelper</code>: создаёшь БД на старой версии, вставляешь данные сырым SQL, открываешь с новой версией и валидируешь, что данные на месте и схема совпала.</p>
+          <div class="code-label">MigrationTest.kt</div>
+<pre><code class="language-kotlin">@get:Rule val helper = MigrationTestHelper(
+    InstrumentationRegistry.getInstrumentation(),
+    AppDatabase::class.java
+)
+
+@Test fun migrate1To2_keepsData() {
+    helper.createDatabase(TEST_DB, 1).apply {
+        execSQL("INSERT INTO users (id, name, email) VALUES (1, 'Ann', 'a@x.io')")
+        close()
+    }
+    // runMigrationsAndValidate проверит схему по экспортированному JSON
+    helper.runMigrationsAndValidate(TEST_DB, 2, true, MIGRATION_1_2)
+}</code></pre>
+        </section>
+
+        <section class="section" id="files">
+          <h2>Файлы: internal/external, scoped storage</h2>
+          <p>Для blob'ов (изображения, документы, кэш) данные кладут в файлы. Ключевое разделение — <strong>internal</strong> (приватно, в песочнице приложения) vs <strong>external</strong> (общий раздел), а с Android 10 (API 29) поверх этого работает <strong>scoped storage</strong>.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Хранилище</th><th>Где / API</th><th>Доступ и удаление</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Internal</strong></td><td><code>filesDir</code>, <code>cacheDir</code></td><td>Только это приложение; удаляется при деинсталляции; без разрешений</td></tr>
+                <tr><td><strong>App-specific external</strong></td><td><code>getExternalFilesDir()</code></td><td>Приватно для приложения, без разрешений (API 19+); удаляется с приложением</td></tr>
+                <tr><td><strong>Shared media</strong></td><td><code>MediaStore</code></td><td>Свои файлы — без разрешения; чужие — нужны разрешения/согласие</td></tr>
+                <tr><td><strong>Cache</strong></td><td><code>cacheDir</code> / <code>externalCacheDir</code></td><td>Система может очистить при нехватке места</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="subhead">Scoped storage (Android 10+)</p>
+          <p>До Android 10 с разрешением <code>WRITE_EXTERNAL_STORAGE</code> приложение видело весь общий раздел через прямые пути. Scoped storage это закрыл: приложение имеет доступ только к своей app-specific-директории и к медиа, которые <em>само</em> создало. Для остального — <code>MediaStore</code> (медиа) и Storage Access Framework (документы). С Android 11 (API 30) приложения, таргетящие 30+, обязаны использовать scoped storage; прямой <code>File</code>-доступ к чужим файлам не работает.</p>
+
+          <p class="subhead">MediaStore: запись изображения без разрешений</p>
+          <div class="code-label">SaveImage.kt</div>
+<pre><code class="language-kotlin">val values = ContentValues().apply {
+    put(MediaStore.Images.Media.DISPLAY_NAME, "photo.jpg")
+    put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+    put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/MyApp")
+}
+val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+uri?.let { resolver.openOutputStream(it)?.use { os -&gt; bitmap.compress(JPEG, 95, os) } }
+// На Android 10+ запись своих медиа в общий раздел НЕ требует разрешений</code></pre>
+
+          <p class="subhead">FileProvider: безопасный обмен файлами</p>
+          <p>Делиться файлом из приватной директории через <code>file://</code> запрещено (с Android 7 это <code>FileUriExposedException</code>). <code>FileProvider</code> отдаёт <code>content://</code>-URI с временным грантом доступа — безопасно для другого приложения (камера, «Поделиться»).</p>
+          <div class="code-label">ShareFile.kt</div>
+<pre><code class="language-kotlin">val file = File(context.cacheDir, "report.pdf")
+val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+
+val share = Intent(Intent.ACTION_SEND).apply {
+    type = "application/pdf"
+    putExtra(Intent.EXTRA_STREAM, uri)
+    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)   // временный доступ получателю
+}
+context.startActivity(Intent.createChooser(share, "Поделиться"))</code></pre>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart LR
+  A["Своё приложение"] --> B["FileProvider"]
+  B --> C["content:// URI + грант"]
+  C --> D["Другое приложение (камера / share)"]
+  A -. "file:// напрямую" .-> X["FileUriExposedException"]
+          </div>
+          <div class="cap">FileProvider заменяет небезопасный file:// на content:// с временным разрешением</div>
+          </div>
+        </section>
+
+        <section class="section" id="choose">
+          <h2>Какое хранилище под задачу + бэкап</h2>
+          <p>Сводная таблица — частый «быстрый» вопрос на собесе: дают сценарий, ждут обоснованный выбор.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Задача</th><th>Чем хранить</th><th>Почему</th></tr></thead>
+              <tbody>
+                <tr><td>Флаг темы, онбординг-пройден, простые настройки</td><td>Preferences DataStore</td><td>Key-value, async, Flow, без схемы</td></tr>
+                <tr><td>Структурированный объект настроек с типами</td><td>Proto DataStore</td><td>Типобезопасность, строгая схема</td></tr>
+                <tr><td>Auth-токен, ключ API, PII</td><td>Шифрованный DataStore (Tink) / Keystore</td><td>Шифрование at rest, ключ в TEE</td></tr>
+                <tr><td>Список заказов/сообщений со связями и поиском</td><td>Room (при необходимости + SQLCipher)</td><td>Реляционка, запросы, миграции, реактивность</td></tr>
+                <tr><td>Фото/видео для галереи (общий доступ)</td><td>MediaStore</td><td>Scoped storage, без разрешений на свои медиа</td></tr>
+                <tr><td>Приватный кэш картинок/файлов</td><td><code>cacheDir</code> / internal</td><td>Песочница, авто-очистка системой</td></tr>
+                <tr><td>Отдать PDF в другое приложение</td><td>FileProvider</td><td>content:// с временным грантом</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="subhead">Auto Backup и безопасность в покое</p>
+          <p>Android <strong>Auto Backup</strong> по умолчанию (для targetSdk ≥ 23) сохраняет до 25 МБ данных приложения (включая SharedPreferences, файлы, БД) в облако пользователя и восстанавливает при переустановке. На собесе важно знать: бэкап может «утащить» чувствительные данные — управляй этим через <code>android:fullBackupContent</code>/<code>android:dataExtractionRules</code> (Android 12+), исключая токены и шифрованные хранилища, либо отключай <code>android:allowBackup="false"</code> для секретов.</p>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Принцип «защита в покое».</strong> Любые секреты — только в шифрованном виде с ключом из Keystore; индексы и БД с PII — через SQLCipher; в правилах бэкапа явно исключай чувствительные файлы. Шифрование защищает извлечённый файл, но не рантайм на rooted-устройстве — поэтому не храни больше, чем нужно (data minimization).</div>
+          </div>
+        </section>
+
+        <section class="section" id="video">
+          <h2>Видео-разбор</h2>
+                    <a class="ytcard" href="https://youtu.be/W7ua0qCmH1g?t=0" target="_blank" rel="noopener">
+            <span class="yt-thumb" style="background-image:url('https://img.youtube.com/vi/W7ua0qCmH1g/hqdefault.jpg')">
+              <span class="yt-play"></span>
+              <span class="yt-time">▶ с начала</span>
+            </span>
+            <span class="yt-meta">
+              <strong>How To Use Android's Preferences DataStore</strong>
+              <span class="yt-by">Philipp Lackner · EN</span>
+              <span class="yt-why">Практика по DataStore: чтение/запись через корутины и Flow.</span>
+            </span>
+          </a>
+        </section>
+
+        <section class="section" id="faq">
+          <h2>Частые вопросы интервьюера</h2>
+
+          <details class="qa">
+            <summary>В чём разница между apply() и commit()? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p><code>commit()</code> пишет на диск синхронно в текущем потоке и возвращает <code>Boolean</code> — успех записи. <code>apply()</code> мгновенно обновляет in-memory и сбрасывает на диск асинхронно, возвращает <code>Unit</code>, об ошибке узнать нельзя. На UI-потоке предпочитают <code>apply()</code>, чтобы не блокировать UI. Нюанс, который ценят: <code>apply()</code> не совсем бесплатен — pending-записи дожидаются в <code>QueuedWork</code> на <code>onPause()/onStop()</code> и могут давать ANR при частых записях.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Почему индустрия уходит со SharedPreferences на DataStore? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Четыре причины: (1) <strong>синхронное чтение</strong> — первый доступ парсит весь XML на вызывающем потоке, риск блокировки UI; (2) <strong>нет сигнала об ошибках</strong> — <code>apply()</code> молча проглатывает сбои; (3) <strong>нет транзакционности и типобезопасности</strong> — легко получить рассогласованное состояние; (4) <strong>нет реактивности на корутинах</strong> — только громоздкий listener. DataStore решает всё это: полностью async на Flow/корутинах, атомарный <code>edit{}</code>, безопасная обработка повреждения файла, авто-миграция со SharedPreferences.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Preferences DataStore или Proto DataStore — когда что? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Preferences — динамические ключи без схемы: быстро для простых флагов и при миграции со SharedPreferences, но опечатка в ключе/типе вылезет в рантайме. Proto — строгая схема через protobuf и сгенерированные классы: полная типобезопасность, удобно для структурированного объекта настроек, ценой <code>.proto</code>-файла и сериализатора. Правило: простые независимые значения → Preferences; связный типизированный объект → Proto.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как зашифровать данные? Что с EncryptedSharedPreferences? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Корень доверия — Android Keystore: ключи генерируются в TEE/StrongBox и неэкспортируемы. Раньше для key-value использовали <code>EncryptedSharedPreferences</code> из Jetpack Security (поверх Tink). Сейчас важно знать: <strong>библиотека в maintenance, последний стабильный релиз — 2021, а <code>EncryptedSharedPreferences</code> deprecated</strong> (StrictMode-violations, keyset corruption на части OEM). Современный подход — Proto DataStore + актуальный Tink (отделяем хранение от шифрования) либо обёртки-преемники / прямое использование Keystore + <code>Cipher</code>. Для шифрования всей БД — SQLCipher.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как зашифровать SQLite/Room без переписывания запросов? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Через <strong>SQLCipher</strong> — он прозрачно шифрует весь файл БД (AES-256) по парольной фразе. В Room подключается одной строкой: создаёшь <code>SupportFactory(passphrase)</code> и передаёшь в <code>openHelperFactory()</code>. DAO, сущности и запросы не меняются. Критично: passphrase нельзя зашивать в коде или класть в обычные prefs — храни его как ключ в Keystore (или производи из биометрии/PIN). Шифрование защищает от извлечения файла, но не от рантайм-доступа на rooted-устройстве.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как сделать миграцию схемы Room без потери данных? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Повысить <code>version</code> и добавить объект <code>Migration(from, to)</code> с явным SQL (<code>ALTER TABLE</code>, обновление индексов). Включить экспорт схемы в JSON (<code>room.schemaLocation</code>) — это история БД для проверки. Тестировать через <code>MigrationTestHelper</code>: создать БД старой версии, вставить данные, прогнать <code>runMigrationsAndValidate</code>. Для простых случаев — <code>@AutoMigration</code>; при объявлении обоих путей на версию приоритет у ручного. Использовать полные запросы, а не константы DAO. Категорически не использовать <code>fallbackToDestructiveMigration()</code> для пользовательских данных — он дропает БД.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Что такое scoped storage и зачем он? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>С Android 10 (API 29) приложение по умолчанию имеет доступ только к своей app-specific-директории и к медиа, которые само создало; прямой доступ ко всему общему разделу через <code>WRITE_EXTERNAL_STORAGE</code> закрыт. Для общих медиа — <code>MediaStore</code> (свои файлы — без разрешений), для документов — Storage Access Framework. С Android 11 (API 30) для targetSdk 30+ это обязательно. Цель — приватность: приложения не могут читать/менять чужие файлы без явного согласия пользователя.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Зачем FileProvider и почему нельзя отдать file:// напрямую? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>С Android 7 (API 24) передача <code>file://</code>-URI другому приложению кидает <code>FileUriExposedException</code>: чужой процесс не имеет прав на твою песочницу, а голый путь — это утечка деталей файловой системы. <code>FileProvider</code> (наследник <code>ContentProvider</code>) выдаёт <code>content://</code>-URI и через флаг <code>FLAG_GRANT_READ_URI_PERMISSION</code> даёт получателю временный доступ ровно к этому файлу. Безопасный способ делиться файлами с камерой, «Поделиться» и т.п.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Почему Room, а не голый SQLite? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>Room проверяет SQL на этапе <strong>компиляции</strong> (ошибка у разработчика, а не у пользователя), автоматически маппит строки в объекты, генерирует boilerplate, даёт <code>suspend</code>-DAO и реактивные <code>Flow</code>-запросы (эмитят при изменении таблицы), а также инструменты миграций с экспортом схемы и тест-хелпером. Голый SQLite — строковый SQL без проверок, ручной <code>Cursor</code>-маппинг, никакой реактивности и полностью ручные миграции. Room — это тот же SQLite, но с безопасностью и эргономикой.</p></div>
+          </details>
+
+        </section>
+
+        <section class="section" id="tasks">
+          <h2>Задачи</h2>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 1.</strong> У тебя есть Room-база v1 с таблицей <code>notes(id INTEGER, text TEXT)</code>. В v2 нужно добавить колонку <code>created_at INTEGER NOT NULL</code> с дефолтом 0 и создать индекс по ней. Напиши объект <code>Migration(1, 2)</code> и подключи его в базу. После этого в тесте через <code>MigrationTestHelper</code> проверь, что строка, вставленная в v1, не потерялась.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">// --- Migration ---
+val MIGRATION_1_2 = object : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "ALTER TABLE notes ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0"
+        )
+        db.execSQL(
+            "CREATE INDEX IF NOT EXISTS idx_notes_created_at ON notes(created_at)"
+        )
+    }
+}
+
+// --- AppDatabase ---
+@Database(entities = [Note::class], version = 2, exportSchema = true)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun noteDao(): NoteDao
+}
+
+fun buildDb(context: Context) =
+    Room.databaseBuilder(context, AppDatabase::class.java, "notes.db")
+        .addMigrations(MIGRATION_1_2)
+        .build()
+
+// --- MigrationTestHelper (instrumented test) ---
+@get:Rule
+val helper = MigrationTestHelper(
+    InstrumentationRegistry.getInstrumentation(),
+    AppDatabase::class.java
+)
+
+@Test fun migrate1To2_rowSurvives() {
+    helper.createDatabase(TEST_DB, 1).apply {
+        execSQL("INSERT INTO notes (id, text) VALUES (42, 'hello')")
+        close()
+    }
+    val db = helper.runMigrationsAndValidate(TEST_DB, 2, true, MIGRATION_1_2)
+    val cursor = db.query("SELECT id, text, created_at FROM notes WHERE id = 42")
+    assert(cursor.moveToFirst())
+    assert(cursor.getString(1) == "hello")
+    assert(cursor.getLong(2) == 0L)
+    cursor.close()
+}</code></pre>
+                <p>Объяснение: миграция использует полный SQL без ссылок на константы DAO — схема могла измениться, константы туда не подходят. <code>runMigrationsAndValidate</code> сравнивает итоговую схему с JSON-экспортом (нужен включённый <code>room.schemaLocation</code>) и роняет тест при расхождении. <code>fallbackToDestructiveMigration()</code> здесь нет — это намеренно: без миграции база упадёт с <code>IllegalStateException</code>, что лучше чем молчаливая потеря данных.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 2.</strong> В коде ниже есть три ошибки, из-за которых либо текут данные, либо возникает ANR, либо приложение падает на Android 7+. Найди и исправь каждую.</p>
+<pre><code class="language-kotlin">// AuthManager.kt
+class AuthManager(private val context: Context) {
+
+    // (1) Хранение токена
+    private val prefs = context.getSharedPreferences("auth", Context.MODE_PRIVATE)
+
+    fun saveToken(token: String) {
+        prefs.edit().putString("token", token).commit()  // вызов из main-потока
+    }
+
+    // (2) Шаринг приватного файла
+    fun shareReport(file: File) {
+        val uri = Uri.fromFile(file)                     // file:// URI
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            putExtra(Intent.EXTRA_STREAM, uri)
+            type = "application/pdf"
+        }
+        context.startActivity(intent)
+    }
+
+    // (3) Чтение токена
+    fun getToken(): String? = prefs.getString("token", null)  // вызывается из main-потока в onCreate
+}</code></pre>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">// Исправленный AuthManager.kt
+class AuthManager(private val context: Context) {
+
+    // (1) Чувствительный токен нельзя держать в открытом SharedPreferences.
+    //     Используем DataStore + шифрование; сам DataStore — suspend/Flow, не блокирует UI.
+    private val Context.tokenStore by preferencesDataStore(name = "auth_secure")
+
+    private object Keys { val TOKEN = stringPreferencesKey("token") }
+
+    suspend fun saveToken(token: String) {
+        // edit{} атомарен и выполняется в IO-диспетчере DataStore, не блокирует main
+        context.tokenStore.edit { it[Keys.TOKEN] = token }
+    }
+
+    // (2) file:// запрещён с Android 7 (FileUriExposedException).
+    //     FileProvider даёт content:// с временным грантом.
+    fun shareReport(file: File) {
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            putExtra(Intent.EXTRA_STREAM, uri)
+            type = "application/pdf"
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, null))
+    }
+
+    // (3) DataStore читается через Flow — нет блокировки main-потока.
+    //     Собираем в ViewModel/coroutineScope, не в onCreate напрямую.
+    val tokenFlow: Flow&lt;String?&gt; = context.tokenStore.data
+        .catch { e -&gt; if (e is IOException) emit(emptyPreferences()) else throw e }
+        .map { it[Keys.TOKEN] }
+}</code></pre>
+                <p>Объяснение трёх проблем: (1) <code>commit()</code> на main-потоке — синхронная запись, блокирует UI; к тому же открытый SharedPreferences не шифрует токен. (2) <code>Uri.fromFile()</code> кидает <code>FileUriExposedException</code> на API 24+ — нужен <code>FileProvider</code>. (3) Первое чтение SharedPreferences парсит весь XML на вызывающем потоке; в <code>onCreate</code> это блокировка main-потока, StrictMode-violation и потенциальный ANR.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 3.</strong> Реализуй DAO-метод, который <strong>атомарно</strong> заменяет весь список задач в таблице <code>todos</code>: удаляет старые и вставляет новые так, чтобы при сбое посередине база не осталась в промежуточном состоянии (ни пустой, ни с половиной строк). Также добавь реактивный запрос, который отдаёт список незавершённых задач как <code>Flow</code>.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">@Entity(tableName = "todos")
+data class Todo(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val title: String,
+    val done: Boolean = false
+)
+
+@Dao
+interface TodoDao {
+
+    // Реактивный запрос: Room переэмитит при любом изменении таблицы todos
+    @Query("SELECT * FROM todos WHERE done = 0 ORDER BY id")
+    fun observePending(): Flow&lt;List&lt;Todo&gt;&gt;
+
+    @Query("DELETE FROM todos")
+    suspend fun deleteAll()
+
+    @Insert
+    suspend fun insertAll(todos: List&lt;Todo&gt;)
+
+    // @Transaction гарантирует, что оба suspend-вызова выполняются в одной транзакции.
+    // Если insertAll() бросит исключение — deleteAll() откатится автоматически.
+    @Transaction
+    suspend fun replaceAll(todos: List&lt;Todo&gt;) {
+        deleteAll()
+        insertAll(todos)
+    }
+}</code></pre>
+                <p>Объяснение: без <code>@Transaction</code> два отдельных suspend-вызова — это две независимые транзакции; сбой между ними оставит базу пустой. Аннотация оборачивает весь метод в одну транзакцию SQLite: либо оба шага успешны, либо откат. <code>Flow&lt;List&lt;Todo&gt;&gt;</code> — холодный поток; Room сам переэмитит значение после каждого <code>INSERT</code>/<code>DELETE</code> в таблице <code>todos</code>, без ручных подписок или Listener.</p>
+              </div>
+            </details>
+          </div>
+
+        </section>
+
+        <div class="sources">
+          <h2>Источники</h2>
+          <ol>
+            <li><a href="https://developer.android.com/topic/libraries/architecture/datastore" target="_blank" rel="noopener">DataStore — Android Developers</a> — официальное руководство: Preferences/Proto, корутины, Flow, транзакционность.</li>
+            <li><a href="https://android-developers.googleblog.com/2020/09/prefer-storing-data-with-jetpack.html" target="_blank" rel="noopener">Prefer Storing Data with Jetpack DataStore — Android Developers Blog</a> — почему DataStore вместо SharedPreferences (apply/commit, ANR).</li>
+            <li><a href="https://developer.android.com/training/data-storage/room/migrating-db-versions" target="_blank" rel="noopener">Migrate your Room database — Android Developers</a> — Migration, экспорт схемы, AutoMigration, тестирование.</li>
+            <li><a href="https://developer.android.com/training/data-storage#scoped-storage" target="_blank" rel="noopener">Data and file storage overview — Android Developers</a> — internal/external, scoped storage, MediaStore.</li>
+            <li><a href="https://developer.android.com/jetpack/androidx/releases/security" target="_blank" rel="noopener">Security (androidx.security) — Android Developers</a> — статус Jetpack Security, deprecation EncryptedSharedPreferences.</li>
+            <li><a href="https://proandroiddev.com/securing-the-future-navigating-the-deprecation-of-encrypted-shared-preferences-91ce3c20ae8d" target="_blank" rel="noopener">Navigating the Deprecation of EncryptedSharedPreferences — ProAndroidDev</a> — альтернативы: DataStore + Tink, Keystore.</li>
+            <li><a href="https://commonsware.com/Room/pages/chap-sqlcipher-003.html" target="_blank" rel="noopener">The Basics of SQLCipher for Android — CommonsWare</a> — подключение SQLCipher к Room через SupportFactory.</li>
+            <li><a href="https://www.youtube.com/watch?v=W7ua0qCmH1g" target="_blank" rel="noopener">Philipp Lackner — How To Use Android's Preferences DataStore</a> — практический видео-разбор.</li>
+          </ol>
+        </div>
+      </article>
+    </div>
+    <aside id="toc"></aside>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="../assets/app.js?v=20260620-4"></script>
+</body>
+</html>

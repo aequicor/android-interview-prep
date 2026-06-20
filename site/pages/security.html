@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    (() => {
+      const key = "aip-theme";
+      let theme = null;
+      try { theme = localStorage.getItem(key); } catch(e) {}
+      if (theme !== "dark" && theme !== "light") {
+        theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <title>Безопасность · Android-собес</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+</head>
+<body data-page="security">
+  <div class="layout">
+    <aside id="sidebar"></aside>
+    <div id="content">
+      <article class="page">
+        <div class="breadcrumb"></div>
+        <header class="page-head">
+          <span class="eyebrow">Безопасность и качество</span>
+          <h1>Безопасность</h1>
+          <p class="lead">Криптография, Android Keystore (хранилище криптографических ключей), биометрия, защита от реверс-инжиниринга (обратного анализа) и OWASP Mobile Top 10 (Open Worldwide Application Security Project — открытый проект безопасности приложений; список десяти главных мобильных рисков). На собесе проверяют не знание API (программных интерфейсов), а понимание модели угроз: что злоумышленник может, где граница доверия и какими контрмерами вы её держите.</p>
+          <div class="meta">
+            <span class="tag lvl-mid">Middle</span>
+            <span class="tag lvl-sen">Senior</span>
+            <span class="tag hot">Частый вопрос</span>
+          </div>
+        </header>
+
+        <section class="section" id="crypto-basics">
+          <h2>Криптография: симметрия, асимметрия, хеши, MAC</h2>
+          <p>Три кита, которые нужно чётко разграничивать: <strong>шифрование</strong> (конфиденциальность, обратимо при наличии ключа), <strong>хеширование</strong> (целостность/отпечаток, необратимо) и <strong>MAC/подпись</strong> (аутентичность + целостность).</p>
+
+          <p class="subhead">Симметричное vs асимметричное</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Критерий</th><th>Симметричное (AES)</th><th>Асимметричное (RSA / EC)</th></tr></thead>
+              <tbody>
+                <tr><td>Ключи</td><td>Один общий секрет на шифр/дешифр</td><td>Пара: публичный (шифрует/проверяет) + приватный (дешифрует/подписывает)</td></tr>
+                <tr><td>Скорость</td><td>Очень быстро (аппаратное AES-NI)</td><td>На порядки медленнее, объём данных ограничен размером ключа</td></tr>
+                <tr><td>Применение</td><td>Шифрование данных «на диске», полезной нагрузки</td><td>Обмен ключами, цифровая подпись, TLS-handshake</td></tr>
+                <tr><td>Проблема</td><td>Как безопасно доставить общий ключ</td><td>Доверие к публичному ключу (PKI, сертификаты)</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>На практике используют <strong>гибридную схему</strong>: данные шифруют быстрым AES, а сам AES-ключ — асимметрично (или хранят в Keystore). Так работает TLS и «envelope encryption».</p>
+
+          <p class="subhead">Почему AES-GCM, а не AES-CBC</p>
+          <p>GCM — это <strong>AEAD</strong> (Authenticated Encryption with Associated Data): он одновременно шифрует <em>и</em> аутентифицирует. На выходе — шифртекст + тег целостности (16 байт). При дешифровании, если данные подменили, тег не сойдётся и операция упадёт. CBC даёт только конфиденциальность — без MAC он уязвим к padding-oracle и битовым манипуляциям. Поэтому современный выбор по умолчанию — <strong>AES-256-GCM</strong>.</p>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Главный подводный камень GCM — повтор IV/nonce.</strong> Для одного и того же ключа <strong>нельзя</strong> дважды использовать один IV: это полностью ломает безопасность (восстанавливается ключ аутентификации). Генерируйте IV случайно (12 байт) на каждое шифрование и храните его рядом с шифртекстом — он не секрет.</div>
+          </div>
+          <div class="code-label">AesGcmCipher.kt</div>
+<pre><code class="language-kotlin">object AesGcm {
+    private const val GCM_TAG_BITS = 128
+    private const val IV_SIZE = 12  // 96 бит — рекомендация для GCM
+
+    fun encrypt(plain: ByteArray, key: SecretKey): ByteArray {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, key)         // IV сгенерируется провайдером
+        val iv = cipher.iv                            // 12 байт, не секрет
+        val ct = cipher.doFinal(plain)                // шифртекст + 16-байтный тег
+        return iv + ct                                // склеиваем IV || ciphertext||tag
+    }
+
+    fun decrypt(blob: ByteArray, key: SecretKey): ByteArray {
+        val iv = blob.copyOfRange(0, IV_SIZE)
+        val ct = blob.copyOfRange(IV_SIZE, blob.size)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
+        return cipher.doFinal(ct)   // бросит AEADBadTagException, если данные подменили
+    }
+}</code></pre>
+
+          <p class="subhead">Хеши, соль, HMAC и пароли</p>
+          <p><strong>SHA-256</strong> — криптографический хеш: фиксированный отпечаток, лавинный эффект, необратимость. Но «голый» хеш пароля небезопасен: одинаковые пароли дают одинаковый хеш (уязвимо к rainbow-таблицам). Поэтому добавляют <strong>соль</strong> (уникальная случайная строка на каждый пароль) и используют <em>медленные</em> KDF — <strong>Argon2 / scrypt / PBKDF2</strong> — чтобы перебор был дорогим. <strong>HMAC</strong> — это хеш с секретным ключом: даёт аутентичность сообщения (нельзя подделать без ключа), в отличие от простого SHA-256.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Задача</th><th>Инструмент</th><th>Почему</th></tr></thead>
+              <tbody>
+                <tr><td>Конфиденциальность данных</td><td>AES-256-GCM</td><td>Быстро, AEAD (шифр + целостность)</td></tr>
+                <tr><td>Целостность файла / отпечаток</td><td>SHA-256</td><td>Необратимый хеш, лавинный эффект</td></tr>
+                <tr><td>Аутентичность сообщения с общим ключом</td><td>HMAC-SHA-256</td><td>Подделать без ключа невозможно</td></tr>
+                <tr><td>Хранение пароля</td><td>Argon2id / PBKDF2 + соль</td><td>Медленно → перебор дорог</td></tr>
+                <tr><td>Подпись / проверка автором</td><td>RSA-PSS / ECDSA</td><td>Публичная проверяемость без секрета</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Не катайте свою крипту.</strong> Используйте проверенные примитивы и высокоуровневые обёртки (Tink, Jetpack Security). «Roll your own crypto» — классический способ выстрелить себе в ногу (неправильный режим, реюз nonce, утечка по таймингам).</div>
+          </div>
+        </section>
+
+        <section class="section" id="keystore">
+          <h2>Android Keystore: ключи, которые не покидают устройство</h2>
+          <p>Главная идея Keystore: ключевой материал генерируется и используется в <strong>защищённой среде</strong> и не извлекается в адресное пространство приложения. Вы передаёте Keystore данные на шифрование/подпись и получаете результат — но сам ключ «потрогать» нельзя даже с root в обычном процессе. Это превращает кражу ключа в кражу <em>доступа</em> (которую можно отозвать), а не файла.</p>
+
+          <p class="subhead">TEE и StrongBox — где живёт ключ</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Уровень</th><th>Где исполняется</th><th>Стойкость</th></tr></thead>
+              <tbody>
+                <tr><td>Software-backed</td><td>В процессе/ОС (старые девайсы, fallback)</td><td>Слабая: ключ в RAM, доступен при компрометации ОС</td></tr>
+                <tr><td><strong>TEE</strong> (hardware-backed)</td><td>Trusted Execution Environment — изолированная зона того же SoC</td><td>Высокая: ключ вне Android OS, но делит «железо» с основным миром</td></tr>
+                <tr><td><strong>StrongBox</strong></td><td>Отдельный аппаратный Secure Element (своя CPU/RAM/flash)</td><td>Максимальная: физическая изоляция, защита от side-channel и tampering</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Запросить StrongBox — <code>setIsStrongBoxBacked(true)</code>. Если устройство его не поддерживает для заданного алгоритма/размера, провайдер бросит <code>StrongBoxUnavailableException</code> — обработайте и откатитесь на TEE. Проверить, что ключ реально в железе, можно через <code>KeyInfo.isInsideSecureHardware()</code> (на новых API — через <code>getSecurityLevel()</code>).</p>
+
+          <p class="subhead">KeyGenParameterSpec — описываем политику ключа</p>
+          <div class="code-label">KeystoreKeyFactory.kt</div>
+<pre><code class="language-kotlin">fun getOrCreateAesKey(alias: String): SecretKey {
+    val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+    (ks.getKey(alias, null) as? SecretKey)?.let { return it }
+
+    val gen = KeyGenerator.getInstance(
+        KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore"
+    )
+    val spec = KeyGenParameterSpec.Builder(
+        alias,
+        KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+    )
+        .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+        .setKeySize(256)
+        .setIsStrongBoxBacked(true)          // SE, если доступен (иначе ловим исключение)
+        .setUserAuthenticationRequired(true) // использовать ключ только после аутентификации
+        .setUserAuthenticationParameters(
+            0,                               // 0 = требовать аутентификацию на каждую операцию
+            KeyProperties.AUTH_BIOMETRIC_STRONG
+        )
+        // ключ инвалидируется при добавлении нового отпечатка/лица:
+        .setInvalidatedByBiometricEnrollment(true)
+        .build()
+
+    return try {
+        gen.init(spec); gen.generateKey()
+    } catch (e: StrongBoxUnavailableException) {
+        gen.init(KeyGenParameterSpec.Builder(spec).setIsStrongBoxBacked(false).build())
+        gen.generateKey()
+    }
+}</code></pre>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Инвалидация ключей с user-auth.</strong> Ключ, привязанный к биометрии/lockscreen, становится невалидным при изменении набора биометрии (если <code>setInvalidatedByBiometricEnrollment(true)</code>) или снятии экрана блокировки. Готовьтесь ловить <code>KeyPermanentlyInvalidatedException</code> при дешифровании: пересоздать ключ и попросить пользователя заново ввести/сохранить данные. Это частая причина «внезапных» крашей в проде.</div>
+          </div>
+
+          <p class="subhead">Jetpack Security и Tink — обёртки</p>
+          <p>Чтобы не писать boilerplate, есть высокоуровневые библиотеки. <strong>Jetpack Security</strong> (<code>EncryptedSharedPreferences</code>, <code>EncryptedFile</code>) использует Keystore под капотом и шифрует пары ключ/значение и файлы. Под капотом она построена на <strong>Tink</strong> — крипто-библиотеке Google с безопасными дефолтами (AEAD, ротация ключей через keyset, защита от типичных ошибок). Учтите: <code>EncryptedSharedPreferences</code> в Jetpack Security <code>1.x</code> переведена в <em>deprecated</em>; для нового кода рассматривайте Tink напрямую или собственную обёртку поверх Keystore.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart LR
+  A["Открытые данные"] --> B["AES-GCM в приложении"]
+  B -->|"шифрует с DEK"| C["Шифртекст + IV + тег"]
+  C --> D[("Диск: файл / Prefs")]
+  E["DEK (Data Encryption Key)"] -. "обёрнут KEK" .-> F["Android Keystore (TEE / StrongBox)"]
+  F -. "KEK не покидает железо" .-> G["Secure Element"]
+  B -. "берёт DEK у Keystore" .-> E
+          </div>
+          <div class="cap">Envelope encryption: данные шифруются DEK внутри приложения, а DEK защищён KEK из Keystore, который физически не покидает TEE/StrongBox</div>
+          </div>
+        </section>
+
+        <section class="section" id="biometric">
+          <h2>Биометрия: BiometricPrompt и CryptoObject</h2>
+          <p><code>BiometricPrompt</code> (из <code>androidx.biometric</code>) — единая системная точка для отпечатка/лица/радужки с авто-fallback на PIN/пароль. Но важнейший нюанс уровня Senior: <strong>сам факт «прошёл биометрию» — слабая гарантия</strong>. Логический флаг «authenticated = true» легко обойти хуком (Frida) или подменой результата. Сильная схема — <strong>привязать крипто-операцию к биометрии</strong> через <code>CryptoObject</code>: ключ Keystore становится доступен <em>только</em> после успешной аутентификации, и без неё данные физически не расшифровать.</p>
+
+          <p class="subhead">Классы аутентификаторов</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Authenticator</th><th>Что это</th><th>CryptoObject</th></tr></thead>
+              <tbody>
+                <tr><td><code>BIOMETRIC_STRONG</code> (Class 3)</td><td>Стойкая биометрия (низкий spoof/false-accept rate)</td><td><strong>Да</strong> — можно привязывать ключи</td></tr>
+                <tr><td><code>BIOMETRIC_WEAK</code> (Class 2)</td><td>Слабая (напр. часть face-unlock)</td><td>Нет — нельзя использовать с ключом</td></tr>
+                <tr><td><code>DEVICE_CREDENTIAL</code></td><td>Fallback: PIN / паттерн / пароль экрана</td><td>Да (как замена/дополнение к биометрии)</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Для крипто-операций используют <strong>только <code>BIOMETRIC_STRONG</code></strong> (или + <code>DEVICE_CREDENTIAL</code>). Комбинацию <code>BIOMETRIC_STRONG | DEVICE_CREDENTIAL</code> с <code>CryptoObject</code> нельзя применять на API 28–29 (известное ограничение). Если операция должна быть строго «только биометрия» — не добавляйте <code>DEVICE_CREDENTIAL</code> в разрешённые аутентификаторы.</p>
+
+          <p class="subhead">Полный цикл: ключ ↔ биометрия ↔ Cipher</p>
+          <div class="code-label">BiometricSecret.kt</div>
+<pre><code class="language-kotlin">// 1) Проверяем доступность сильной биометрии
+fun canUseStrongBiometrics(ctx: Context): Boolean {
+    val mgr = BiometricManager.from(ctx)
+    return mgr.canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) ==
+            BiometricManager.BIOMETRIC_SUCCESS
+}
+
+// 2) Показываем prompt, передавая Cipher через CryptoObject
+fun decryptWithBiometric(
+    activity: FragmentActivity,
+    cipher: Cipher,                 // init(DECRYPT_MODE, key, GCMParameterSpec(...))
+    payload: ByteArray,
+    onResult: (ByteArray?) -&gt; Unit
+) {
+    val prompt = BiometricPrompt(activity,
+        ContextCompat.getMainExecutor(activity),
+        object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(r: BiometricPrompt.AuthenticationResult) {
+                // r.cryptoObject?.cipher разблокирован TEE именно для этой сессии
+                val unlocked = r.cryptoObject?.cipher ?: return onResult(null)
+                onResult(unlocked.doFinal(payload))
+            }
+            override fun onAuthenticationError(code: Int, msg: CharSequence) = onResult(null)
+        })
+
+    val info = BiometricPrompt.PromptInfo.Builder()
+        .setTitle("Подтвердите личность")
+        .setSubtitle("Доступ к зашифрованным данным")
+        .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+        .setNegativeButtonText("Отмена")  // обязателен, если нет DEVICE_CREDENTIAL
+        .build()
+
+    prompt.authenticate(info, BiometricPrompt.CryptoObject(cipher))
+}</code></pre>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Почему CryptoObject сильнее «флага».</strong> Без него вы доверяете булеву результату prompt — а его можно подделать инструментацией. С <code>CryptoObject</code> успешная биометрия <em>разблокирует сам ключ в TEE</em>: если злоумышленник не прошёл биометрию, <code>cipher.doFinal()</code> провалится, потому что ключ недоступен. Аутентификация становится частью крипто-операции, а не отдельным «да/нет».</div>
+          </div>
+        </section>
+
+        <section class="section" id="reverse">
+          <h2>Реверс-инжиниринг и защита: Frida и контрмеры</h2>
+          <p>Раздел про <strong>defensive security</strong>: как кандидат объясняет угрозы со стороны атакующего и какие контрмеры строит. Не про написание эксплойтов — про понимание, что приложение на чужом устройстве работает во враждебной среде.</p>
+
+          <p class="subhead">Что такое Frida (концептуально)</p>
+          <p><strong>Frida</strong> — это фреймворк <em>динамической инструментации</em>. Идея: подключиться к уже запущенному процессу и в рантайме <strong>«хукнуть» функции</strong> — перехватить вызов, прочитать/подменить аргументы и возвращаемое значение, выполнить свой код. Это даёт атакующему (обычно на рутованном устройстве или эмуляторе) мощный инструмент: можно заставить функцию <code>isDeviceRooted()</code> всегда возвращать <code>false</code>, отключить проверку сертификата, вынуть ключ или токен из памяти, подменить результат «успешной» биометрии. Работает без исходников — хукаются как Java/Kotlin-методы, так и нативные функции по адресу.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart LR
+  A["Атакующий: root / эмулятор"] --> B["Frida server в процессе"]
+  B --> C{"Хук метода в рантайме"}
+  C -->|"перехват"| D["checkSsl() -> true"]
+  C -->|"перехват"| E["isRooted() -> false"]
+  C -->|"чтение памяти"| F["Вынуть токен / ключ"]
+  G["Контрмеры (RASP)"] -.->|"детект Frida-сервера"| B
+  G -.->|"проверка целостности"| C
+          </div>
+          <div class="cap">Концептуально: инструментация перехватывает вызовы в рантайме; защита (RASP) пытается обнаружить присутствие хуков и факт компрометации среды</div>
+          </div>
+          <p>Что обычно <strong>пытаются обойти</strong>: SSL/certificate pinning (чтобы читать трафик через MITM-прокси), root/emulator detection, проверки целостности и подписи APK, лицензионные и платёжные проверки. Важно понимать: на достаточно подготовленном устройстве <strong>любая клиентская защита в итоге обходима</strong> — цель контрмер не «сделать невозможным», а «сделать дорого и заметно».</p>
+
+          <p class="subhead">Контрмеры — эшелонированная защита</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Угроза</th><th>Контрмера</th><th>Что даёт</th></tr></thead>
+              <tbody>
+                <tr><td>Чтение/анализ кода после декомпиляции</td><td><strong>R8 / ProGuard</strong>: обфускация имён, удаление мёртвого кода</td><td>Повышает стоимость reverse-инжиниринга, путает символы</td></tr>
+                <tr><td>Логические байпасы (root/jailbreak обход)</td><td><strong>Play Integrity API</strong> — серверная проверка вердикта целостности устройства/приложения</td><td>Решение принимает бэкенд, а не клиент → хук не помогает</td></tr>
+                <tr><td>Запуск на скомпрометированной среде</td><td><strong>Root / emulator / hooking detection</strong>, RASP (Talsec, Approov)</td><td>Детект Frida-сервера, su-бинарей, эмулятора; реакция — блок/деградация</td></tr>
+                <tr><td>Подмена/перепаковка APK</td><td><strong>Anti-tamper</strong>: проверка подписи (signing cert), integrity-чек</td><td>Обнаружение модификации и пересборки</td></tr>
+                <tr><td>Извлечение строк/секретов из бинаря</td><td><strong>Шифрование строк</strong>, перенос логики в <strong>native (NDK/C++)</strong></td><td>Секрет не лежит plaintext; нативный код сложнее анализировать</td></tr>
+                <tr><td>MITM на сетевом уровне</td><td><strong>Certificate / public-key pinning</strong></td><td>Приложение доверяет только своему сертификату/ключу</td></tr>
+                <tr><td>Перехват в рантайме (Frida hooks)</td><td>Детект инструментации + критичные проверки <strong>на сервере</strong></td><td>Сдвигает доверие с клиента туда, где его контролируете вы</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>Ключевой принцип.</strong> Никогда не полагайтесь <em>только</em> на клиентскую проверку для критичных решений (платёж прошёл, пользователь не на руте, лицензия валидна). Клиент сообщает <strong>сигнал</strong> — а финальное решение принимает сервер, сопоставляя его с <strong>Play Integrity</strong> и собственной бизнес-логикой. Это единственная защита, которую нельзя отключить хуком на устройстве.</div>
+          </div>
+
+          <p class="subhead">Play Integrity API</p>
+          <p>Заменил устаревший SafetyNet Attestation. Возвращает подписанный Google вердикт о целостности: <strong>устройства</strong> (<code>MEETS_BASIC_INTEGRITY</code> / <code>MEETS_DEVICE_INTEGRITY</code> / <code>MEETS_STRONG_INTEGRITY</code>), <strong>приложения</strong> (подлинный ли APK из Play, не перепакован), <strong>аккаунта</strong>. <code>MEETS_STRONG_INTEGRITY</code> — высший уровень: требует hardware-backed подтверждения загрузки (verified boot) и свежих патчей безопасности; рутованные устройства с разблокированным загрузчиком его обычно не проходят. Критично: <strong>вердикт нужно проверять на вашем сервере</strong> (валидировать подпись токена), иначе ответ можно подделать на клиенте.</p>
+        </section>
+
+        <section class="section" id="owasp-storage">
+          <h2>OWASP Mobile Top 10 и безопасное хранение секретов</h2>
+          <p><strong>OWASP Mobile Top 10 (2024)</strong> — отраслевой чек-лист рисков мобильных приложений. На собесе достаточно знать структуру и пару пунктов глубоко.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>#</th><th>Риск (2024)</th><th>Суть для Android</th></tr></thead>
+              <tbody>
+                <tr><td>M1</td><td>Improper Credential Usage</td><td>Хардкод секретов, небезопасная передача/хранение токенов и API-ключей</td></tr>
+                <tr><td>M2</td><td>Inadequate Supply Chain Security</td><td>Уязвимые сторонние SDK/библиотеки, скомпрометированный CI</td></tr>
+                <tr><td>M3</td><td>Insecure Authentication/Authorization</td><td>Слабая аутентификация, проверки прав только на клиенте</td></tr>
+                <tr><td>M4</td><td>Insufficient Input/Output Validation</td><td>Инъекции, небезопасные deep link и IPC-данные</td></tr>
+                <tr><td>M5</td><td>Insecure Communication</td><td>Cleartext-трафик, отсутствие pinning, слабый TLS</td></tr>
+                <tr><td>M6</td><td>Inadequate Privacy Controls</td><td>Утечка PII, избыточный сбор данных</td></tr>
+                <tr><td>M7</td><td>Insufficient Binary Protections</td><td>Нет обфускации/anti-tamper → лёгкий реверс</td></tr>
+                <tr><td>M8</td><td>Security Misconfiguration</td><td>Debuggable-флаг, экспортированные компоненты, backup секретов</td></tr>
+                <tr><td>M9</td><td>Insecure Data Storage</td><td>Чувствительные данные в открытом виде на диске/в логах</td></tr>
+                <tr><td>M10</td><td>Insufficient Cryptography</td><td>Слабые алгоритмы, реюз nonce, самописная крипта</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="subhead">Где НЕ хранить секреты</p>
+          <p>Частый вопрос-ловушка: «куда положить API-ключ?». Правильный ответ начинается с «зависит, какой секрет, и в идеале — не на клиенте». Конкретика:</p>
+          <ul>
+            <li><strong>Не в коде / не в <code>BuildConfig</code> / не в <code>strings.xml</code> / не в <code>gradle.properties</code>, попавших в APK.</strong> Всё это тривиально достаётся декомпиляцией (<code>BuildConfig</code> — это просто константы в classes.dex). Обфускация имён их не прячет — значения остаются строками.</li>
+            <li><strong>Не в обычных <code>SharedPreferences</code> и не в логах.</strong> На рутованном устройстве и в бэкапах это читается.</li>
+            <li><strong>Высокочувствительные секреты</strong> (ключи к платёжкам, мастер-ключи) — только на сервере; клиент получает короткоживущие токены.</li>
+            <li><strong>Если секрет всё же нужен на устройстве</strong> (например, токен сессии) — шифруйте через Keystore (<code>EncryptedFile</code>/Tink), привязывайте к user-auth, держите время жизни минимальным.</li>
+          </ul>
+          <div class="code-label">SecureTokenStore.kt — токен под Keystore, не в Prefs</div>
+<pre><code class="language-kotlin">class SecureTokenStore(context: Context) {
+    private val keyAlias = "session_token_key"
+
+    fun save(token: String) {
+        val key = KeystoreKeyFactory.getOrCreateAesKey(keyAlias) // см. раздел Keystore
+        val blob = AesGcm.encrypt(token.toByteArray(), key)       // IV||ct||tag
+        File(context.filesDir, "session.bin").writeBytes(blob)    // на диске — только шифртекст
+    }
+
+    fun load(): String? {
+        val f = File(context.filesDir, "session.bin")
+        if (!f.exists()) return null
+        return try {
+            val key = KeystoreKeyFactory.getOrCreateAesKey(keyAlias)
+            String(AesGcm.decrypt(f.readBytes(), key))
+        } catch (e: KeyPermanentlyInvalidatedException) {
+            f.delete(); null   // ключ инвалидирован (сменилась биометрия) — чистим и просим перелогин
+        }
+    }
+}</code></pre>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Backup и логи.</strong> Отключите авто-бэкап для файлов с секретами (<code>android:allowBackup="false"</code> или правила <code>dataExtractionRules</code>), иначе зашифрованный blob и/или метаданные утекут в облачный бэкап. И никогда не логируйте токены/PII — логи читаются на устройстве и попадают в краш-репорты.</div>
+          </div>
+        </section>
+
+        <section class="section" id="ipc-network">
+          <h2>Безопасный IPC, WebView и сеть</h2>
+
+          <p class="subhead">Экспортированные компоненты и permissions</p>
+          <p>Каждый <code>exported</code>-компонент (Activity/Service/Receiver/Provider) — это <strong>точка входа извне</strong>, доступная другим приложениям. С API 31 атрибут <code>android:exported</code> обязателен явно. Правила: экспортируйте только то, что действительно публично; защищайте чувствительные компоненты <strong>custom permission</strong> с <code>protectionLevel="signature"</code> (вызывать сможет только приложение с вашей подписью); валидируйте <em>все</em> входящие <code>Intent</code> как недоверенный ввод; не передавайте секреты через широковещательные интенты.</p>
+          <div class="code-label">AndroidManifest.xml</div>
+<pre><code class="language-kotlin">&lt;!-- своя подпись-разрешение: вызовет только приложение с тем же signing-ключом --&gt;
+&lt;permission android:name="com.app.permission.SYNC"
+    android:protectionLevel="signature" /&gt;
+
+&lt;service
+    android:name=".SyncService"
+    android:exported="false" /&gt;        &lt;!-- по умолчанию закрыт --&gt;
+
+&lt;activity
+    android:name=".DeepLinkActivity"
+    android:exported="true"&gt;           &lt;!-- открыт намеренно: ловит deep link --&gt;
+    &lt;intent-filter android:autoVerify="true"&gt;
+        &lt;action android:name="android.intent.action.VIEW" /&gt;
+        &lt;data android:scheme="https" android:host="app.example.com" /&gt;
+    &lt;/intent-filter&gt;
+&lt;/activity&gt;</code></pre>
+
+          <p class="subhead">Валидация deep link</p>
+          <p>Deep link / App Link — это <strong>недоверенный вход</strong>: ссылку может сформировать кто угодно. Используйте <strong>Android App Links</strong> (<code>autoVerify="true"</code> + <code>assetlinks.json</code> на домене) — это криптографически привязывает ссылку к вашему домену, исключая перехват кастомной схемы другим приложением. Всегда валидируйте параметры (никаких слепых редиректов по URL из ссылки, проверка прав на запрошенный ресурс, защита от open-redirect и инъекций).</p>
+
+          <p class="subhead">Риски WebView</p>
+          <p><code>WebView</code> — частый источник дыр. Ключевые правила:</p>
+          <ul>
+            <li><strong><code>addJavascriptInterface</code></strong> — самое опасное. Исторически (до API 17) позволял RCE через рефлексию. Сейчас экспонируйте только методы с <code>@JavascriptInterface</code>, минимизируйте поверхность, <strong>не</strong> подключайте интерфейс к недоверенному контенту.</li>
+            <li><strong>Не включайте <code>setJavaScriptEnabled(true)</code></strong>, если не нужно; не грузите произвольные URL; отключите доступ к файловой системе (<code>setAllowFileAccess(false)</code>).</li>
+            <li>Включите <strong>Safe Browsing</strong> (<code>setSafeBrowsingEnabled(true)</code>, API 26+).</li>
+            <li>Загружайте только HTTPS; cleartext в WebView запрещайте через network security config.</li>
+          </ul>
+
+          <p class="subhead">Network Security Config и certificate pinning</p>
+          <p><strong>Network Security Configuration</strong> (XML, API 24+) — декларативный способ задать сетевую политику без правки кода: запретить cleartext, ограничить доверенные CA, настроить <strong>pinning</strong>. Плюс в том, что правила применяются ко всему сетевому стеку, включая <code>WebView</code>, автоматически. <strong>Certificate pinning</strong> заставляет приложение доверять только конкретному сертификату/публичному ключу сервера — даже валидный, но «чужой» сертификат (подставленный MITM-прокси или скомпрометированным CA) будет отклонён. Пинят обычно <strong>публичный ключ (SPKI)</strong>, а не весь сертификат, и закладывают <strong>backup-pin</strong> на случай ротации.</p>
+          <div class="code-label">res/xml/network_security_config.xml</div>
+<pre><code class="language-kotlin">&lt;network-security-config&gt;
+    &lt;!-- запрещаем нешифрованный трафик глобально --&gt;
+    &lt;base-config cleartextTrafficPermitted="false" /&gt;
+
+    &lt;domain-config&gt;
+        &lt;domain includeSubdomains="true"&gt;api.example.com&lt;/domain&gt;
+        &lt;pin-set expiration="2026-12-31"&gt;
+            &lt;!-- основной pin (SPKI публичного ключа) --&gt;
+            &lt;pin digest="SHA-256"&gt;k3X...основной...=&lt;/pin&gt;
+            &lt;!-- backup-pin на случай ротации сертификата --&gt;
+            &lt;pin digest="SHA-256"&gt;9aF...запасной...=&lt;/pin&gt;
+        &lt;/pin-set&gt;
+    &lt;/domain-config&gt;
+&lt;/network-security-config&gt;</code></pre>
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>Pinning без backup-pin — мина замедленного действия.</strong> Если запинить один сертификат и он ротируется/истечёт, все клиенты потеряют связь с сервером, а починить можно только обновлением приложения. Всегда закладывайте запасной pin (на будущий ключ) и <code>expiration</code>. Альтернатива в коде — OkHttp <code>CertificatePinner</code>, но конфиг покрывает и WebView.</div>
+          </div>
+        </section>
+
+        <section class="section" id="video">
+          <h2>Видео-разбор</h2>
+                    <a class="ytcard" href="https://youtu.be/aaSck7jBDbw?t=0" target="_blank" rel="noopener">
+            <span class="yt-thumb" style="background-image:url('https://img.youtube.com/vi/aaSck7jBDbw/hqdefault.jpg')">
+              <span class="yt-play"></span>
+              <span class="yt-time">▶ с начала</span>
+            </span>
+            <span class="yt-meta">
+              <strong>Encryption &amp; Decryption in Android (Keystore, Ciphers)</strong>
+              <span class="yt-by">Philipp Lackner · EN</span>
+              <span class="yt-why">Практика: ключи в Android Keystore + Cipher, шифрование данных на устройстве.</span>
+            </span>
+          </a>
+        </section>
+
+        <section class="section" id="faq">
+          <h2>Частые вопросы интервьюера</h2>
+
+          <details class="qa">
+            <summary>В чём разница симметричного и асимметричного шифрования и когда что применять? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>Симметричное (AES) — один общий ключ, быстро, для шифрования объёмных данных «на диске» или полезной нагрузки. Асимметричное (RSA/EC) — пара ключей (публичный/приватный), медленно, для обмена ключами, цифровой подписи и TLS-handshake. На практике — гибридно: данные шифруют AES, а сам AES-ключ передают/защищают асимметрично (envelope encryption). Для Android: данные — AES-256-GCM, а ключ защищён Keystore.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Зачем хранить ключ в Keystore, если он «всё равно на устройстве»? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Потому что в Keystore ключ <strong>не извлекается</strong> в память приложения: он живёт в TEE/StrongBox, а вы лишь передаёте данные на шифрование/подпись. Даже с root в обычном процессе нельзя скопировать ключевой материал — можно лишь временно получить <em>доступ</em> к операции, который отзывается (сменой биометрии, переустановкой). Это превращает кражу «файла-ключа» в кражу доступа, плюс позволяет привязать ключ к биометрии. Хранить же ключ в SharedPreferences/файле — значит отдать его при первом дампе памяти или бэкапе.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Чем CryptoObject лучше простого флага «биометрия пройдена»? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Булев результат prompt — это логическая проверка, которую легко обойти хуком (Frida перехватит callback и вернёт «успех»). <code>CryptoObject</code> привязывает крипто-операцию к биометрии: успешная аутентификация <strong>разблокирует сам ключ в TEE</strong> для этой сессии. Если пользователь не прошёл биометрию, ключ недоступен и <code>cipher.doFinal()</code> упадёт — расшифровать данные физически нельзя. Аутентификация становится частью операции, а не отдельным «да/нет». Для этого нужен ключ с <code>setUserAuthenticationRequired(true)</code> и authenticator <code>BIOMETRIC_STRONG</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Что такое Frida и как от неё защищаться? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Frida — фреймворк динамической инструментации: подключается к запущенному процессу и хукает функции в рантайме (перехват аргументов/результата, выполнение своего кода). Атакующий обходит SSL pinning, root detection, integrity-проверки, вынимает токены из памяти. Защита эшелонированная: детект инструментации (наличие Frida-сервера, подозрительные библиотеки) через RASP; обфускация R8; критичные строки шифруются, чувствительная логика — в native. Но главное — <strong>не доверять клиенту</strong>: финальные решения (целостность, лицензия, платёж) принимать на сервере по вердикту Play Integrity. На подготовленном устройстве клиентскую защиту в итоге обходят — цель в том, чтобы поднять стоимость и заметность атаки.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Можно ли хранить API-ключ в BuildConfig или strings.xml? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Нет. <code>BuildConfig</code> — это просто константы в classes.dex, а <code>strings.xml</code> — ресурсы; и то и другое тривиально достаётся декомпиляцией (apktool/jadx), обфускация значения-строки не прячет. Высокочувствительные секреты должны жить на сервере, а клиент получать короткоживущие токены. Если секрет действительно нужен на устройстве — шифровать через Keystore (EncryptedFile/Tink), привязывать к user-auth и минимизировать TTL. И помнить, что любой секрет в APK — это уже не секрет, а «обфусцированная константа».</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Что такое certificate pinning и какие у него риски? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Pinning заставляет приложение доверять только конкретному сертификату/публичному ключу сервера, а не любому валидному из системного хранилища. Это защищает от MITM через скомпрометированный или подставленный CA. Пинят обычно SPKI (публичный ключ), потому что он переживает обновление сертификата. Главный риск — <strong>отсутствие backup-pin</strong>: при ротации/истечении ключа без запасного pin все клиенты теряют связь, и чинится это только релизом приложения. Поэтому всегда закладывают backup-pin и срок действия. Настраивают через Network Security Config (покрывает и WebView) или OkHttp CertificatePinner.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Почему AES-GCM предпочтительнее AES-CBC и в чём опасность GCM? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>GCM — это AEAD: шифрует и одновременно аутентифицирует (тег целостности). При подмене шифртекста дешифрование падает (<code>AEADBadTagException</code>). CBC даёт только конфиденциальность, без MAC уязвим к padding-oracle и битовым манипуляциям. Опасность GCM — <strong>повтор IV/nonce под одним ключом</strong>: это катастрофа, восстанавливается ключ аутентификации и теряется конфиденциальность. Поэтому IV (12 байт) генерируют случайно на каждое шифрование и хранят рядом с шифртекстом (он не секрет). Никогда не используйте фиксированный/счётчиковый IV без гарантии уникальности.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как обезопасить exported-компоненты и deep link? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Экспортируйте только то, что реально публично (с API 31 <code>android:exported</code> обязателен явно). Чувствительные компоненты защищайте custom permission с <code>protectionLevel="signature"</code> — вызовет только приложение с вашей подписью. Все входящие <code>Intent</code> и параметры deep link трактуйте как недоверенный ввод и валидируйте. Для ссылок используйте Android App Links (<code>autoVerify</code> + <code>assetlinks.json</code>), что криптографически привязывает домен и не даёт перехватить кастомную схему. Не передавайте секреты через broadcast и не делайте слепых редиректов по URL из ссылки.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Чем TEE отличается от StrongBox? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>TEE (Trusted Execution Environment) — изолированный «безопасный мир» на том же SoC, что и основная ОС: ключи исполняются вне Android, но делят физическое железо. StrongBox — отдельный аппаратный Secure Element со своими CPU/RAM/flash: физическая изоляция, защита от side-channel и аппаратного вскрытия — максимальная стойкость. Запрашивается <code>setIsStrongBoxBacked(true)</code>; если не поддержан — <code>StrongBoxUnavailableException</code>, нужно откатиться на TEE. Проверить уровень — <code>KeyInfo.getSecurityLevel()</code>/<code>isInsideSecureHardware()</code>. StrongBox требуется для самых чувствительных ключей (платежи, identity), для большинства задач достаточно TEE.</p></div>
+          </details>
+
+        </section>
+
+        <section class="section" id="tasks">
+          <h2>Задачи</h2>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 1.</strong> Вам дали код, который шифрует пользовательские данные и сохраняет их на диск. Найдите уязвимость и перепишите метод так, чтобы он использовал Android Keystore с AES-256-GCM, генерировал уникальный IV на каждое шифрование и корректно обрабатывал инвалидацию ключа при смене биометрии.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">// ❌ Уязвимый исходный код
+object BrokenEncryptor {
+    private val KEY = SecretKeySpec("hardcoded_key_123".toByteArray(), "AES")
+    private val FIXED_IV = ByteArray(12) { 0 }  // один IV для всех шифровок
+
+    fun encrypt(data: ByteArray): ByteArray {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, KEY, GCMParameterSpec(128, FIXED_IV))
+        return cipher.doFinal(data)  // не сохраняет IV рядом с данными
+    }
+}
+
+// ✅ Правильная реализация
+class SecureEncryptor(private val alias: String) {
+
+    private fun getOrCreateKey(): SecretKey {
+        val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        (ks.getKey(alias, null) as? SecretKey)?.let { return it }
+
+        val gen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        val spec = KeyGenParameterSpec.Builder(
+            alias,
+            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+        )
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setKeySize(256)
+            .setUserAuthenticationRequired(true)
+            .setUserAuthenticationParameters(0, KeyProperties.AUTH_BIOMETRIC_STRONG)
+            .setInvalidatedByBiometricEnrollment(true)
+            .build()
+        gen.init(spec)
+        return gen.generateKey()
+    }
+
+    fun encrypt(data: ByteArray): ByteArray {
+        val key = getOrCreateKey()
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, key)   // IV генерируется случайно провайдером
+        val iv = cipher.iv                       // 12 байт, не секрет
+        val ct = cipher.doFinal(data)
+        return iv + ct                           // формат: IV(12) || CT || Tag(16)
+    }
+
+    fun decrypt(blob: ByteArray): ByteArray? {
+        return try {
+            val key = getOrCreateKey()
+            val iv = blob.copyOfRange(0, 12)
+            val ct = blob.copyOfRange(12, blob.size)
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
+            cipher.doFinal(ct)
+        } catch (e: KeyPermanentlyInvalidatedException) {
+            // ключ инвалидирован: новая биометрия — пересоздать и попросить re-auth
+            null
+        }
+    }
+}</code></pre>
+                <p>Объяснение: исходный код содержит три уязвимости: хардкод ключа в памяти приложения (тривиально извлекается), фиксированный IV (ломает GCM — восстанавливается ключ аутентификации), отсутствие обработки инвалидации ключа. Исправление переносит ключ в Keystore (физически не извлекаем), генерирует уникальный IV на каждую операцию и ловит <code>KeyPermanentlyInvalidatedException</code>.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 2.</strong> Ваш коллега написал BiometricAuth-обёртку. При тест-ревью вы обнаружили, что защита обходится одним Frida-скриптом, не затрагивая крипто-операции. Перепишите метод <code>authenticate()</code> так, чтобы данные физически нельзя было расшифровать без успешной биометрии, — используйте CryptoObject.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">// ❌ Уязвимая реализация — флаг можно подделать хуком
+class WeakBiometricAuth(private val activity: FragmentActivity) {
+
+    private var isAuthenticated = false   // Frida легко делает это true
+
+    fun authenticate(onSuccess: () -&gt; Unit) {
+        val prompt = BiometricPrompt(activity,
+            ContextCompat.getMainExecutor(activity),
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(r: BiometricPrompt.AuthenticationResult) {
+                    isAuthenticated = true
+                    onSuccess()   // вызывается и при хукнутом флаге
+                }
+                override fun onAuthenticationError(code: Int, msg: CharSequence) {}
+            })
+        prompt.authenticate(BiometricPrompt.PromptInfo.Builder()
+            .setTitle("Войти")
+            .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+            .setNegativeButtonText("Отмена")
+            .build())
+    }
+}
+
+// ✅ Сильная схема — биометрия разблокирует ключ в TEE
+class StrongBiometricDecryptor(
+    private val activity: FragmentActivity,
+    private val keyAlias: String
+) {
+    // Ключ должен быть создан с setUserAuthenticationRequired(true), BIOMETRIC_STRONG
+    fun decryptWithBiometric(
+        encryptedBlob: ByteArray,   // формат: IV(12) || CT || Tag(16)
+        onResult: (ByteArray?) -&gt; Unit
+    ) {
+        val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        val key = ks.getKey(keyAlias, null) as? SecretKey
+            ?: return onResult(null)
+
+        val iv = encryptedBlob.copyOfRange(0, 12)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
+        // cipher ещё «заблокирован» — TEE не пустит до реальной биометрии
+
+        val prompt = BiometricPrompt(activity,
+            ContextCompat.getMainExecutor(activity),
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(r: BiometricPrompt.AuthenticationResult) {
+                    val unlockedCipher = r.cryptoObject?.cipher
+                        ?: return onResult(null)
+                    // только здесь ключ разблокирован TEE для этой сессии
+                    val plain = try {
+                        unlockedCipher.doFinal(encryptedBlob.copyOfRange(12, encryptedBlob.size))
+                    } catch (e: Exception) { null }
+                    onResult(plain)
+                }
+                override fun onAuthenticationError(code: Int, msg: CharSequence) = onResult(null)
+            })
+
+        prompt.authenticate(
+            BiometricPrompt.PromptInfo.Builder()
+                .setTitle("Подтвердите личность")
+                .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+                .setNegativeButtonText("Отмена")
+                .build(),
+            BiometricPrompt.CryptoObject(cipher)   // ← вот вся суть
+        )
+    }
+}</code></pre>
+                <p>Объяснение: слабая версия доверяет булеву флагу — Frida перехватит <code>onAuthenticationSucceeded</code> и вызовет его напрямую. В сильной версии <code>CryptoObject(cipher)</code> передаётся в prompt: успешная биометрия разблокирует ключ в TEE именно для этого cipher-объекта. Без реальной биометрии <code>cipher.doFinal()</code> бросит исключение, потому что ключ физически недоступен. Хук на callback ничего не даст — данные всё равно не расшифруются.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 3.</strong> Приложение использует Certificate Pinning через Network Security Config. После ротации сертификата на сервере все пользователи получили сетевую ошибку и пришлось срочно выкатывать хотфикс. Объясните ошибку в конфиге и напишите исправленный вариант, который выдержит плановую ротацию без аварийного релиза.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">// ❌ Уязвимый конфиг — один pin, нет expiration, нет backup
+// res/xml/network_security_config_broken.xml:
+//
+// &lt;network-security-config&gt;
+//     &lt;domain-config&gt;
+//         &lt;domain includeSubdomains="true"&gt;api.example.com&lt;/domain&gt;
+//         &lt;pin-set&gt;
+//             &lt;pin digest="SHA-256"&gt;oldKey...=&lt;/pin&gt;
+//         &lt;/pin-set&gt;
+//     &lt;/domain-config&gt;
+// &lt;/network-security-config&gt;
+//
+// При ротации сертификата на сервере oldKey становится невалидным →
+// все клиенты получают SSLPeerUnverifiedException, связь рвётся.
+
+// ✅ Правильный конфиг — основной pin + backup + expiration + запрет cleartext
+// res/xml/network_security_config.xml:
+//
+// &lt;network-security-config&gt;
+//     &lt;base-config cleartextTrafficPermitted="false" /&gt;
+//
+//     &lt;domain-config&gt;
+//         &lt;domain includeSubdomains="true"&gt;api.example.com&lt;/domain&gt;
+//         &lt;pin-set expiration="2027-06-01"&gt;
+//             &lt;!-- основной: текущий публичный ключ (SPKI SHA-256) --&gt;
+//             &lt;pin digest="SHA-256"&gt;currentKey...=&lt;/pin&gt;
+//             &lt;!-- backup: следующий ключ, уже готов, но ещё не активен --&gt;
+//             &lt;pin digest="SHA-256"&gt;nextKey...=&lt;/pin&gt;
+//         &lt;/pin-set&gt;
+//     &lt;/domain-config&gt;
+// &lt;/network-security-config&gt;
+
+// Для OkHttp-вариант (если нужно в коде):
+fun buildSecureClient(): OkHttpClient {
+    val pinner = CertificatePinner.Builder()
+        .add("api.example.com",
+            "sha256/currentKey...=",   // основной
+            "sha256/nextKey...=")      // backup на ротацию
+        .build()
+    return OkHttpClient.Builder()
+        .certificatePinner(pinner)
+        .build()
+}
+
+// Алгоритм получения pin для своего домена:
+// openssl s_client -connect api.example.com:443 | \
+//   openssl x509 -pubkey -noout | \
+//   openssl pkey -pubin -outform der | \
+//   openssl dgst -sha256 -binary | base64</code></pre>
+                <p>Объяснение: без backup-pin ротация сертификата на сервере мгновенно разрывает связь для всех клиентов, у которых нет обновлённого приложения. Правильная схема: всегда держать два pin — текущий и следующий (его генерируют заранее, до ротации). Пинить нужно SPKI (публичный ключ), а не весь сертификат — тогда обновление сертификата при том же ключе не ломает pin. Атрибут <code>expiration</code> заставляет устаревший конфиг игнорировать pin-проверку (защита от «вечного» lockout), что стимулирует регулярные обновления приложения.</p>
+              </div>
+            </details>
+          </div>
+
+        </section>
+
+        <div class="sources">
+          <h2>Источники</h2>
+          <ol>
+            <li><a href="https://developer.android.com/privacy-and-security/keystore" target="_blank" rel="noopener">Android Keystore system — Android Developers</a> — генерация ключей, hardware-backing, KeyGenParameterSpec.</li>
+            <li><a href="https://developer.android.com/identity/sign-in/biometric-auth" target="_blank" rel="noopener">Show a biometric authentication dialog — Android Developers</a> — BiometricPrompt, CryptoObject, классы аутентификаторов.</li>
+            <li><a href="https://developer.android.com/google/play/integrity/overview" target="_blank" rel="noopener">Play Integrity API — Android Developers</a> — вердикты целостности устройства/приложения, серверная проверка.</li>
+            <li><a href="https://developer.android.com/privacy-and-security/security-config" target="_blank" rel="noopener">Network Security Configuration — Android Developers</a> — запрет cleartext, certificate pinning, охват WebView.</li>
+            <li><a href="https://developer.android.com/topic/security/best-practices" target="_blank" rel="noopener">Security checklist — Android Developers</a> — exported-компоненты, WebView, IPC, deep link.</li>
+            <li><a href="https://owasp.org/www-project-mobile-top-10/" target="_blank" rel="noopener">OWASP Mobile Top 10 — OWASP Foundation</a> — каталог рисков мобильных приложений (2024).</li>
+            <li><a href="https://mas.owasp.org/MASTG/knowledge/android/MASVS-STORAGE/MASTG-KNOW-0043/" target="_blank" rel="noopener">OWASP MASTG — Android KeyStore</a> — детали хранения ключей и проверки secure hardware.</li>
+            <li><a href="https://www.youtube.com/watch?v=aaSck7jBDbw" target="_blank" rel="noopener">Philipp Lackner — FULL Guide to Encryption &amp; Decryption in Android</a> — практический разбор Keystore и Cipher.</li>
+          </ol>
+        </div>
+      </article>
+    </div>
+    <aside id="toc"></aside>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="../assets/app.js?v=20260620-4"></script>
+</body>
+</html>

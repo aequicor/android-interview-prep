@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>(()=>{const k="aip-theme";let t=null;try{t=localStorage.getItem(k)}catch(e){}
+    if(t!=="dark"&&t!=="light")t=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";
+    document.documentElement.setAttribute("data-theme",t)})();</script>
+  <title>Язык Kotlin · Android-собес</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+</head>
+<body data-page="kotlin">
+  <div class="layout">
+    <aside id="sidebar"></aside>
+    <div id="content">
+      <article class="page">
+        <div class="breadcrumb"></div>
+        <header class="page-head">
+          <span class="eyebrow">Язык и проектирование</span>
+          <h1>Язык Kotlin</h1>
+          <p class="lead">На собеседовании проверяют не синтаксис, а понимание того, во что компилируется код: почему <code>!!</code> опасен, чем <code>lateinit</code> отличается от <code>by lazy</code>, что генерирует <code>data class</code>, сколько стоит лямбда без <code>inline</code>, зачем в системе типов существует <code>Nothing</code> и как SAM-конвертация работает с Java. Здесь — null-safety, система типов, generics, delegates и интероп с Java на уровне байткода и компиляторных вставок.</p>
+          <div class="meta">
+            <span class="tag lvl-mid">Middle</span>
+            <span class="tag lvl-sen">Senior</span>
+            <span class="tag hot">Частый вопрос</span>
+          </div>
+        </header>
+
+        <section class="section" id="null-safety">
+          <h2>Null-safety: система типов против NPE</h2>
+          <p>Kotlin делит типы на <strong>nullable</strong> (<code>String?</code>) и <strong>non-null</strong> (<code>String</code>) на уровне компилятора. Это не рантайм-проверка, а статическая гарантия: нельзя присвоить <code>null</code> в non-null переменную, нельзя вызвать метод на nullable-ссылке без явной проверки — компилятор не пропустит.</p>
+          <div class="code-label">NullSafety.kt</div>
+<pre><code class="language-kotlin">val a: String = "ok"
+// val b: String = null            // ❌ не компилируется
+val c: String? = null              // ✅ nullable
+
+val len1 = c?.length               // safe call → Int? (null, если c == null)
+val len2 = c?.length ?: 0          // Elvis: подставит 0 при null
+val len3 = c!!.length              // !! → NullPointerException, если c == null
+
+c?.let { s -&gt; println(s.length) }  // блок выполнится только при c != null</code></pre>
+
+          <p class="subhead">Платформенные типы из Java</p>
+          <p>Тип без аннотаций <code>@Nullable</code>/<code>@NonNull</code> Kotlin видит как <strong>платформенный</strong> <code>String!</code>: компилятор не знает, nullable он или нет, и отключает проверки. Разработчик вправе присвоить его в non-null переменную — и получить NPE в неожиданном месте.</p>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Подводный камень.</strong> <code>val name: String = javaObject.getName()</code> компилируется, даже если Java-метод вернёт <code>null</code>. NPE прилетит при присваивании, а стектрейс укажет на Kotlin-код, а не на Java-источник. На границе с Java явно указывайте nullable-тип или добавьте корректные Java-аннотации <code>@Nullable</code>/<code>@NonNull</code>.</div>
+          </div>
+
+          <p class="subhead">Где именно компилятор вставляет runtime-проверки</p>
+          <p>Для чистого Kotlin null-safety работает статически. Но в байткод компилятор добавляет assertion там, где не может доказать безопасность на этапе компиляции:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Ситуация</th><th>Когда упадёт</th><th>Что происходит в байткоде</th></tr></thead>
+              <tbody>
+                <tr><td><code>x!!</code></td><td>В момент выполнения, если <code>x == null</code></td><td>Компилятор вставляет <code>checkNotNull</code>; дальнейший код работает с non-null</td></tr>
+                <tr><td>Platform type → Kotlin non-null</td><td>Сразу после Java-вызова, до сохранения результата</td><td>Assertion-проверка перед сохранением в non-null переменную</td></tr>
+                <tr><td>Platform value в non-null параметр</td><td>Перед входом в функцию</td><td>Проверка аргумента в точке вызова</td></tr>
+                <tr><td><code>lateinit</code> до присваивания</td><td>При первом чтении свойства</td><td><code>UninitializedPropertyAccessException</code> — не NPE</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="subhead"><code>lateinit var</code> vs <code>val … by lazy</code></p>
+          <p>Оба паттерна откладывают инициализацию, но по-разному. <code>lateinit var</code> — обещание компилятору «присвою до первого чтения»; поддерживается только для <code>var</code> ненулевых не-примитивных типов. Backing field — скрытое JVM-поле, изначально содержащее специальный sentinel-маркер. <code>by lazy</code> — делегат: при первом обращении вызывается лямбда инициализации, результат кешируется в объекте-делегате.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Критерий</th><th><code>lateinit var</code></th><th><code>val … by lazy</code></th></tr></thead>
+              <tbody>
+                <tr><td>Мутабельность</td><td>Только <code>var</code></td><td>Только <code>val</code></td></tr>
+                <tr><td>Типы</td><td>Не-примитивы (нет <code>Int</code>, <code>Boolean</code>)</td><td>Любые, включая примитивы</td></tr>
+                <tr><td>Кто инициализирует</td><td>Внешний код (DI, <code>onCreate</code>)</td><td>Лямбда внутри объявления</td></tr>
+                <tr><td>Потокобезопасность</td><td>Нет</td><td>По умолчанию <code>SYNCHRONIZED</code></td></tr>
+                <tr><td>Проверка инициализации</td><td><code>::prop.isInitialized</code></td><td>Не требуется — значение всегда есть после первого чтения</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="code-label">LateinitVsLazy.kt</div>
+<pre><code class="language-kotlin">class Screen {
+    lateinit var presenter: Presenter       // приходит извне (DI / onCreate)
+
+    val formatter: DateFormatter by lazy {  // SYNCHRONIZED по умолчанию
+        DateFormatter(Locale.getDefault())
+    }
+
+    fun render() {
+        if (::presenter.isInitialized) presenter.attach()
+        println(formatter.now())   // lazy-блок отработает только один раз
+    }
+}</code></pre>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><strong>Режимы lazy.</strong> <code>LazyThreadSafetyMode.SYNCHRONIZED</code> — блокировка; одно вычисление гарантировано. <code>PUBLICATION</code> — лямбда может выполниться несколько раз, но в поле запишется результат первого завершившегося. <code>NONE</code> — без синхронизации, быстрее всего; безопасен только при однопоточном доступе (типично для UI-свойств).</div>
+          </div>
+
+          <p class="subhead"><code>lateinit</code> в Activity и Fragment</p>
+          <p>В Activity <code>lateinit var binding</code> оправдан: binding создаётся в <code>onCreate()</code> и живёт до <code>onDestroy()</code> вместе с самой Activity. У Fragment иная модель: объект Fragment может оставаться в backstack, тогда как его View уже уничтожена в <code>onDestroyView()</code>. Использовать <code>lateinit</code> для view binding во Fragment нельзя — его невозможно обнулить, и он будет держать устаревшее дерево View.</p>
+          <div class="code-label">ActivityVsFragmentBinding.kt</div>
+<pre><code class="language-kotlin">class ProfileActivity : AppCompatActivity() {
+    private lateinit var binding: ActivityProfileBinding
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        binding = ActivityProfileBinding.inflate(layoutInflater)
+        setContentView(binding.root)
+    }
+}
+
+class ProfileFragment : Fragment(R.layout.profile) {
+    private var _binding: FragmentProfileBinding? = null
+    private val binding get() = _binding!!   // backing property
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        _binding = FragmentProfileBinding.bind(view)
+    }
+
+    override fun onDestroyView() {
+        _binding = null   // обрываем ссылку на View-дерево
+        super.onDestroyView()
+    }
+}</code></pre>
+        </section>
+
+        <section class="section" id="classes">
+          <h2>Классы: data, sealed, value, object</h2>
+          <p class="subhead"><code>data class</code>: что именно генерируется</p>
+          <p>Компилятор по свойствам <strong>первичного конструктора</strong> генерирует: <code>equals()</code>/<code>hashCode()</code> (структурное равенство), <code>toString()</code>, <code>copy()</code> и функции <code>component1()</code>…<code>componentN()</code> для деструктуризации. Свойства, объявленные в теле класса, в эти методы <strong>не попадают</strong> — ни в сравнение, ни в копирование.</p>
+          <div class="code-label">DataClass.kt</div>
+<pre><code class="language-kotlin">data class User(val id: Long, val name: String) {
+    var note: String = ""   // ⚠️ не учитывается в equals/hashCode/copy/toString
+}
+
+val u1 = User(1, "Ann")
+val u2 = u1.copy(name = "Bob")        // copy: меняем часть полей, id остаётся
+val (id, name) = u1                   // деструктуризация через component1/component2
+println(u1 == User(1, "Ann"))         // true — структурное равенство</code></pre>
+          <p><code>data class</code> неявно <code>final</code>. Разрешить наследование невозможно без нарушения контракта <code>equals</code>: сравнение экземпляра базового класса с экземпляром подкласса нарушало бы симметричность. Реализовывать интерфейсы data class может.</p>
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>Мутабельные поля в data class.</strong> Если поле первичного конструктора объявлено <code>var</code>, то изменение этого поля после добавления объекта в <code>HashMap</code>/<code>HashSet</code> сменит его <code>hashCode</code>, и элемент «потеряется» — найти или удалить его будет невозможно. Поля первичного конструктора в data class объявляйте <code>val</code>.</div>
+          </div>
+
+          <p class="subhead"><code>sealed class</code> / <code>sealed interface</code> и исчерпывающий <code>when</code></p>
+          <p>Sealed-тип — закрытое множество наследников, известных компилятору на этапе сборки. До Kotlin 1.5 все наследники должны были находиться в одном файле. С Kotlin 1.5 достаточно одного пакета внутри одного модуля — это открыло возможность разбивать большие иерархии по файлам. Исчерпывающий <code>when</code> без ветки <code>else</code> — главный практический бонус: добавьте нового наследника, и компилятор укажет на все незакрытые <code>when</code>.</p>
+          <div class="code-label">UiState.kt</div>
+<pre><code class="language-kotlin">sealed interface UiState {
+    data object Loading : UiState           // Kotlin 1.9+: toString() == "Loading"
+    data class Success(val data: List&lt;User&gt;) : UiState
+    data class Error(val message: String) : UiState
+}
+
+fun render(state: UiState) = when (state) {   // без else — компилятор знает все ветки
+    UiState.Loading      -&gt; showSpinner()
+    is UiState.Success   -&gt; showList(state.data)
+    is UiState.Error     -&gt; showError(state.message)
+}</code></pre>
+          <div class="diagram">
+          <div class="mermaid">
+classDiagram
+class UiState
+&lt;&lt;sealed interface&gt;&gt; UiState
+class Loading
+&lt;&lt;data object&gt;&gt; Loading
+class Success {
+  +List~User~ data
+}
+class Error {
+  +String message
+}
+UiState &lt;|.. Loading
+UiState &lt;|.. Success
+UiState &lt;|.. Error
+          </div>
+          <div class="cap">Закрытая иерархия sealed interface — компилятор знает всех наследников, исчерпывающий when без else</div>
+          </div>
+
+          <p class="subhead"><code>enum</code> vs <code>sealed</code></p>
+          <p><code>enum</code> — фиксированный набор константных экземпляров одного типа: у всех одинаковая структура, различаются значения полей. <code>sealed</code> — набор разных типов, каждый со своей структурой и состоянием. Нужен общий контракт без данных — <code>enum</code>; ветки несут разные поля — <code>sealed</code>.</p>
+
+          <p class="subhead"><code>object</code>, <code>companion object</code>, <code>data object</code></p>
+          <p><code>object</code> — синглтон с ленивой потокобезопасной инициализацией, которую гарантирует загрузчик JVM-класса. <code>companion object</code> — единственный компаньон класса: через него обращаются к фабричным методам и константам. <code>data object</code> (Kotlin 1.9+) добавляет осмысленный <code>toString()</code> вида <code>"Loading"</code> вместо стандартного <code>"Loading@1f5a02e"</code> — полезно при логировании sealed-веток без состояния.</p>
+          <div class="code-label">Objects.kt</div>
+<pre><code class="language-kotlin">object AppConfig { const val BASE_URL = "https://api.example.com" }  // синглтон
+
+class User private constructor(val id: Long) {
+    companion object {
+        fun create(id: Long) = User(id)   // вызывается как User.create(1)
+    }
+}
+
+data object Loading                    // toString() == "Loading"</code></pre>
+
+          <p class="subhead"><code>@JvmInline value class</code></p>
+          <p>Оборачивает одно значение, но в рантайме компилятор по возможности <strong>разворачивает</strong> его в само значение — нет аллокации обёртки. Типобезопасность без накладных расходов: <code>UserId</code> и <code>OrderId</code> нельзя перепутать на уровне типов, хотя оба хранят <code>Long</code>.</p>
+          <div class="code-label">ValueClass.kt</div>
+<pre><code class="language-kotlin">@JvmInline value class UserId(val value: Long)
+@JvmInline value class OrderId(val value: Long)
+
+fun load(id: UserId) { /* ... */ }
+// load(OrderId(5))  // ❌ разные типы — компилятор не пропустит</code></pre>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Когда boxing всё же происходит.</strong> Если value class используется как nullable (<code>UserId?</code>), в дженериках, в коллекциях или передаётся в Java-код — компилятор упаковывает его в реальный объект. Выигрыш в отсутствии аллокаций сохраняется только на прямых путях без дженериков и nullable.</div>
+          </div>
+        </section>
+
+        <section class="section" id="type-system">
+          <h2>Тип-система: Any, Unit, Nothing</h2>
+          <p>Три специальных типа формируют вершину и дно иерархии Kotlin и регулярно появляются на собеседованиях — особенно <code>Nothing</code>, который многие знают только по названию.</p>
+
+          <p class="subhead">Any</p>
+          <p><code>Any</code> — корень иерархии всех non-nullable типов, включая примитивные (<code>Int</code>, <code>Boolean</code>). В Java <code>Object</code> является суперклассом только ссылочных типов; <code>int</code> и <code>Integer</code> — принципиально разные сущности. В Kotlin этого разрыва нет. Под капотом <code>Any</code> компилируется в <code>java.lang.Object</code>; присваивание примитива в <code>Any</code> приводит к boxing.</p>
+
+          <div class="diagram">
+          <div class="mermaid">
+flowchart BT
+N["Nothing"] --> String["String"]
+N --> Int["Int"]
+N --> T["...прочие типы"]
+String --> Any["Any"]
+Int --> Any
+T --> Any
+Any --> AQ["Any?"]
+Null["null"] --> AQ
+          </div>
+          <div class="cap">Any? — вершина; Nothing — дно; null — элемент nullable-вселенной; Nothing подтип каждого типа</div>
+          </div>
+
+          <p><code>Any</code> является non-nullable. Переменная типа <code>Any</code> не может содержать <code>null</code>; для этого нужна <code>Any?</code> — общий суперттип всех типов вообще. Три метода <code>toString()</code>, <code>equals()</code> и <code>hashCode()</code> унаследованы всеми классами именно от <code>Any</code>. Остальные методы <code>java.lang.Object</code> (например, <code>wait()</code> и <code>notify()</code>) через <code>Any</code> недоступны — нужно явное приведение к <code>Object</code>.</p>
+
+          <p class="subhead">Unit</p>
+          <p><code>Unit</code> соответствует <code>void</code> в Java, но, в отличие от него, является полноценным типом с единственным значением, которое тоже называется <code>Unit</code>. Это открывает возможность подставлять <code>Unit</code> как аргумент дженерика — в Java для этого пришлось бы заводить отдельный интерфейс или использовать <code>Void</code> с явным <code>return null</code>.</p>
+          <div class="code-label">Unit.kt</div>
+<pre><code class="language-kotlin">interface Processor&lt;T&gt; { fun process(): T }
+
+// Java потребовал бы Void и явного return null; Kotlin вставляет return Unit неявно
+class NoResultProcessor : Processor&lt;Unit&gt; {
+    override fun process() { /* делаем что-то */ }
+}</code></pre>
+          <p>Если функция объявлена без возвращаемого типа или с блочным телом и без <code>return</code>, компилятор подставляет <code>: Unit</code> автоматически. На JVM такая функция компилируется в <code>void</code>-метод, пока не используется как аргумент дженерика — тогда возвращается реальный <code>Unit</code>-объект.</p>
+
+          <p class="subhead">Nothing</p>
+          <p><code>Nothing</code> — нижний тип (bottom type): у него нет значений вообще. Применяется как возвращаемый тип функций, которые никогда не завершаются нормально — всегда бросают исключение или уходят в бесконечный цикл. Компилятор учитывает это при анализе потока управления: ветка с <code>Nothing</code>-функцией считается недостижимой.</p>
+          <div class="code-label">Nothing.kt</div>
+<pre><code class="language-kotlin">fun fail(message: String): Nothing {
+    throw IllegalStateException(message)
+}
+
+// Компилятор знает, что после fail() код не выполняется;
+// поэтому address выводится как ненулевой String, а не String?
+val address = company.address ?: fail("Нет адреса")
+println(address.city)   // smart cast: address: String
+
+// Стандартная error() из stdlib тоже возвращает Nothing
+val value = map["key"] ?: error("Ключ не найден")</code></pre>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><code>Nothing</code> является подтипом каждого типа — поэтому выражение <code>throw</code> совместимо с любым ожидаемым типом. Конструкция <code>val x: String = throw RuntimeException()</code> компилируется: <code>throw</code> имеет тип <code>Nothing</code>, а <code>Nothing</code> — подтип <code>String</code>.</div>
+          </div>
+        </section>
+
+        <section class="section" id="extensions-inline">
+          <h2>Extension-функции, inline и операторные конвенции</h2>
+          <p class="subhead">Extension'ы — статическая диспетчеризация</p>
+          <p>Extension-функция не модифицирует класс и не имеет доступа к его <code>private</code>-членам. Компилятор превращает её в <strong>статический метод</strong>, где приёмник передаётся первым аргументом. Отсюда два следствия: резолюция статическая — по объявленному типу переменной, а не по рантайм-классу; если у класса есть метод-член с той же сигнатурой, <strong>член всегда победит</strong>.</p>
+          <div class="code-label">Extensions.kt</div>
+<pre><code class="language-kotlin">fun String.shout(): String = uppercase() + "!"
+// ~ компилируется в: static String shout(String $receiver) { ... }
+
+open class A
+class B : A()
+fun A.who() = "A"
+fun B.who() = "B"
+
+val ref: A = B()
+println(ref.who())   // "A" — резолвится по СТАТИЧЕСКОМУ типу ref (A), не по B!</code></pre>
+
+          <p class="subhead"><code>inline</code>, <code>noinline</code>, <code>crossinline</code></p>
+          <p>Каждая лямбда без <code>inline</code> — это объект (<code>Function</code>-инстанс): аллокация в куче + вызов через виртуальный <code>invoke()</code>. На горячих путях (цепочки операций с коллекциями) это создаёт давление на GC. Модификатор <code>inline</code> подставляет тело функции и тела лямбд прямо в точку вызова — лямбда исчезает как объект. Исключение: если лямбда захватывает переменные из окружающего контекста, SAM-конвертация с Java по-прежнему создаёт объект для каждого вызова.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Модификатор</th><th>Что делает</th><th>Зачем</th></tr></thead>
+              <tbody>
+                <tr><td><code>inline</code> (на функции)</td><td>Встраивает тело функции и лямбд в точку вызова</td><td>Убрать аллокацию лямбд; открывает <code>reified</code> и non-local return</td></tr>
+                <tr><td><code>noinline</code> (на параметре)</td><td>Конкретную лямбду НЕ встраивать</td><td>Когда лямбду нужно сохранить или передать дальше как объект</td></tr>
+                <tr><td><code>crossinline</code> (на параметре)</td><td>Встроить, но запретить non-local return</td><td>Лямбда вызывается из другого контекста (например, из <code>Runnable</code>)</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Обратная сторона inline.</strong> Встраивание дублирует байткод в каждой точке вызова — большая inline-функция раздувает методы и может выйти за лимиты JVM. Модификатор оправдан для небольших higher-order функций и там, где нужны <code>reified</code> или non-local return.</div>
+          </div>
+
+          <p class="subhead"><code>reified</code>-дженерики</p>
+          <p>На JVM дженерики стираются (type erasure): в рантайме тип <code>T</code> неизвестен, нельзя написать <code>is T</code> или <code>T::class</code>. В <code>inline</code>-функции конкретный тип известен в точке вызова, поэтому <code>reified T</code> «материализуется» — компилятор подставляет реальный класс прямо в байткод.</p>
+          <div class="code-label">Reified.kt</div>
+<pre><code class="language-kotlin">inline fun &lt;reified T&gt; Gson.fromJson(json: String): T =
+    fromJson(json, T::class.java)   // T известен — type erasure обойдён
+
+val user: User = gson.fromJson(jsonString)   // без передачи Class&lt;T&gt; вручную
+
+inline fun &lt;reified T&gt; List&lt;*&gt;.filterByType(): List&lt;T&gt; =
+    filterIsInstance&lt;T&gt;()   // стандартная реализация через reified</code></pre>
+
+          <p class="subhead">Операторные конвенции и <code>componentN</code></p>
+          <p>В Kotlin ряд операторов компилируется в вызов конвенционального метода с ключевым словом <code>operator</code>. Так реализуется, в частности, деструктуризация: <code>val (a, b) = pair</code> — это <code>val a = pair.component1(); val b = pair.component2()</code>. <code>data class</code> генерирует <code>componentN</code>-функции автоматически по каждому свойству первичного конструктора.</p>
+          <div class="code-label">Operators.kt</div>
+<pre><code class="language-kotlin">data class Vector(val x: Double, val y: Double) {
+    operator fun plus(other: Vector) = Vector(x + other.x, y + other.y)
+    operator fun times(factor: Double) = Vector(x * factor, y * factor)
+}
+
+val v = Vector(1.0, 2.0) + Vector(3.0, 4.0)   // вызывает operator plus
+println(v * 2.0)                                // вызывает operator times
+
+// Для не-data-класса componentN пишутся вручную
+class Point(val x: Int, val y: Int) {
+    operator fun component1() = x
+    operator fun component2() = y
+}
+
+for ((x, y) in listOf(Point(1, 2), Point(3, 4))) { println("$x, $y") }</code></pre>
+          <p>Конвенция <code>invoke</code> делает объект вызываемым как функцию — полезна в DSL и при моделировании функциональных объектов с состоянием:</p>
+          <div class="code-label">InvokeConvention.kt</div>
+<pre><code class="language-kotlin">class Multiplier(private val factor: Int) {
+    operator fun invoke(value: Int) = value * factor
+}
+
+val triple = Multiplier(3)
+println(triple(5))   // 15 — вызов через invoke без явного .invoke()</code></pre>
+        </section>
+
+        <section class="section" id="scope-fns">
+          <h2>Scope-функции: let / run / with / apply / also</h2>
+          <p>Пять функций различаются по двум осям: как они ссылаются на объект (<code>this</code> — неявный приёмник vs аргумент <code>it</code>) и что возвращают (сам объект vs результат лямбды). Понимание этих осей снимает большую часть путаницы.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Функция</th><th>Контекст</th><th>Возвращает</th><th>Когда применять</th></tr></thead>
+              <tbody>
+                <tr><td><code>let</code></td><td><code>it</code></td><td>Результат лямбды</td><td>Null-safe цепочки (<code>?.let</code>), трансформация значения</td></tr>
+                <tr><td><code>run</code></td><td><code>this</code></td><td>Результат лямбды</td><td>Конфигурация + вычисление результата в одном блоке</td></tr>
+                <tr><td><code>with</code></td><td><code>this</code></td><td>Результат лямбды</td><td>Несколько вызовов одного объекта (не extension)</td></tr>
+                <tr><td><code>apply</code></td><td><code>this</code></td><td>Сам объект</td><td>Настройка объекта (builder-стиль), возврат самого объекта</td></tr>
+                <tr><td><code>also</code></td><td><code>it</code></td><td>Сам объект</td><td>Побочные эффекты (лог, валидация) без разрыва цепочки</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="code-label">ScopeFunctions.kt</div>
+<pre><code class="language-kotlin">// apply — настроить и вернуть объект (builder-стиль)
+val paint = Paint().apply {
+    color = Color.RED
+    isAntiAlias = true
+}
+
+// let — выполнить только при non-null + получить результат
+val length: Int = nullableName?.let { it.trim().length } ?: 0
+
+// also — вклиниться с побочным эффектом, не разрывая цепочку
+val users = repository.load()
+    .also { Log.d("TAG", "loaded ${it.size}") }
+    .filter { it.isActive }
+
+// run — конфигурация + результат
+val message = StringBuilder().run {
+    append("Hello, ")
+    append(name)
+    toString()
+}</code></pre>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Практическое правило.</strong> <code>apply</code> и <code>also</code> возвращают объект — пишите в цепочку при настройке или side-эффектах. <code>let</code>, <code>run</code>, <code>with</code> возвращают результат лямбды — используйте, когда нужно вычислить нечто на основе объекта. <code>let</code> vs <code>run</code>: если объект нужен во внешней области видимости под другим именем — <code>let { it }</code>; если переопределяете <code>this</code> внутри блока — <code>run</code>.</div>
+          </div>
+        </section>
+
+        <section class="section" id="generics">
+          <h2>Дженерики и вариативность</h2>
+          <p>По умолчанию дженерики в Kotlin <strong>инвариантны</strong>: <code>Box&lt;String&gt;</code> не является подтипом <code>Box&lt;Any&gt;</code>, даже при <code>String : Any</code>. Инвариантность безопасна, но иногда избыточно строга — на помощь приходят <code>out</code> и <code>in</code>.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Модификатор</th><th>Вариативность</th><th>Роль</th><th>Правило подтипирования</th></tr></thead>
+              <tbody>
+                <tr><td><code>out T</code></td><td>Ковариантность</td><td>Producer (только <em>отдаёт</em> T)</td><td><code>Box&lt;String&gt;</code> → подтип <code>Box&lt;Any&gt;</code></td></tr>
+                <tr><td><code>in T</code></td><td>Контравариантность</td><td>Consumer (только <em>принимает</em> T)</td><td><code>Box&lt;Any&gt;</code> → подтип <code>Box&lt;String&gt;</code></td></tr>
+                <tr><td>(без модификатора)</td><td>Инвариантность</td><td>И читает, и пишет</td><td>Подтипирования по T нет</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Мнемоника PECS из Java работает и в Kotlin: <strong>P</strong>roducer — <strong>E</strong>xtends (<code>out</code>), <strong>C</strong>onsumer — <strong>S</strong>uper (<code>in</code>). <code>out</code> запрещает использовать <code>T</code> во входных позициях — нельзя «положить». <code>in</code> запрещает использовать <code>T</code> в выходных позициях — нельзя «достать» как <code>T</code>, только как <code>Any?</code>.</p>
+          <div class="code-label">Variance.kt</div>
+<pre><code class="language-kotlin">// out: только производит T → ковариантность
+interface Source&lt;out T&gt; { fun next(): T }
+val anySource: Source&lt;Any&gt; = object : Source&lt;String&gt; { override fun next() = "x" }  // ✅
+
+// in: только потребляет T → контравариантность
+interface Sink&lt;in T&gt; { fun put(item: T) }
+val stringSink: Sink&lt;String&gt; = object : Sink&lt;Any&gt; { override fun put(item: Any) {} } // ✅
+
+// star-projection: тип не важен, но безопасность сохраняется
+fun printSize(box: Source&lt;*&gt;) { /* читаем как Any?, конкретный T неизвестен */ }</code></pre>
+
+          <p class="subhead">Declaration-site vs use-site variance</p>
+          <p><code>out</code>/<code>in</code> на самом типе (<code>interface Source&lt;out T&gt;</code>) — это <em>declaration-site variance</em>: вариативность фиксирована и работает везде, где используется тип. Kotlin поддерживает и <em>use-site variance</em>: указать <code>out</code>/<code>in</code> прямо в месте использования на обычном инвариантном типе.</p>
+          <div class="code-label">UseSiteVariance.kt</div>
+<pre><code class="language-kotlin">// MutableList инвариантен, но при передаче только для чтения добавляем out
+fun copyAll(from: MutableList&lt;out Any&gt;, to: MutableList&lt;Any&gt;) {
+    // from.add("x")  // ❌ out запрещает запись
+    to.addAll(from)    // ✅ читать безопасно
+}
+
+// in — передаём только для записи
+fun fillWith(list: MutableList&lt;in String&gt;, value: String) {
+    list.add(value)    // ✅
+    // val s: String = list[0]  // ❌ in запрещает чтение как String
+}</code></pre>
+
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><strong>Star-projection <code>&lt;*&gt;</code></strong> — «какой-то конкретный, но неизвестный тип». Не то же, что <code>&lt;Any?&gt;</code>: <code>MutableList&lt;*&gt;</code> можно читать (элементы приходят как <code>Any?</code>), но нельзя в него писать — компилятор не знает реальный <code>T</code>. По семантике эквивалентно <code>&lt;out Any?&gt;</code> для чтения и <code>&lt;in Nothing&gt;</code> для записи.</div>
+          </div>
+        </section>
+
+        <section class="section" id="delegation">
+          <h2>Делегирование: <code>by</code> для классов и свойств</h2>
+          <p class="subhead">Делегирование класса</p>
+          <p>Конструкция <code>class C : Iface by impl</code> заставляет компилятор сгенерировать все методы интерфейса как форвардинг к <code>impl</code>. Это композиция вместо наследования без boilerplate: реализуем интерфейс, опираясь на готовый объект, и при желании переопределяем отдельные методы.</p>
+          <div class="code-label">ClassDelegation.kt</div>
+<pre><code class="language-kotlin">interface Repository { fun load(): List&lt;User&gt; }
+
+class CachingRepository(
+    private val origin: Repository
+) : Repository by origin {           // load() автоматически форвардируется в origin
+    private var cache: List&lt;User&gt;? = null
+    override fun load(): List&lt;User&gt; = cache ?: origin.load().also { cache = it }
+}</code></pre>
+
+          <p class="subhead">Делегаты свойств</p>
+          <p>Свойство может делегировать чтение/запись объекту, у которого есть операторные функции <code>getValue</code>/<code>setValue</code>. Стандартные делегаты из stdlib:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Делегат</th><th>Поведение</th></tr></thead>
+              <tbody>
+                <tr><td><code>by lazy { }</code></td><td>Ленивое одноразовое вычисление <code>val</code></td></tr>
+                <tr><td><code>Delegates.observable(init){ p, old, new -&gt; }</code></td><td>Колбэк после каждого изменения <code>var</code></td></tr>
+                <tr><td><code>Delegates.vetoable(init){ p, old, new -&gt; Bool }</code></td><td>Колбэк до изменения; <code>false</code> отменяет присваивание</td></tr>
+                <tr><td><code>by map</code></td><td>Свойства читаются из <code>Map</code> по имени ключа</td></tr>
+                <tr><td><code>Delegates.notNull&lt;T&gt;()</code></td><td>Non-null <code>var</code> с поздней инициализацией — аналог <code>lateinit</code> для примитивов</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="code-label">PropertyDelegates.kt</div>
+<pre><code class="language-kotlin">import kotlin.properties.Delegates
+
+class Form {
+    var name: String by Delegates.observable("") { _, old, new -&gt;
+        println("name: $old -&gt; $new")
+    }
+    var age: Int by Delegates.vetoable(0) { _, _, new -&gt; new in 0..150 }
+}
+
+// Кастомный делегат: любой объект с getValue/setValue
+class Prefs(private val sp: SharedPreferences) {
+    operator fun getValue(ref: Any?, p: KProperty&lt;*&gt;): String =
+        sp.getString(p.name, "") ?: ""
+    operator fun setValue(ref: Any?, p: KProperty&lt;*&gt;, value: String) =
+        sp.edit().putString(p.name, value).apply()
+}
+
+class Settings(prefs: SharedPreferences) {
+    var token: String by Prefs(prefs)   // делегат берёт имя свойства как ключ
+}</code></pre>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong><code>provideDelegate</code>.</strong> Если делегату нужна информация о свойстве (например, его имя) <em>в момент создания</em>, а не при чтении/записи, можно добавить оператор <code>provideDelegate</code>. Компилятор вызовет его при инициализации класса и передаст <code>KProperty</code> до первого <code>getValue</code>. Это позволяет, например, проверить имя свойства заранее или зарегистрировать его в реестре.</div>
+          </div>
+        </section>
+
+        <section class="section" id="interop">
+          <h2>Интероп с Java: коллекции, SAM и аннотации</h2>
+          <p class="subhead">SAM-конвертация</p>
+          <p>Java API полон функциональных интерфейсов (<em>Single Abstract Method</em>): <code>Runnable</code>, <code>Callable</code>, <code>Comparator</code>, слушатели в Android. Kotlin позволяет передавать лямбду туда, где ожидается SAM-интерфейс — компилятор автоматически оборачивает её в анонимный класс-реализацию. Если лямбда не захватывает переменные из внешнего контекста, анонимный объект <strong>создаётся один раз</strong> и переиспользуется.</p>
+          <div class="code-label">SAM.kt</div>
+<pre><code class="language-kotlin">// Java: void postponeComputation(int delay, Runnable r)
+postponeComputation(1000) { println(42) }  // лямбда → Runnable; один объект на программу
+
+// Если лямбда захватывает переменную — новый объект на каждый вызов
+fun handleComputation(id: String) {
+    postponeComputation(1000) { println(id) }  // new Runnable на каждый вызов
+}
+
+// SAM-конструктор — явное преобразование для сохранения инстанса
+val allDone = Runnable { println("all done") }
+button.setOnClickListener(allDone)   // один и тот же объект при повторном использовании</code></pre>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><strong><code>fun interface</code> в Kotlin.</strong> Для Kotlin-SAM используйте ключевое слово <code>fun interface</code> (Kotlin 1.4+). Обычный интерфейс с одним методом SAM-конвертацию не получит — только Java-интерфейсы и Kotlin <code>fun interface</code>. Это намеренно: без явного маркера компилятор не может вывести, какой метод считать «тем самым».</div>
+          </div>
+          <div class="code-label">FunInterface.kt</div>
+<pre><code class="language-kotlin">fun interface Predicate&lt;T&gt; { fun test(value: T): Boolean }
+
+fun findFirst(list: List&lt;Int&gt;, pred: Predicate&lt;Int&gt;): Int? =
+    list.firstOrNull { pred.test(it) }
+
+val result = findFirst(listOf(1, 2, 3)) { it &gt; 1 }   // лямбда → Predicate&lt;Int&gt;</code></pre>
+
+          <p class="subhead">Аннотации для Java-клиентов</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Аннотация</th><th>Что делает для Java-вызова</th></tr></thead>
+              <tbody>
+                <tr><td><code>@JvmStatic</code></td><td>Метод <code>companion</code>/<code>object</code> становится настоящим <code>static</code>: <code>Foo.bar()</code> вместо <code>Foo.Companion.bar()</code></td></tr>
+                <tr><td><code>@JvmField</code></td><td>Свойство экспонируется как public-поле без геттера/сеттера: <code>obj.x</code> вместо <code>obj.getX()</code></td></tr>
+                <tr><td><code>@JvmOverloads</code></td><td>Генерирует перегрузки для функций с default-параметрами (в Java дефолтных значений нет)</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="code-label">Interop.kt</div>
+<pre><code class="language-kotlin">class Analytics {
+    companion object {
+        @JvmStatic fun init() { /* ... */ }   // Java: Analytics.init()
+    }
+    @JvmField val tag = "ANALYTICS"           // Java: analytics.tag
+
+    @JvmOverloads
+    fun track(event: String, value: Int = 0, force: Boolean = false) { /* ... */ }
+    // Java получит три перегрузки: track(e), track(e, v), track(e, v, f)
+}</code></pre>
+
+          <p class="subhead"><code>List</code> vs <code>MutableList</code> и <code>Sequence</code></p>
+          <p><code>List</code> в Kotlin — <strong>read-only интерфейс</strong>, а не гарантия иммутабельности: за ним может скрываться изменяемый <code>ArrayList</code>. Read-only означает «через эту ссылку менять нельзя», а не «объект неизменяем».</p>
+          <p>Операции над <code>List</code> (<code>map</code>, <code>filter</code>) <strong>энергичные</strong>: каждая создаёт промежуточную коллекцию. <code>Sequence</code> — <strong>ленивый конвейер</strong>: элементы протягиваются по одному, промежуточных коллекций нет, и терминальная операция запускает обработку.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart LR
+A["Элемент 1"] --&gt; F1{filter}
+F1 --&gt;|прошёл| M1["map"]
+M1 --&gt; T["toList"]
+A2["Элемент 2"] --&gt; F2{filter}
+F2 --&gt;|отброшен| X["стоп"]
+A3["Элемент 3"] --&gt; F3{filter}
+F3 --&gt;|прошёл| M3["map"]
+M3 --&gt; T
+          </div>
+          <div class="cap">Sequence: каждый элемент проходит всю цепочку по одному — без промежуточных списков</div>
+          </div>
+          <div class="code-label">Sequence.kt</div>
+<pre><code class="language-kotlin">// List: 2 промежуточных списка, оба полностью обрабатываются
+val r1 = (1..1_000_000).toList()
+    .map { it * 2 }       // список из 1 000 000
+    .filter { it &gt; 10 }   // ещё один список
+    .take(3)              // берём 3
+
+// Sequence: ленивый конвейер — обработается несколько элементов, затем стоп
+val r2 = (1..1_000_000).asSequence()
+    .map { it * 2 }
+    .filter { it &gt; 10 }
+    .take(3)              // short-circuit: остановится после 3 подходящих
+    .toList()</code></pre>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Когда что.</strong> <code>Sequence</code> быстрее на больших данных, длинных цепочках и при коротком замыкании (<code>take</code>/<code>first</code>/<code>find</code>) — экономит память. На маленьких коллекциях <code>Sequence</code> <em>медленнее</em> из-за оверхеда итераторов — обычный <code>List</code> предпочтительнее.</div>
+          </div>
+        </section>
+
+        <section class="section" id="equality-immutability">
+          <h2>Равенство, иммутабельность, <code>const val</code></h2>
+          <p><code>==</code> — структурное равенство: компилируется в <code>a?.equals(b) ?: (b === null)</code>. <code>===</code> — ссылочное равенство: один объект в куче. Для <code>data class</code> <code>equals</code> сгенерирован по полям первичного конструктора, поэтому <code>==</code> сравнивает значения.</p>
+          <div class="code-label">Equality.kt</div>
+<pre><code class="language-kotlin">val a = User(1, "Ann")
+val b = User(1, "Ann")
+println(a == b)    // true  — структурно равны (data class equals)
+println(a === b)   // false — разные объекты в памяти
+
+// Контракт: if (a == b) → a.hashCode() == b.hashCode()
+// Нарушите — объект «потеряется» в HashMap/HashSet</code></pre>
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>Контракт equals/hashCode.</strong> Равные объекты обязаны иметь равный <code>hashCode</code>. Если переопределить только <code>equals</code>, объект исчезнет из <code>HashMap</code>/<code>HashSet</code>. Никогда не кладите в hash-коллекцию <code>data class</code> с <code>var</code>-полями в первичном конструкторе: изменив поле после вставки, вы сделаете объект ненаходимым.</div>
+          </div>
+
+          <p class="subhead">Иммутабельность: <code>val</code> ≠ immutable</p>
+          <p><code>val</code> запрещает переприсваивание ссылки, но не делает объект неизменяемым. <code>val list = mutableListOf(1)</code> — список можно менять, нельзя лишь присвоить новую ссылку. Настоящая иммутабельность — это неизменяемый тип: read-only интерфейс <code>List</code>, <code>data class</code> с только <code>val</code>-полями в первичном конструкторе.</p>
+
+          <p class="subhead"><code>const val</code> vs <code>val</code></p>
+          <p><code>const val</code> — compile-time константа: значение встраивается непосредственно в байткод в местах использования (инлайнинг). Допустимо только для примитивов и <code>String</code>, только на верхнем уровне или в <code>object</code>/<code>companion object</code>. Обычный <code>val</code> вычисляется в рантайме и хранится в поле с геттером.</p>
+          <div class="code-label">Const.kt</div>
+<pre><code class="language-kotlin">object Api {
+    const val VERSION = "v1"                        // зашивается в байткод (инлайн)
+    val timestamp = System.currentTimeMillis()       // рантайм — const здесь невозможен
+}</code></pre>
+        </section>
+
+        <section class="section" id="video">
+          <h2>Видео-разбор</h2>
+          <a class="ytcard" href="https://youtu.be/U0A8TX-C6qY?t=0" target="_blank" rel="noopener">
+            <span class="yt-thumb" style="background-image:url('https://img.youtube.com/vi/U0A8TX-C6qY/hqdefault.jpg')">
+              <span class="yt-play"></span>
+              <span class="yt-time">▶ с начала</span>
+            </span>
+            <span class="yt-meta">
+              <strong>Учим Kotlin: Null и Null-safety</strong>
+              <span class="yt-by">Курс «Учим Kotlin» · RU</span>
+              <span class="yt-why">Эпизод целиком по теме: операторы <code>?.</code>, <code>?:</code>, <code>!!</code> и платформенные типы из Java.</span>
+            </span>
+          </a>
+        </section>
+
+        <section class="section" id="faq">
+          <h2>Частые вопросы интервьюера</h2>
+
+          <details class="qa">
+            <summary>Чем <code>lateinit</code> отличается от <code>by lazy</code>? <span class="q-badge">Middle+</span></summary>
+            <div class="ans">
+              <p><code>lateinit var</code> — для <code>var</code>, не-примитивов; инициализируется извне (DI, <code>onCreate</code>); не потокобезопасен. До инициализации бросает <code>UninitializedPropertyAccessException</code>, проверка — <code>::prop.isInitialized</code>.</p>
+              <p><code>by lazy</code> — для <code>val</code>, любого типа; инициализируется сам при первом чтении лямбдой, кеширует результат; по умолчанию <code>SYNCHRONIZED</code>.</p>
+              <p>Правило выбора: значение приходит снаружи и может меняться → <code>lateinit</code>; вычисляется один раз и лениво → <code>by lazy</code>. Для view binding во Fragment <code>lateinit</code> не подходит: View живёт короче Fragment, binding нужно обнулять в <code>onDestroyView()</code>.</p>
+            </div>
+          </details>
+
+          <details class="qa">
+            <summary>Что такое <code>Nothing</code> и зачем он в типовой системе? <span class="q-badge">Senior</span></summary>
+            <div class="ans">
+              <p><code>Nothing</code> — нижний тип (bottom type): у него нет значений. Используется как возвращаемый тип функций, которые никогда не возвращают управление — всегда бросают исключение или зависают в бесконечном цикле (<code>fun fail(…): Nothing</code>, стандартная <code>error()</code>).</p>
+              <p><code>Nothing</code> является подтипом каждого типа в Kotlin. Это позволяет компилятору считать ветку с <code>Nothing</code>-функцией недостижимой и применять smart cast: <code>val addr = company.address ?: fail("нет адреса")</code> → <code>addr</code> выводится как <code>String</code>, а не <code>String?</code>. По той же причине выражение <code>throw</code> совместимо с любым ожидаемым типом.</p>
+            </div>
+          </details>
+
+          <details class="qa">
+            <summary>В чём разница <code>Unit</code> и <code>void</code> из Java? <span class="q-badge">Middle</span></summary>
+            <div class="ans">
+              <p><code>void</code> в Java — это не тип, а ключевое слово-метка «функция ничего не возвращает». Его нельзя использовать как аргумент дженерика: попытка написать <code>Processor&lt;void&gt;</code> провалится.</p>
+              <p><code>Unit</code> в Kotlin — полноценный тип с единственным значением (тоже <code>Unit</code>). Его можно подставить как аргумент дженерика: <code>class Processor : Action&lt;Unit&gt;</code> и не нужен явный <code>return</code>. На JVM <code>Unit</code>-функция компилируется в <code>void</code>-метод, пока не используется в дженерическом контексте.</p>
+            </div>
+          </details>
+
+          <details class="qa">
+            <summary>Что именно генерирует <code>data class</code> и почему его нельзя наследовать? <span class="q-badge">Middle</span></summary>
+            <div class="ans">
+              <p>По свойствам <strong>первичного конструктора</strong> генерируются <code>equals</code>, <code>hashCode</code>, <code>toString</code>, <code>copy</code> и функции <code>componentN</code>. Свойства в теле класса в них не входят. <code>data class</code> неявно <code>final</code>: наследование нарушило бы контракт <code>equals</code> (симметричность при сравнении экземпляра базового и дочернего типа). Реализовывать интерфейсы data class может.</p>
+            </div>
+          </details>
+
+          <details class="qa">
+            <summary>Что такое SAM-конвертация и когда объект создаётся повторно? <span class="q-badge">Middle+</span></summary>
+            <div class="ans">
+              <p>SAM-конвертация (Single Abstract Method) — автоматическое преобразование лямбды в экземпляр Java-интерфейса с одним абстрактным методом (<code>Runnable</code>, <code>Callable</code> и т. п.). Компилятор генерирует анонимный класс-реализацию.</p>
+              <p>Если лямбда <em>не</em> захватывает переменные из внешнего контекста, анонимный объект создаётся <strong>один раз</strong> и переиспользуется между вызовами. Если лямбда захватывает переменные — <strong>новый объект при каждом вызове</strong>, поскольку захваченные значения хранятся в полях объекта. Для Kotlin-интерфейсов SAM работает только с <code>fun interface</code> (Kotlin 1.4+).</p>
+            </div>
+          </details>
+
+          <details class="qa">
+            <summary>Когда NPE появляется при Java→Kotlin interop? <span class="q-badge">Senior</span></summary>
+            <div class="ans">
+              <p>Java API без nullability-аннотаций возвращает платформенный тип <code>T!</code>. Kotlin разрешает трактовать его и как <code>T</code>, и как <code>T?</code>. При выборе non-null <code>T</code> компилятор вставляет runtime assertion. Поэтому <code>val s: String = java.getName()</code> падает сразу после Java-вызова, если тот вернул <code>null</code>. То же при передаче platform value в non-null Kotlin-параметр. Лечение: явно принимать <code>T?</code> и обрабатывать null, либо добавлять Java-аннотации <code>@Nullable</code>/<code>@NonNull</code>.</p>
+            </div>
+          </details>
+
+          <details class="qa">
+            <summary>Во что компилируется extension-функция? Полиморфна ли она? <span class="q-badge">Senior</span></summary>
+            <div class="ans">
+              <p>В <strong>статический метод</strong>, где приёмник — первый аргумент. Она не модифицирует класс и не видит его <code>private</code>-членов. Резолвится <strong>статически</strong> — по объявленному типу переменной, а не по рантайм-классу. Поэтому extension не участвует в полиморфизме: если у <code>A</code> и <code>B : A</code> есть одноимённые extension'ы и переменная объявлена как <code>val ref: A = B()</code>, вызовется версия для <code>A</code>. Если у класса есть метод-член с той же сигнатурой, член всегда побеждает extension.</p>
+            </div>
+          </details>
+
+          <details class="qa">
+            <summary>Зачем <code>inline</code> и что такое <code>reified</code>? <span class="q-badge">Senior</span></summary>
+            <div class="ans">
+              <p>Лямбда без <code>inline</code> — это объект (<code>Function</code>-инстанс): аллокация + вызов через виртуальный <code>invoke()</code>. На горячих путях это нагрузка на GC. <code>inline</code> встраивает тело функции и лямбд в точку вызова — лямбда исчезает как объект. Также открывает non-local return и <code>reified</code>-дженерики.</p>
+              <p>На JVM дженерики стираются: в рантайме <code>T</code> неизвестен, нельзя <code>is T</code> или <code>T::class</code>. В <code>inline</code>-функции конкретный тип подставляется в точку вызова, поэтому <code>reified T</code> материализуется — компилятор знает его и вставляет в байткод. Минус <code>inline</code>: дублирование байткода; оправдан для небольших функций.</p>
+            </div>
+          </details>
+
+          <details class="qa">
+            <summary>Что такое операторные конвенции и как работает деструктуризация? <span class="q-badge">Middle+</span></summary>
+            <div class="ans">
+              <p>Kotlin преобразует ряд операторов в вызовы конвенциональных методов с ключевым словом <code>operator</code>: <code>+</code> → <code>plus</code>, <code>*</code> → <code>times</code>, вызов объекта → <code>invoke</code>, и т. д.</p>
+              <p>Деструктуризация <code>val (a, b) = obj</code> — сахар над <code>val a = obj.component1(); val b = obj.component2()</code>. <code>data class</code> генерирует <code>componentN</code>-функции автоматически по свойствам первичного конструктора. Для собственного класса достаточно объявить <code>operator fun component1() = …</code> и т. д. Деструктуризация в <code>for</code>-цикле и лямбдах работает так же.</p>
+            </div>
+          </details>
+
+          <details class="qa">
+            <summary>Когда <code>Sequence</code> быстрее <code>List</code>, а когда медленнее? <span class="q-badge">Middle+</span></summary>
+            <div class="ans">
+              <p><code>Sequence</code> вычисляется лениво и поэлементно: цепочка <code>map.filter.first()</code> не создаёт промежуточных коллекций и обрывается при коротком замыкании. Это выигрывает на больших/бесконечных источниках и длинных цепочках с <code>take</code>/<code>first</code>/<code>find</code>.</p>
+              <p>На маленьких коллекциях <code>List</code> быстрее: операции над массивами кэш-дружелюбны, а у <code>Sequence</code> есть оверхед на итераторы и потенциальный boxing примитивов. Правило: менее 1000 элементов и короткая цепочка — <code>List</code>; иначе — взвесить.</p>
+            </div>
+          </details>
+
+          <details class="qa">
+            <summary>В чём разница <code>==</code> и <code>===</code>? <span class="q-badge">Middle</span></summary>
+            <div class="ans">
+              <p><code>==</code> — структурное равенство, компилируется в <code>a?.equals(b) ?: (b === null)</code>. <code>===</code> — ссылочное равенство (тот же объект в куче). Для <code>data class</code> <code>equals</code> сгенерирован по полям первичного конструктора.</p>
+              <p>Контракт: если <code>a == b</code>, то <code>a.hashCode() == b.hashCode()</code>. Нарушение ломает <code>HashMap</code>/<code>HashSet</code>: объект кладётся в одну корзину, а ищется в другой — и «исчезает».</p>
+            </div>
+          </details>
+        </section>
+
+        <section class="section" id="tasks">
+          <h2>Задачи</h2>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 1.</strong> Реализуй функцию <code>parseUser</code>, которая принимает JSON-строку через библиотеку с Java API — метод <code>JavaParser.parse(json)</code> возвращает platform type <code>User!</code> и может вернуть <code>null</code>. Функция должна вернуть non-null <code>User</code> либо пользователя по умолчанию — без использования <code>!!</code> и без риска NPE.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">data class User(val id: Long, val name: String)
+
+// Имитация Java-класса с platform type (возвращает User! — может быть null)
+object JavaParser {
+    @JvmStatic
+    fun parse(json: String): User? =
+        if (json.isBlank()) null else User(1L, "Parsed")
+}
+
+fun parseUser(json: String): User {
+    val parsed: User? = JavaParser.parse(json)  // явно принимаем как nullable
+    return parsed ?: User(0L, "default")         // Elvis вместо !!
+}
+
+fun main() {
+    println(parseUser("{...}"))  // User(id=1, name=Parsed)
+    println(parseUser(""))       // User(id=0, name=default)
+}</code></pre>
+                <p>Объяснение: platform type <code>User!</code> позволяет присвоить значение в <code>User</code> — тогда компилятор вставляет runtime assertion и NPE прилетает неожиданно. Безопасный путь: явно указать тип как <code>User?</code> и обработать <code>null</code> через <code>?:</code>. Сложность O(1).</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 2.</strong> Есть sealed interface <code>Result&lt;out T&gt;</code> с ветками <code>Success(val data: T)</code>, <code>Error(val message: String)</code> и <code>Loading</code>. Напиши extension-функцию <code>fold</code>, которая принимает три лямбды (по одной на каждую ветку) и возвращает значение типа <code>R</code>. Покажи, почему <code>else</code> здесь не нужен и что случится при добавлении новой ветки в sealed.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">sealed interface Result&lt;out T&gt; {
+    data class Success&lt;T&gt;(val data: T) : Result&lt;T&gt;
+    data class Error(val message: String) : Result&lt;Nothing&gt;
+    data object Loading : Result&lt;Nothing&gt;
+}
+
+fun &lt;T, R&gt; Result&lt;T&gt;.fold(
+    onSuccess: (T) -&gt; R,
+    onError: (String) -&gt; R,
+    onLoading: () -&gt; R
+): R = when (this) {
+    is Result.Success -&gt; onSuccess(data)
+    is Result.Error   -&gt; onError(message)
+    Result.Loading    -&gt; onLoading()
+    // else не нужен — компилятор знает всех наследников sealed
+}
+
+fun main() {
+    val r: Result&lt;List&lt;String&gt;&gt; = Result.Success(listOf("a", "b"))
+    val text = r.fold(
+        onSuccess = { "Loaded: ${it.size}" },
+        onError   = { "Err: $it" },
+        onLoading = { "Wait..." }
+    )
+    println(text)  // Loaded: 2
+}</code></pre>
+                <p>Объяснение: <code>when</code> по sealed-типу без <code>else</code> — исчерпывающий. Добавишь ветку <code>Empty</code> — код перестанет компилироваться, пока не добавишь её в <code>fold</code>. Ковариантный параметр <code>out T</code> позволяет <code>Result&lt;String&gt;</code> быть подтипом <code>Result&lt;Any&gt;</code>.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 3.</strong> Есть список из 10 000 строк. Нужно отфильтровать те, что начинаются на «A», привести к верхнему регистру и взять первые 5. Напиши два варианта — через <code>List</code> и через <code>Sequence</code>. Объясни, сколько элементов обработает каждый вариант и почему в данном случае <code>Sequence</code> выигрывает по памяти и времени.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">val words = List(10_000) { i -&gt; if (i % 100 == 0) "Apple$i" else "banana$i" }
+
+// List — энергичные операции, две промежуточные коллекции
+val listResult = words
+    .filter { it.startsWith("A") }   // список из ~100 элементов
+    .map { it.uppercase() }           // ещё один список из ~100
+    .take(5)                          // берём 5 из уже готового
+
+// Sequence — ленивый конвейер, короткое замыкание
+val seqResult = words.asSequence()
+    .filter { it.startsWith("A") }
+    .map { it.uppercase() }
+    .take(5)
+    .toList()   // останавливается, как только нашлось 5
+
+println(listResult == seqResult)  // true</code></pre>
+                <p>Объяснение: вариант с <code>List</code> дважды проходит по всем 10 000 элементов и создаёт две промежуточные коллекции. <code>Sequence</code> пропускает каждый элемент сразу через всю цепочку и останавливается после 5 подходящих — реально обрабатывает около 500 элементов. Выигрыш тем заметнее, чем больше данных и чем раньше срабатывает <code>take</code>/<code>first</code>.</p>
+              </div>
+            </details>
+          </div>
+
+        </section>
+
+        <div class="sources">
+          <h2>Источники</h2>
+          <ol>
+            <li><a href="https://kotlinlang.org/docs/null-safety.html" target="_blank" rel="noopener">Kotlin Docs — Null safety</a> — операторы <code>?.</code>, <code>?:</code>, <code>!!</code>, платформенные типы.</li>
+            <li><a href="https://kotlinlang.org/docs/inline-functions.html" target="_blank" rel="noopener">Kotlin Docs — Inline functions</a> — <code>inline</code>/<code>noinline</code>/<code>crossinline</code>, <code>reified</code>.</li>
+            <li><a href="https://kotlinlang.org/docs/generics.html" target="_blank" rel="noopener">Kotlin Docs — Generics</a> — вариативность <code>in</code>/<code>out</code>, use-site vs declaration-site, star-projection.</li>
+            <li><a href="https://kotlinlang.org/docs/delegated-properties.html" target="_blank" rel="noopener">Kotlin Docs — Delegated properties</a> — <code>by lazy</code>, <code>observable</code>, <code>provideDelegate</code>.</li>
+            <li><a href="https://kotlinlang.org/docs/scope-functions.html" target="_blank" rel="noopener">Kotlin Docs — Scope functions</a> — <code>let/run/with/apply/also</code>.</li>
+            <li><a href="https://kotlinlang.org/docs/sealed-classes.html" target="_blank" rel="noopener">Kotlin Docs — Sealed classes and interfaces</a> — исчерпывающий <code>when</code>, ограничения Kotlin 1.5+.</li>
+            <li><a href="https://kotlinlang.org/docs/fun-interfaces.html" target="_blank" rel="noopener">Kotlin Docs — Functional (SAM) interfaces</a> — <code>fun interface</code>, SAM-конвертация.</li>
+            <li><a href="https://kotlinlang.org/docs/operator-overloading.html" target="_blank" rel="noopener">Kotlin Docs — Operator overloading</a> — конвенции операторов, <code>componentN</code>, <code>invoke</code>.</li>
+          </ol>
+        </div>
+      </article>
+    </div>
+    <aside id="toc"></aside>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="../assets/app.js?v=20260620-4"></script>
+</body>
+</html>

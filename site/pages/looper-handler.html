@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    (() => {
+      const key = "aip-theme";
+      let theme = null;
+      try { theme = localStorage.getItem(key); } catch(e) {}
+      if (theme !== "dark" && theme !== "light") {
+        theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <title>Looper и Handler · Android-собес</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+</head>
+<body data-page="looper-handler">
+  <div class="layout">
+    <aside id="sidebar"></aside>
+    <div id="content">
+      <article class="page">
+        <div class="breadcrumb"></div>
+        <header class="page-head">
+          <span class="eyebrow">Многопоточность</span>
+          <h1>Looper и Handler</h1>
+          <p class="lead">Главный поток Android — это <strong>петля событий</strong>: <code>Looper</code> бесконечно достаёт сообщения из <code>MessageQueue</code> и отдаёт их <code>Handler</code> на обработку. На этом механизме держатся отрисовка кадров, доставка событий ввода и переключение корутин в <code>Dispatchers.Main</code>. На собесе проверяют, понимаете ли вы, почему долгая работа на главном потоке приводит к ANR и как сообщение попадает из фонового потока в UI.</p>
+          <div class="meta">
+            <span class="tag lvl-mid">Middle</span>
+            <span class="tag lvl-sen">Senior</span>
+            <span class="tag hot">Частый вопрос</span>
+          </div>
+        </header>
+
+        <section class="section" id="event-loop">
+          <h2>Главный поток и петля событий</h2>
+          <p>UI в Android — однопоточный: только главный (UI) поток вправе трогать <code>View</code>. Под ним крутится петля событий: <code>Looper</code> в цикле достаёт сообщения из <code>MessageQueue</code> и отдаёт их <code>Handler</code> на обработку. Любая долгая работа на этом потоке = пропуск кадров и риск ANR.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart LR
+H["Handler.post / sendMessage"] --> Q["MessageQueue"]
+Q --> L["Looper.loop извлекает Message"]
+L --> D["Handler.dispatchMessage"]
+D --> UI["Обновление View на главном потоке"]
+          </div>
+          <div class="cap">Петля событий: Handler кладёт сообщения в очередь, Looper последовательно их обрабатывает</div>
+          </div>
+          <p>Главный <code>Looper</code> приложения создаёт сама среда выполнения: метод <code>ActivityThread.main()</code> вызывает <code>Looper.prepareMainLooper()</code>, а затем <code>Looper.loop()</code> — и этот вызов не возвращается, пока живёт процесс. Поэтому весь жизненный цикл приложения происходит «внутри» петли главного потока.</p>
+        </section>
+
+        <section class="section" id="looper">
+          <h2>Looper: один на поток</h2>
+          <p>Обычный поток петли не имеет. Чтобы её завести, в этом потоке вызывают <code>Looper.prepare()</code> (создаёт <code>Looper</code> и его <code>MessageQueue</code>), а затем <code>Looper.loop()</code>. Ключевые гарантии:</p>
+          <ul>
+            <li><strong>Один <code>Looper</code> на поток.</strong> Повторный <code>prepare()</code> в том же потоке бросит <code>RuntimeException("Only one Looper may be created per thread")</code>. Связка хранится в <code>ThreadLocal</code>.</li>
+            <li><strong>Один <code>MessageQueue</code> на <code>Looper</code>.</strong> <code>Looper.myLooper()</code> возвращает <code>Looper</code> текущего потока (или <code>null</code>), <code>Looper.getMainLooper()</code> — главный.</li>
+            <li><strong>Главный <code>Looper</code> нельзя остановить.</strong> Он создан с запретом выхода, поэтому <code>quit()</code> на нём бросает <code>IllegalStateException("Main thread not allowed to quit.")</code>.</li>
+          </ul>
+<pre><code class="language-kotlin">// Превратить обычный поток в loop-поток вручную (учебный пример):
+class LooperThread : Thread() {
+    var handler: Handler? = null
+    override fun run() {
+        Looper.prepare()                       // создаём Looper + MessageQueue
+        handler = Handler(Looper.myLooper()!!) { msg -> /* обработка */ true }
+        Looper.loop()                          // блокируемся на обработке очереди
+    }
+}</code></pre>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd">Останавливать собственный <code>Looper</code> следует через <code>quitSafely()</code> (с API 18): он доставит уже наступившие по времени сообщения и завершит цикл, тогда как <code>quit()</code> обрывает очередь немедленно и может потерять сообщения. После завершения <code>Looper</code> отправка через <code>Handler</code> вернёт <code>false</code>.</div>
+          </div>
+        </section>
+
+        <section class="section" id="message-queue">
+          <h2>MessageQueue: очередь по времени, а не FIFO</h2>
+          <p><code>MessageQueue</code> хранит сообщения <strong>упорядоченными по времени доставки</strong> (<code>Message.when</code> на базе <code>SystemClock.uptimeMillis()</code>), а не в порядке отправки. Отложенное сообщение вставляется в нужное место списка, и петля заберёт его, лишь когда подойдёт его время. Поэтому <code>postDelayed(r, 100)</code> и сразу <code>post(r2)</code> выполнятся в порядке <code>r2</code>, затем <code>r</code>.</p>
+          <p>Когда подходящих по времени сообщений нет, поток петли <strong>не крутит холостой цикл</strong>: он засыпает в нативном коде (через <code>epoll</code> на дескрипторе-<code>eventfd</code>), не потребляя CPU. Новое сообщение или наступление срока ближайшего отложенного будит поток. Это и позволяет главному потоку «ничего не делать» между кадрами без нагрузки на батарею.</p>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>IdleHandler.</strong> Через <code>MessageQueue.addIdleHandler { … }</code> можно повесить колбэк, который вызывается, когда очередь опустела (или все оставшиеся сообщения отложены на будущее). Удобно для низкоприоритетной работы «когда поток свободен»; вернёте <code>true</code> — обработчик останется, <code>false</code> — снимется.</div>
+          </div>
+        </section>
+
+        <section class="section" id="handler">
+          <h2>Handler: отправка и обработка сообщений</h2>
+          <p><code>Handler</code> привязывается к <code>Looper</code> <strong>в момент создания</strong>: он берёт <code>Looper</code> текущего потока и кэширует его очередь. Если в потоке нет подготовленного <code>Looper</code>, конструктор бросит <code>RuntimeException</code>. Через <code>Handler</code> переключаются в нужный поток: создав его с главным <code>Looper</code>, можно из фона выполнить код на UI.</p>
+          <div class="code-label">Переключение в главный поток</div>
+<pre><code class="language-kotlin">// Handler на главный поток — вернуться в UI из фонового потока
+val mainHandler = Handler(Looper.getMainLooper())
+mainHandler.post { textView.text = "готово" }
+
+// отложенная задача (база времени — uptimeMillis):
+mainHandler.postDelayed({ hideLoader() }, 2_000)
+
+// снять задачу, пока не выполнилась (например, при уходе с экрана):
+mainHandler.removeCallbacks(/* тот же Runnable */ ::hideLoader)</code></pre>
+          <p>Методы <code>post*</code> — это обёртки над <code>sendMessage*</code>: <code>Runnable</code> упаковывается в <code>Message</code>, у которого он становится колбэком. Сами <code>Message</code> берут из пула — <code>Message.obtain()</code> или <code>handler.obtainMessage()</code> вместо <code>new Message()</code>, чтобы не аллоцировать объекты на каждый кадр; после доставки сообщение перерабатывается (<code>recycle()</code>) автоматически.</p>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><code>removeMessages</code>/<code>removeCallbacks</code> и проверки <code>hasMessages</code> <strong>сканируют всю очередь</strong> — это <code>O(n)</code> по числу сообщений. Документация прямо предупреждает: на горячем пути их лучше избегать. Также помните: <code>removeMessages(0)</code> снесёт все сообщения без явного <code>what</code>, включая запощенные <code>Runnable</code>.</div>
+          </div>
+        </section>
+
+        <section class="section" id="dispatch">
+          <h2>dispatchMessage: порядок обработки</h2>
+          <p>Когда <code>Looper</code> извлёк сообщение, он вызывает <code>msg.target.dispatchMessage(msg)</code> — то есть отдаёт его тому <code>Handler</code>, что отправлял. Внутри — фиксированный порядок из трёх веток:</p>
+<pre><code class="language-kotlin">// упрощённо, как в исходниках Handler:
+fun dispatchMessage(msg: Message) {
+    if (msg.callback != null) {
+        msg.callback.run()                 // 1) Runnable, отправленный через post()
+    } else {
+        if (mCallback != null &amp;&amp;          // 2) Handler.Callback из конструктора
+            mCallback.handleMessage(msg)) {
+            return                          // вернул true — обработку прекращаем
+        }
+        handleMessage(msg)                  // 3) переопределённый handleMessage()
+    }
+}</code></pre>
+          <p>Сначала проверяется собственный колбэк сообщения (<code>Runnable</code> из <code>post</code>), затем — <code>Handler.Callback</code>, переданный в конструктор (если он вернул <code>true</code>, дальше не идём), и только потом — переопределённый метод <code>handleMessage()</code>. Знание этого порядка — типичный senior-вопрос.</p>
+        </section>
+
+        <section class="section" id="handler-deprecated">
+          <h2>Почему конструктор Handler() устарел</h2>
+          <p>Безаргументный <code>Handler()</code> и <code>Handler(Callback)</code> помечены устаревшими начиная с <strong>Android 11 (API 30)</strong>. Причина — неявный выбор <code>Looper</code> из текущего потока порождает трудноуловимые баги:</p>
+          <ul>
+            <li>операции <strong>молча теряются</strong>, если <code>Looper</code> того потока уже завершился;</li>
+            <li><strong>падения</strong>, если <code>Handler</code> иногда создаётся в потоке без активного <code>Looper</code>;</li>
+            <li><strong>гонки</strong> — поток, к которому привязался <code>Handler</code>, оказывается не тем, что предполагал автор.</li>
+          </ul>
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>Как правильно.</strong> Указывайте <code>Looper</code> явно — <code>Handler(Looper.getMainLooper())</code> — или используйте <code>Executor</code>. Если нужна именно привязка к текущему потоку, пишите <code>Handler(Looper.myLooper())</code>, чтобы намерение было очевидно читателю.</div>
+          </div>
+        </section>
+
+        <section class="section" id="handler-thread">
+          <h2>HandlerThread: фоновый поток с очередью</h2>
+          <p><code>HandlerThread</code> — это <code>Thread</code> с уже подготовленным <code>Looper</code>: удобно для <strong>последовательной</strong> фоновой обработки (например, запись в файл или БД из одного потока без гонок). Его <code>getLooper()</code> <em>блокируется</em>, пока <code>Looper</code> не инициализируется, поэтому <code>Handler</code> можно создавать сразу после <code>start()</code>.</p>
+<pre><code class="language-kotlin">val ht = HandlerThread("io-worker").apply { start() }
+val bgHandler = Handler(ht.looper)        // getLooper() дождётся готовности
+bgHandler.post { writeToDisk() }          // последовательная фоновая работа
+// при остановке:
+ht.quitSafely()                            // доставит наступившие сообщения и завершит петлю</code></pre>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd">Сама документация <code>HandlerThread</code> советует прибегать к нему, <em>только</em> если нужно работать именно с Handler-API; в остальных случаях предпочтительны <code>Executor</code>/<code>ExecutorService</code> (см. <a href="executors.html">«Executor и пулы потоков»</a>) или корутины.</div>
+          </div>
+        </section>
+
+        <section class="section" id="barriers">
+          <h2>Барьеры синхронизации, vsync и Dispatchers.Main</h2>
+          <p>Помимо обычных, очередь поддерживает <strong>асинхронные сообщения</strong> и <strong>барьеры синхронизации</strong>. Барьер — это служебное сообщение без получателя (<code>target == null</code>); пока он в голове очереди, обычные (синхронные) сообщения «придерживаются», а исполняются только асинхронные. Это нужно, чтобы отрисовка кадра по сигналу <strong>vsync</strong> не задерживалась прочей работой.</p>
+          <p>Именно так устроена отрисовка: после <code>View.invalidate()</code> система ставит на очередь главного потока барьер, а колбэк отрисовки от <code>Choreographer</code> кладёт <strong>асинхронным</strong> сообщением, привязанным к следующему vsync. Когда кадр готов, барьер снимается.</p>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><strong>Граница публичного API.</strong> Пометить сообщение асинхронным можно публично — <code>Message.setAsynchronous(true)</code> (API 22). А вот <em>поставить барьер</em> публичного API нет: <code>postSyncBarrier()</code>/<code>removeSyncBarrier()</code> скрыты (<code>@hide</code>). Это внутренний механизм платформы; знать его полезно для понимания, но вызывать в приложении нельзя.</div>
+          </div>
+          <p>Связь с корутинами: на Android <code>Dispatchers.Main</code> реализован <strong>поверх <code>Handler</code></strong> к главному <code>Looper</code>. Диспетчеризация — это <code>handler.post(block)</code>, а возобновление после <code>delay</code> — <code>postDelayed</code> с отменой через <code>removeCallbacks</code>. Причём используется <em>асинхронный</em> Handler (в обход vsync-барьера). Поэтому «переключиться в Main» — это, по сути, положить задачу в очередь главного потока. Подробнее о корутинах — в разделе <a href="coroutines.html">«Корутины и Flow»</a>.</p>
+        </section>
+
+        <section class="section" id="anr">
+          <h2>Связь с ANR: почему нельзя «грузить» главный поток</h2>
+          <p>Поскольку обработка ввода и отрисовка идут через очередь главного потока, любая долгая операция в <code>handleMessage</code>/<code>Runnable</code> блокирует доставку следующих сообщений. Система отслеживает это и показывает диалог <strong>ANR</strong> (Application Not Responding):</p>
+          <ul>
+            <li><strong>Ввод не обработан за 5 секунд</strong> (нажатие, касание) — основной и самый известный порог из официальной документации по ANR.</li>
+            <li>У <code>BroadcastReceiver</code> — свои тайм-ауты, заданные системными константами (порядка 10 секунд для foreground-приёма, до минуты для фонового), которые ещё масштабируются на медленном железе.</li>
+          </ul>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Вывод.</strong> Кадр при 60 fps — это ~16 мс на главном потоке; всё, что дольше, роняет частоту кадров (jank), а блокировка на секунды ведёт к ANR. Тяжёлую работу уводят в фон (<code>Executor</code>, <code>HandlerThread</code>, корутины на <code>Dispatchers.IO</code>/<code>Default</code>) и возвращаются на главный поток только для обновления <code>View</code>.</div>
+          </div>
+        </section>
+
+        <section class="section" id="faq">
+          <h2>Частые вопросы интервьюера</h2>
+
+          <details class="qa">
+            <summary>Как связаны Looper, Handler и MessageQueue? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p><code>Looper</code> владеет одной <code>MessageQueue</code> и в цикле (<code>loop()</code>) достаёт из неё сообщения по времени доставки. <code>Handler</code> привязан к конкретному <code>Looper</code>: он кладёт <code>Message</code>/<code>Runnable</code> в его очередь (<code>post</code>/<code>sendMessage</code>) и он же их обрабатывает (<code>dispatchMessage</code>). На поток приходится не больше одного <code>Looper</code> (хранится в <code>ThreadLocal</code>), но <code>Handler</code>-ов на один <code>Looper</code> может быть много.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как из фонового потока обновить UI? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>Переключиться на главный поток через его очередь: <code>Handler(Looper.getMainLooper()).post { … }</code> (или <code>view.post { … }</code>, <code>activity.runOnUiThread { … }</code>, а в корутинах — <code>withContext(Dispatchers.Main)</code>, который под капотом делает тот же <code>post</code>). Напрямую трогать <code>View</code> из фона нельзя — будет <code>CalledFromWrongThreadException</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Очередь сообщений — это FIFO? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Нет. <code>MessageQueue</code> упорядочена по времени доставки <code>Message.when</code> (база — <code>uptimeMillis</code>), а не по порядку отправки. Сообщение без задержки получает текущее время и встаёт после уже «просроченных»; отложенное — в позицию по своему времени. Поэтому <code>postDelayed</code> может выполниться позже отправленного позже, но «немедленного» сообщения.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>В каком порядке Handler обрабатывает сообщение? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p><code>dispatchMessage</code> идёт по трём веткам: (1) если у сообщения есть свой <code>callback</code> (это <code>Runnable</code> из <code>post()</code>) — выполняется он; (2) иначе, если у <code>Handler</code> задан <code>Callback</code> из конструктора и его <code>handleMessage</code> вернул <code>true</code> — обработка завершается; (3) иначе вызывается переопределённый <code>handleMessage()</code>. То есть <code>post</code>-Runnable имеет приоритет, затем конструкторный <code>Callback</code>, затем метод класса.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Почему <code>new Handler()</code> без аргументов — плохо? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Он неявно берёт <code>Looper</code> текущего потока, и это источник багов: задачи молча теряются (если тот <code>Looper</code> уже завершился), приложение падает (если потока без <code>Looper</code>) или возникают гонки из-за привязки не к тому потоку. Поэтому конструктор устарел с Android 11 (API 30). Правильно — указывать <code>Looper</code> явно: <code>Handler(Looper.getMainLooper())</code> или использовать <code>Executor</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Что блокирует главный поток, когда сообщений нет? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Ничего не «крутится» вхолостую: <code>MessageQueue.next()</code> уходит в нативный сон через <code>epoll</code> на дескрипторе-<code>eventfd</code> до тех пор, пока не появится новое сообщение или не наступит время ближайшего отложенного. Запись в этот дескриптор (например, при <code>post</code> из другого потока) будит петлю. Поэтому простаивающий главный поток не нагружает CPU и батарею, оставаясь готовым мгновенно обработать ввод.</p></div>
+          </details>
+
+        </section>
+
+        <section class="section" id="tasks">
+          <h2>Задачи</h2>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 1.</strong> Найдите утечку памяти в коде ниже. Объясните, почему она возникает, и предложите исправление.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">// Исходный код с утечкой:
+class MainActivity : AppCompatActivity() {
+    private val handler = Handler(Looper.getMainLooper())
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        handler.postDelayed({
+            textView.text = "загрузка завершена"
+        }, 30_000)
+    }
+}
+
+// Исправление — отменяем задачу при уничтожении Activity:
+class MainActivity : AppCompatActivity() {
+    private val handler = Handler(Looper.getMainLooper())
+    private val updateTask = Runnable {
+        textView.text = "загрузка завершена"
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        handler.postDelayed(updateTask, 30_000)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        handler.removeCallbacks(updateTask)
+    }
+}</code></pre>
+                <p>Объяснение: лямбда, переданная в <code>postDelayed</code>, захватывает неявную ссылку на <code>this</code> (Activity), потому что обращается к <code>textView</code>. Если Activity закроют до истечения 30 секунд, система не сможет её собрать — Runnable удерживает ссылку через <code>MessageQueue</code>. Решение — хранить задачу как отдельный объект и убирать её через <code>removeCallbacks</code> в <code>onDestroy</code>.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 2.</strong> Реализуйте класс <code>SerialWorker</code>, который принимает задачи (<code>Runnable</code>) и выполняет их строго последовательно в фоновом потоке. Создание нового потока на каждую задачу запрещено. Обеспечьте корректную остановку.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">class SerialWorker {
+    private val thread = HandlerThread("serial-worker").apply { start() }
+    private val handler = Handler(thread.looper)
+
+    fun submit(task: Runnable) {
+        handler.post(task)
+    }
+
+    fun submitDelayed(task: Runnable, delayMs: Long) {
+        handler.postDelayed(task, delayMs)
+    }
+
+    fun cancel(task: Runnable) {
+        handler.removeCallbacks(task)
+    }
+
+    /** Завершает после обработки уже поставленных в очередь задач. */
+    fun shutdown() {
+        thread.quitSafely()
+    }
+}</code></pre>
+                <p>Объяснение: <code>HandlerThread</code> создаёт поток с уже готовым <code>Looper</code> — заводить его вручную через <code>Looper.prepare()</code> не нужно. <code>Handler</code>, привязанный к его <code>looper</code>, гарантирует последовательное выполнение: новая задача запустится, только когда предыдущая завершится. <code>quitSafely()</code> дождётся задач с наступившим временем доставки, <code>quit()</code> — обрубил бы очередь немедленно.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 3.</strong> Предскажите порядок вывода для кода ниже. Объясните, почему именно такой.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">val handler = Handler(Looper.getMainLooper())
+
+handler.postDelayed({ Log.d("Q", "A — delayed 100ms") }, 100)
+handler.post { Log.d("Q", "B — immediate") }
+handler.postDelayed({ Log.d("Q", "C — delayed 50ms") }, 50)
+handler.post { Log.d("Q", "D — immediate") }
+
+// Порядок вывода (при условии, что все четыре вызова выполнены
+// подряд, до того как Looper успел обработать очередь):
+// B, D, C, A</code></pre>
+                <p>Объяснение: <code>MessageQueue</code> упорядочена по <code>Message.when</code> (время доставки на базе <code>uptimeMillis</code>), а не по порядку отправки. «Немедленные» сообщения B и D получают время ~T+0 и встают в очередь перед C (T+50) и A (T+100). Среди немедленных порядок вставки сохраняется: B зашёл первым — выйдет первым. Итог: B → D → C → A.</p>
+              </div>
+            </details>
+          </div>
+
+        </section>
+
+        <div class="sources">
+          <h2>Источники</h2>
+          <ol>
+            <li><a href="https://developer.android.com/reference/android/os/Looper" target="_blank" rel="noopener">Android Developers — Looper</a> — <code>prepare()</code>/<code>loop()</code>/<code>myLooper()</code>, главный Looper, <code>quitSafely()</code>.</li>
+            <li><a href="https://developer.android.com/reference/android/os/Handler" target="_blank" rel="noopener">Android Developers — Handler</a> — привязка к Looper, <code>post</code>/<code>sendMessage</code>, устаревание <code>Handler()</code>, <code>dispatchMessage</code>.</li>
+            <li><a href="https://developer.android.com/reference/android/os/MessageQueue" target="_blank" rel="noopener">Android Developers — MessageQueue</a> — порядок по времени, <code>IdleHandler</code>, асинхронные сообщения.</li>
+            <li><a href="https://developer.android.com/reference/android/os/HandlerThread" target="_blank" rel="noopener">Android Developers — HandlerThread</a> — поток с готовым Looper, <code>getLooper()</code>, рекомендация Executor/корутин.</li>
+            <li><a href="https://developer.android.com/topic/performance/vitals/anr" target="_blank" rel="noopener">Android Developers — ANRs</a> — порог 5 с на обработку ввода и причины ANR.</li>
+            <li><a href="https://developer.android.com/develop/background-work/threading" target="_blank" rel="noopener">Android Developers — Threading</a> — главный поток, перенос работы в фон.</li>
+          </ol>
+        </div>
+      </article>
+    </div>
+    <aside id="toc"></aside>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="../assets/app.js?v=20260620-4"></script>
+</body>
+</html>

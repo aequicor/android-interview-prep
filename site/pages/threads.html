@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    (() => {
+      const key = "aip-theme";
+      let theme = null;
+      try { theme = localStorage.getItem(key); } catch(e) {}
+      if (theme !== "dark" && theme !== "light") {
+        theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <title>Потоки и память JVM · Android-собес</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+</head>
+<body data-page="threads">
+  <div class="layout">
+    <aside id="sidebar"></aside>
+    <div id="content">
+      <article class="page">
+        <div class="breadcrumb"></div>
+        <header class="page-head">
+          <span class="eyebrow">Многопоточность</span>
+          <h1>Потоки и память JVM</h1>
+          <p class="lead">Базовый слой всей конкурентности: поток как нить исполнения, гонки данных, взаимное исключение и — главное — <strong>модель памяти JVM</strong> (видимость, happens-before, переупорядочивание). Здесь же неблокирующая альтернатива блокировкам — <strong>CAS</strong> и атомики. Это фундамент, на котором затем строятся Looper/Handler, пулы потоков и корутины; на собесе проверяют не знание слова «поток», а понимание, <em>почему</em> без синхронизации код некорректен.</p>
+          <div class="meta">
+            <span class="tag lvl-mid">Middle</span>
+            <span class="tag lvl-sen">Senior</span>
+            <span class="tag hot">Частый вопрос</span>
+          </div>
+        </header>
+
+        <section class="section" id="thread-runnable">
+          <h2>Поток и Runnable: носитель и задача</h2>
+          <p>Поток (<code>Thread</code>) — это нить исполнения, которой ОС выделяет квант процессорного времени. В Java поток создаётся через <code>Thread</code> + <code>Runnable</code>, но напрямую плодить потоки — антипаттерн: каждый стоит примерно 512 КБ–1 МБ стека, а переключение контекста требует перехода в режим ядра. На практике используют пулы (<code>Executor</code>) или корутины — к ним отдельные разделы.</p>
+          <div class="code-label">Thread и Runnable</div>
+<pre><code class="language-kotlin">// Runnable — задача; Thread — носитель исполнения
+val task = Runnable { println("работаю в ${Thread.currentThread().name}") }
+val t = Thread(task, "worker-1").apply { start() }  // start(), НЕ run()!
+t.join()  // блокирующе ждём завершения</code></pre>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Классический вопрос-ловушка.</strong> Вызов <code>run()</code> исполнит код в <em>текущем</em> потоке (это обычный метод), а новый поток создаёт только <code>start()</code>. Повторный <code>start()</code> на одном объекте кинет <code>IllegalThreadStateException</code>.</div>
+          </div>
+          <p>Поток бывает <strong>демоном</strong> (<code>isDaemon = true</code>): JVM завершится, не дожидаясь демон-потоков. Фоновые служебные потоки (таймеры, планировщики) обычно делают демонами, чтобы они не держали процесс живым.</p>
+        </section>
+
+        <section class="section" id="race">
+          <h2>Гонка данных и synchronized</h2>
+          <p>Когда два потока без синхронизации читают-пишут общее изменяемое состояние, результат недетерминирован. Операция <code>count++</code> не атомарна — это три действия (read–modify–write), которые могут переплестись.</p>
+<pre><code class="language-kotlin">class Counter {
+    @Volatile private var count = 0              // volatile НЕ спасёт от гонки инкремента!
+    fun inc() { count++ }                        // read, +1, write — не атомарно
+    fun get() = count
+}
+// 2 потока × 100_000 инкрементов → итог почти всегда &lt; 200_000</code></pre>
+
+          <p class="subhead">Почему <code>count++</code> не атомарна</p>
+          <p>Запись <code>count++</code> компилируется не в одно неделимое действие, а в три отдельных шага над полем <code>count</code> (оно лежит в общей памяти, в куче):</p>
+          <ul>
+            <li><strong>Чтение (read).</strong> Значение <code>count</code> копируется из памяти в локальную ячейку потока — в байткоде JVM это <code>getfield</code>, кладущий значение на стек операндов. С этого момента поток работает с копией, а не с самим полем.</li>
+            <li><strong>Инкремент (modify).</strong> К копии прибавляется единица (<code>iadd</code>). Поле в памяти при этом не затрагивается — меняется только локальное значение внутри потока.</li>
+            <li><strong>Запись (write).</strong> Результат записывается обратно в поле (<code>putfield</code>). Только теперь новое значение становится видно остальным потокам.</li>
+          </ul>
+<pre><code class="language-kotlin">count++              // одна строка — но три шага под капотом:
+val tmp  = count     // read:   значение поля → в локальную копию потока
+val next = tmp + 1   // modify: +1 над копией, поле в памяти не тронуто
+count = next         // write:  результат → обратно в поле</code></pre>
+          <p>Опасны не сами шаги, а зазоры между ними. Планировщик вправе вытеснить поток в любой момент, в том числе между чтением и записью; на многоядерном процессоре два потока выполняют эти шаги и вовсе одновременно на разных ядрах. «Просто прочитать и записать» недостаточно именно потому, что между чтением и записью значение поля успевает устареть: если оба потока прочитали <code>count</code> раньше, чем любой из них записал результат, они прибавят единицу к одному и тому же исходному числу и запишут одинаковое значение — вторая запись затрёт первую.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Шаг</th><th>Поток A</th><th>Поток B</th><th><code>count</code> в памяти</th></tr></thead>
+              <tbody>
+                <tr><td>1</td><td>read → A = 41</td><td>—</td><td>41</td></tr>
+                <tr><td>2</td><td>—</td><td>read → B = 41</td><td>41</td></tr>
+                <tr><td>3</td><td>+1 → A = 42</td><td>—</td><td>41</td></tr>
+                <tr><td>4</td><td>—</td><td>+1 → B = 42</td><td>41</td></tr>
+                <tr><td>5</td><td>write 42</td><td>—</td><td>42</td></tr>
+                <tr><td>6</td><td>—</td><td>write 42</td><td>42</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Потерянное обновление (lost update).</strong> Оба потока отработали по разу, но из <code>41</code> вышло <code>42</code> вместо <code>43</code>: инкремент потока A перезаписан потоком B, у которого на руках было устаревшее значение. Одна такая накладка теряет ровно один инкремент — на сотне тысяч итераций они копятся, оттого итог из примера выше почти всегда заметно меньше <code>200_000</code>. <code>@Volatile</code> здесь не спасает: он делает каждое отдельное чтение и запись видимыми сразу, но не связывает тройку read–modify–write в одно неделимое действие — зазор между чтением и записью остаётся.</div>
+          </div>
+
+          <p class="subhead">synchronized: взаимное исключение + видимость</p>
+          <p><code>synchronized</code> захватывает монитор объекта: только один поток внутри критической секции. Важно: монитор даёт не только <strong>атомарность</strong>, но и <strong>видимость</strong> — на входе в блок поток видит все изменения, сделанные до выхода из блока другим потоком (happens-before).</p>
+<pre><code class="language-kotlin">class SafeCounter {
+    private var count = 0
+    private val lock = Any()
+    fun inc() = synchronized(lock) { count++ }   // взаимное исключение
+    fun get() = synchronized(lock) { count }     // и видимость свежего значения
+}</code></pre>
+          <p>В Kotlin нет ключевого слова <code>synchronized</code> как в Java — есть inline-функция <code>synchronized(lock) { … }</code> и аннотация <code>@Synchronized</code> для методов. Под капотом это те же байткод-инструкции <code>monitorenter</code>/<code>monitorexit</code>.</p>
+        </section>
+
+        <section class="section" id="memory-model">
+          <h2>Модель памяти: volatile и happens-before</h2>
+          <p>Без синхронизации JIT и CPU вправе кэшировать переменную в регистре или кэше ядра — поток может «не увидеть» запись из другого потока сколь угодно долго. <code>volatile</code> гарантирует, что чтение идёт из главной памяти, а запись туда же сбрасывается, и запрещает переупорядочивание операций вокруг переменной.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Гарантия</th><th><code>volatile</code></th><th><code>synchronized</code> / атомики</th></tr></thead>
+              <tbody>
+                <tr><td>Видимость (visibility)</td><td>✅ да</td><td>✅ да</td></tr>
+                <tr><td>Запрет реордеринга</td><td>✅ да</td><td>✅ да</td></tr>
+                <tr><td>Атомарность compound-операций (<code>x++</code>)</td><td>❌ нет</td><td>✅ да</td></tr>
+                <tr><td>Взаимное исключение</td><td>❌ нет</td><td>✅ да (только synchronized/Lock)</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="subhead">Над чем работает <code>volatile</code>: поле, а не объект за ним</p>
+          <p><code>@Volatile</code> ставится на поле любого типа, не только примитивного — модификатор просто помечает backing field. Но гарантия (видимость, запрет реордеринга, атомарность 64-битного доступа) распространяется ровно на <strong>значение самого поля</strong>: для примитива — на число, для ссылочного типа — на <strong>ссылку</strong> (на какой объект смотрит переменная), но не на содержимое объекта за ней.</p>
+<pre><code class="language-kotlin">class Box {
+    @Volatile var i: Int = 5      // примитив int — volatile над самим числом
+    @Volatile var n: Int? = 5     // ссылка на java.lang.Integer (бокс) — volatile над ссылкой
+    @Volatile var s = State(0)    // ссылка на изменяемый объект — volatile над ссылкой
+}
+data class State(var x: Int)
+
+val b = Box()
+
+// Видимость самого поля — есть во всех трёх случаях:
+b.i = 10          // другой поток гарантированно увидит 10
+b.n = 10          // увидит новую ссылку на Integer(10)
+b.s = State(7)    // увидит новую ссылку + безопасно опубликованный объект
+
+// Здесь volatile уже не помогает:
+b.i++             // read-modify-write — по-прежнему не атомарно
+b.s.x = 7         // мутация поля ВНУТРИ объекта: x не volatile → запись может быть не видна</code></pre>
+          <p>Сам тип примитива важен в одном месте. По спецификации JVM 64-битные <code>long</code> и <code>double</code> без <code>volatile</code> можно читать и писать двумя 32-битными половинами — другой поток рискует увидеть «разорванное» значение. <code>@Volatile</code> (или <code>AtomicLong</code>) возвращает атомарность доступа. У <code>int</code>, <code>boolean</code> и ссылок отдельные чтения и записи атомарны и без него — volatile добавляет им лишь видимость и запрет реордеринга.</p>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Ссылка — не объект за ней.</strong> <code>volatile</code> даёт безопасную публикацию новой ссылки, но не потокобезопасную мутацию объекта. Переприсваивание поля (<code>b.s = State(7)</code>) другой поток увидит целиком — вместе с полями опубликованного объекта; мутацию поля внутри уже опубликованного объекта (<code>b.s.x = 7</code>) — нет, если само поле не volatile. Чтобы защитить внутреннее изменяемое состояние, volatile/atomic ставят на сами поля объекта, доступ к ним синхронизируют или используют неизменяемый объект, который только переприсваивают.</div>
+          </div>
+          <p><strong>Happens-before</strong> — формальное отношение из Java Memory Model: если действие A «происходит-до» B, то эффекты A видны в B. Ключевые правила: разблокировка монитора happens-before следующей блокировки того же монитора; запись в <code>volatile</code> happens-before последующего чтения этой же переменной; <code>Thread.start()</code> happens-before кода запущенного потока; код потока happens-before возврата из <code>join()</code>; запись в <code>final</code>-поле в конструкторе happens-before чтения ссылки на объект после конструктора.</p>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Канонический пример volatile — флаг остановки.</strong> <code>@Volatile var running = true</code> в одном потоке, цикл <code>while (running)</code> в другом. Без <code>volatile</code> цикл может крутиться вечно, не увидев <code>running = false</code>: компилятор вправе поднять чтение из цикла, решив, что переменная не меняется.</div>
+          </div>
+        </section>
+
+        <section class="section" id="deadlock">
+          <h2>Deadlock, livelock, starvation</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Проблема</th><th>Суть</th><th>Как лечат</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Deadlock</strong></td><td>Потоки взаимно ждут блокировки друг друга (A держит L1, ждёт L2; B наоборот). Прогресса нет.</td><td>Единый порядок захвата локов; <code>tryLock</code> с таймаутом; меньше локов.</td></tr>
+                <tr><td><strong>Livelock</strong></td><td>Потоки активны, реагируют друг на друга, но прогресса нет (двое уступают дорогу в коридоре).</td><td>Рандомизированный бэкофф, разрыв симметрии.</td></tr>
+                <tr><td><strong>Starvation</strong></td><td>Поток никогда не получает ресурс (низкий приоритет, «жадные» соседи).</td><td>Справедливые (fair) локи, балансировка приоритетов.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Самая частая причина deadlock на практике — захват двух локов в разном порядке в разных местах кода. Универсальная профилактика: установить <strong>глобальный порядок</strong> захвата (например, по <code>System.identityHashCode</code> объектов) и всегда брать локи в нём.</p>
+        </section>
+
+        <section class="section" id="wait-notify">
+          <h2>wait / notify — низкоуровневая координация</h2>
+          <p>Методы <code>Object.wait()/notify()/notifyAll()</code> работают только внутри <code>synchronized</code> на том же мониторе. <code>wait()</code> отпускает монитор и засыпает; <code>notify()</code> будит один ждущий поток, <code>notifyAll()</code> — все. Главное правило — <strong>проверять условие в цикле <code>while</code>, а не <code>if</code></strong> (защита от ложных пробуждений, spurious wakeups, и от перехвата условия другим потоком).</p>
+<pre><code class="language-kotlin">// простой блокирующий буфер на одну ячейку
+class OneCell&lt;T&gt; {
+    private var value: T? = null
+    private val lock = Object()
+
+    fun put(v: T) = synchronized(lock) {
+        while (value != null) lock.wait()        // ждём, пока освободится
+        value = v
+        lock.notifyAll()                         // будим потребителей
+    }
+    fun take(): T = synchronized(lock) {
+        while (value == null) lock.wait()        // while, НЕ if!
+        val v = value!!; value = null
+        lock.notifyAll(); v
+    }
+}</code></pre>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd">В реальном коде вместо <code>wait/notify</code> берут высокоуровневые примитивы из <code>java.util.concurrent</code>: <code>ReentrantLock</code> + <code>Condition</code>, <code>BlockingQueue</code>, <code>CountDownLatch</code>, <code>Semaphore</code>. Но на собесе про <code>wait/notify</code> спрашивают, чтобы проверить понимание мониторов.</div>
+          </div>
+        </section>
+
+        <section class="section" id="cas">
+          <h2>CAS и lock-free</h2>
+          <p>Блокировки дороги (переключение в ядро, парковка потоков). Альтернатива — <strong>неблокирующие</strong> алгоритмы поверх аппаратной инструкции <strong>CAS (Compare-And-Swap)</strong>. CPU предоставляет её как атомарную команду (<code>CMPXCHG</code> на x86, <code>LL/SC</code> на ARM): «сравни значение в памяти с ожидаемым; если совпало — запиши новое; верни признак успеха». Всё это — атомарно, без локов.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TB
+A["Прочитать current = V"] --> B["Вычислить next = f(V)"]
+B --> C{"CAS(V: current → next)"}
+C -->|успех| D["Готово"]
+C -->|провал: кто-то изменил| A
+          </div>
+          <div class="cap">CAS-retry loop: читаем, вычисляем, пробуем атомарно записать; при провале повторяем</div>
+          </div>
+
+          <p class="subhead">Атомики поверх CAS</p>
+          <p>Классы <code>AtomicInteger</code>, <code>AtomicLong</code>, <code>AtomicReference</code> инкапсулируют CAS-цикл. <code>incrementAndGet()</code> внутри — это спин-цикл с CAS, который HotSpot инлайнит в нативную инструкцию.</p>
+<pre><code class="language-kotlin">val counter = java.util.concurrent.atomic.AtomicInteger(0)
+counter.incrementAndGet()                 // атомарный ++ без synchronized
+
+// ручной CAS-цикл — суть incrementAndGet под капотом:
+fun AtomicInteger.addCustom(delta: Int): Int {
+    while (true) {
+        val cur = get()
+        val next = cur + delta
+        if (compareAndSet(cur, next)) return next   // успех — выходим
+        // иначе кто-то опередил — повторяем
+    }
+}</code></pre>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Под высокой конкуренцией</strong> CAS-цикл «крутится» вхолостую и проигрывает. Для счётчиков с частой записью и редким чтением берут <code>LongAdder</code>: он распыляет инкременты по ячейкам (striping) и суммирует только при чтении — меньше contention.</div>
+          </div>
+
+          <p class="subhead">ABA-проблема</p>
+          <p>CAS проверяет только <em>значение</em>, не историю. Если поток прочитал <code>A</code>, затем другой поток успел сделать <code>A → B → A</code>, наш CAS «успешно» сработает, хотя состояние менялось. Для стеков/очередей на ссылках это приводит к порче структуры.</p>
+          <p>Решение — версионирование: <code>AtomicStampedReference</code> хранит пару (ссылка, stamp-счётчик); CAS проверяет и ссылку, и марку, поэтому цикл <code>A→B→A</code> поднимет stamp и наш CAS провалится.</p>
+<pre><code class="language-kotlin">val ref = java.util.concurrent.atomic.AtomicStampedReference("A", 0)
+val stampHolder = IntArray(1)
+val cur = ref.get(stampHolder)            // читаем значение + версию
+val stamp = stampHolder[0]
+// сработает, только если и значение, и версия не изменились:
+ref.compareAndSet(cur, "C", stamp, stamp + 1)</code></pre>
+
+          <p class="subhead">VarHandle — современная замена Unsafe</p>
+          <p>Исторически атомики опирались на внутренний <code>sun.misc.Unsafe</code>. С Java 9 появился <code>VarHandle</code> (<code>java.lang.invoke</code>) — безопасный типизированный доступ к полям с атомарными операциями и явными режимами памяти (<code>getAcquire</code>, <code>setRelease</code>, <code>compareAndSet</code>). Это легитимный способ строить свои lock-free структуры без приватного API.</p>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd">В Kotlin-мире атомики прячутся внутри корутин: <code>kotlinx.atomicfu</code> и поля <code>Job</code>/каналов реализованы на CAS. Понимание CAS помогает объяснить, почему отмена и обновление состояния корутины потокобезопасны без блокировок.</div>
+          </div>
+        </section>
+
+        <section class="section" id="why-pools">
+          <h2>Почему не «new Thread»: мост к пулам и корутинам</h2>
+          <p>Прямое создание потоков плохо масштабируется: память на стеки, стоимость переключения контекста в ядре, отсутствие управления жизненным циклом. Отсюда два направления, которым посвящены отдельные разделы блока «Многопоточность»:</p>
+          <ul>
+            <li><strong>Пулы потоков</strong> (<code>Executor</code>, <code>ThreadPoolExecutor</code>) — переиспользуют ограниченный набор потоков под поток задач. См. раздел <a href="executors.html">«Executor и пулы потоков»</a>.</li>
+            <li><strong>Корутины</strong> — лёгкая абстракция исполнения <em>поверх</em> потоков: приостановка не блокирует поток, поэтому десятки тысяч корутин живут на пуле из нескольких потоков. См. раздел <a href="coroutines.html">«Корутины и Flow»</a>.</li>
+            <li>На главном потоке Android планированием задач занимается <strong>петля событий</strong> Looper/Handler — см. <a href="looper-handler.html">«Looper и Handler»</a>.</li>
+          </ul>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><strong>Точная формулировка.</strong> Корутины не «быстрее» потоков сами по себе — они дешевле по памяти и удобнее по модели исполнения и отмены. Все они в итоге исполняются <em>на</em> потоках; разница в том, сколько потоков нужно и как ими управляют.</div>
+          </div>
+        </section>
+
+        <section class="section" id="faq">
+          <h2>Частые вопросы интервьюера</h2>
+
+          <details class="qa">
+            <summary>В чём разница между <code>volatile</code> и <code>synchronized</code>? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p><code>volatile</code> даёт только <strong>видимость</strong> и запрет реордеринга для одной переменной, но <strong>не атомарность</strong> compound-операций и не взаимное исключение. <code>synchronized</code> даёт всё сразу: взаимное исключение, атомарность критической секции и видимость (через happens-before на мониторе). Правило: флаг/публикация ссылки — <code>volatile</code>; составные инварианты и инкременты — <code>synchronized</code> или атомики.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Что такое happens-before и зачем оно? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Это отношение из Java Memory Model, определяющее, какие записи одного потока гарантированно видны другому. Без него JIT/CPU вправе переупорядочивать и кэшировать операции, и поток может «не увидеть» чужую запись. Ключевые рёбра: unlock→lock того же монитора, write→read одной <code>volatile</code>, <code>start()</code>→тело потока, тело потока→<code>join()</code>, запись в <code>final</code>→чтение после конструктора. JMM — это контракт, на котором стоит вся потокобезопасность.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Объясните CAS и ABA-проблему. <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>CAS (Compare-And-Swap) — атомарная инструкция CPU «сравни с ожидаемым и, если совпало, запиши новое». На ней строят lock-free структуры (атомики) с retry-циклом. ABA: поток прочитал <code>A</code>, другой успел <code>A→B→A</code>, и наш CAS ошибочно «успешен», хотя состояние менялось (опасно для стеков/очередей на ссылках). Решение — версионирование: <code>AtomicStampedReference</code> хранит марку-счётчик и сравнивает её вместе со значением.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Почему <code>count++</code> небезопасен даже с <code>@Volatile</code>? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p><code>volatile</code> обеспечивает видимость отдельных чтений и записей, но <code>count++</code> — это три отдельных действия (read, +1, write). Между чтением и записью другой поток может вклиниться со своим инкрементом, и одно из обновлений потеряется. Нужна атомарность всей тройки: <code>AtomicInteger.incrementAndGet()</code> (CAS-цикл) или <code>synchronized</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как предотвратить deadlock из двух локов? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Базовый приём — <strong>единый глобальный порядок</strong> захвата локов: если все места кода всегда берут L1 раньше L2, циклического ожидания не возникнет. Когда естественного порядка нет, его задают искусственно (например, по идентичности объекта). Альтернатива — <code>tryLock</code> с таймаутом: не удалось взять второй лок за отведённое время — отпустить первый и повторить. Чем меньше локов и уже критические секции, тем меньше риск.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Зачем условие в <code>wait()</code> проверять в <code>while</code>, а не <code>if</code>? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Из-за ложных пробуждений (spurious wakeups) и из-за того, что между <code>notify</code> и фактическим перезахватом монитора другой поток мог изменить условие. <code>while</code> перепроверяет предикат после пробуждения и снова уходит в <code>wait()</code>, если условие ещё не выполнено. С <code>if</code> поток продолжил бы исполнение при невыполненном условии — типичная гонка.</p></div>
+          </details>
+
+        </section>
+
+        <section class="section" id="tasks">
+          <h2>Задачи</h2>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 1.</strong> Напишите потокобезопасный счётчик без <code>synchronized</code> и без блокировок — только с помощью атомарных операций. Реализуйте метод <code>increment()</code> и <code>get()</code>. Затем объясните: почему реализация с <code>@Volatile var count = 0</code> и <code>count++</code> не является потокобезопасной, даже если два потока инкрементируют переменную строго по очереди (без перекрытия)?</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">import java.util.concurrent.atomic.AtomicInteger
+
+class LockFreeCounter {
+    private val count = AtomicInteger(0)
+
+    fun increment() {
+        // compareAndSet в цикле — суть incrementAndGet под капотом
+        while (true) {
+            val cur = count.get()
+            if (count.compareAndSet(cur, cur + 1)) return
+        }
+        // то же самое одной строкой:
+        // count.incrementAndGet()
+    }
+
+    fun get(): Int = count.get()
+}
+
+fun main() {
+    val counter = LockFreeCounter()
+    val threads = List(10) {
+        Thread { repeat(100_000) { counter.increment() } }
+    }
+    threads.forEach { it.start() }
+    threads.forEach { it.join() }
+    println(counter.get()) // всегда 1_000_000
+}</code></pre>
+                <p>Объяснение: <code>@Volatile</code> гарантирует видимость каждого отдельного чтения и записи, но не связывает три шага <code>count++</code> (read, modify, write) в одно неделимое действие. Даже при «строгой очерёдности» на уровне JIT два потока могут читать одно и то же значение до того, как любой из них запишет результат — lost update гарантирован на любом многоядерном CPU без барьера взаимного исключения. <code>AtomicInteger.incrementAndGet()</code> выполняет CAS-цикл, который на x86 компилируется в атомарную инструкцию <code>LOCK XADD</code>. Сложность O(1) амортизировано.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 2.</strong> Реализуйте паттерн «производитель – потребитель» на <code>ReentrantLock</code> и <code>Condition</code> (без <code>BlockingQueue</code>). Буфер — массив фиксированного размера <code>capacity</code>. Производитель блокируется, когда буфер полон; потребитель — когда буфер пуст. Гарантируйте отсутствие busy-wait и корректное завершение при вызове <code>close()</code>.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
+
+class BoundedBuffer&lt;T&gt;(private val capacity: Int) {
+    private val buf = ArrayDeque&lt;T&gt;(capacity)
+    private val lock = ReentrantLock()
+    private val notFull  = lock.newCondition()
+    private val notEmpty = lock.newCondition()
+    @Volatile private var closed = false
+
+    fun put(item: T) = lock.withLock {
+        // while, не if — защита от spurious wakeups и перехвата слота
+        while (buf.size == capacity &amp;&amp; !closed) notFull.await()
+        if (closed) return
+        buf.addLast(item)
+        notEmpty.signal()
+    }
+
+    fun take(): T? = lock.withLock {
+        while (buf.isEmpty() &amp;&amp; !closed) notEmpty.await()
+        if (buf.isEmpty()) return null   // closed + пусто
+        val item = buf.removeFirst()
+        notFull.signal()
+        item
+    }
+
+    fun close() = lock.withLock {
+        closed = true
+        notFull.signalAll()   // разблокируем производителей
+        notEmpty.signalAll()  // разблокируем потребителей
+    }
+}</code></pre>
+                <p>Объяснение: два <code>Condition</code> на одном локе — стандартная замена пары <code>wait/notifyAll</code>. <code>notFull.await()</code> атомарно отпускает лок и паркует поток; <code>notFull.signal()</code> будит ровно одного ждущего производителя, не устраивая «гром стада» (thundering herd), как при <code>notifyAll</code>. Проверка условия в <code>while</code> обязательна: после пробуждения поток конкурирует за лок с другими и к моменту его захвата условие может снова оказаться ложным (spurious wakeup или другой поток успел занять слот). Сложность <code>put</code>/<code>take</code> — O(1) по времени удержания лока.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 3.</strong> Найдите потенциальный deadlock в коде ниже и исправьте его, не убирая блокировки и не меняя логику перевода. Объясните, почему именно такой порядок захвата локов приводит к взаимоблокировке, и опишите универсальное правило предотвращения.</p>
+            <pre><code class="language-kotlin">class Account(val id: Int, var balance: Double) {
+    val lock = Any()
+}
+
+// ПРОБЛЕМНЫЙ КОД — возможен deadlock
+fun transfer(from: Account, to: Account, amount: Double) {
+    synchronized(from.lock) {
+        synchronized(to.lock) {
+            require(from.balance &gt;= amount) { "Недостаточно средств" }
+            from.balance -= amount
+            to.balance  += amount
+        }
+    }
+}</code></pre>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">// ИСПРАВЛЕННЫЙ КОД — единый порядок захвата по id
+fun transfer(from: Account, to: Account, amount: Double) {
+    // Всегда захватываем лок с меньшим id первым.
+    // Нет цикличности → нет deadlock.
+    val (first, second) = if (from.id &lt; to.id) from to to else to to from
+
+    synchronized(first.lock) {
+        synchronized(second.lock) {
+            require(from.balance &gt;= amount) { "Недостаточно средств" }
+            from.balance -= amount
+            to.balance  += amount
+        }
+    }
+}
+
+// Альтернатива без изменения порядка: tryLock с таймаутом
+import java.util.concurrent.locks.ReentrantLock
+import java.util.concurrent.TimeUnit
+
+class Account2(val id: Int, var balance: Double) {
+    val lock = ReentrantLock()
+}
+
+fun transferTryLock(from: Account2, to: Account2, amount: Double): Boolean {
+    while (true) {
+        if (from.lock.tryLock(50, TimeUnit.MILLISECONDS)) {
+            try {
+                if (to.lock.tryLock(50, TimeUnit.MILLISECONDS)) {
+                    try {
+                        require(from.balance &gt;= amount)
+                        from.balance -= amount
+                        to.balance  += amount
+                        return true
+                    } finally { to.lock.unlock() }
+                }
+            } finally { from.lock.unlock() }
+        }
+        // не удалось захватить оба лока — отступаем и пробуем снова
+        Thread.yield()
+    }
+}</code></pre>
+                <p>Объяснение: deadlock возникает, когда поток A вызывает <code>transfer(alice, bob, 100.0)</code>, а поток B одновременно — <code>transfer(bob, alice, 50.0)</code>. A держит <code>alice.lock</code> и ждёт <code>bob.lock</code>; B держит <code>bob.lock</code> и ждёт <code>alice.lock</code> — циклическое ожидание. Универсальное правило: если нужно захватить несколько локов, всегда делать это в одном и том же глобальном порядке (здесь — по <code>id</code>). Тогда цикл «A ждёт B, B ждёт A» невозможен по определению: чтобы возник цикл, кому-то пришлось бы захватывать локи в обратном порядке, что правило запрещает. Альтернатива — <code>tryLock</code> с таймаутом и отступом, но она сложнее и не устраняет livelock при высокой конкуренции.</p>
+              </div>
+            </details>
+          </div>
+
+        </section>
+
+        <div class="sources">
+          <h2>Источники</h2>
+          <ol>
+            <li><a href="https://docs.oracle.com/javase/specs/jls/se17/html/jls-17.html" target="_blank" rel="noopener">Java Language Specification — Memory Model (ch. 17)</a> — формальное happens-before, <code>volatile</code>, мониторы.</li>
+            <li><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/concurrent/atomic/package-summary.html" target="_blank" rel="noopener">Java SE — java.util.concurrent.atomic</a> — атомики, CAS, <code>AtomicStampedReference</code>, <code>LongAdder</code>.</li>
+            <li><a href="https://kotlinlang.org/docs/shared-mutable-state-and-concurrency.html" target="_blank" rel="noopener">Kotlin — Shared mutable state and concurrency</a> — атомарность, гонки, синхронизация в Kotlin.</li>
+            <li><a href="https://developer.android.com/develop/background-work/threading" target="_blank" rel="noopener">Android Developers — Threading</a> — потоки на Android, главный поток, фоновая работа.</li>
+            <li><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/invoke/VarHandle.html" target="_blank" rel="noopener">Java SE — VarHandle</a> — типизированный доступ к полям с атомарными операциями и режимами памяти.</li>
+          </ol>
+        </div>
+      </article>
+    </div>
+    <aside id="toc"></aside>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="../assets/app.js?v=20260620-4"></script>
+</body>
+</html>

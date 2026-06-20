@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    (() => {
+      const key = "aip-theme";
+      let theme = null;
+      try { theme = localStorage.getItem(key); } catch(e) {}
+      if (theme !== "dark" && theme !== "light") {
+        theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <title>Корутины и Flow · Android-собес</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+</head>
+<body data-page="coroutines">
+  <div class="layout">
+    <aside id="sidebar"></aside>
+    <div id="content">
+      <article class="page">
+        <div class="breadcrumb"></div>
+        <header class="page-head">
+          <span class="eyebrow">Многопоточность</span>
+          <h1>Корутины и Flow</h1>
+          <p class="lead">Самый «глубокий» вопрос блока. От интервьюера ждут не фразу «launch — это запуск корутины», а понимание <strong>suspend как стейт-машины</strong> (CPS-преобразование), кооперативной отмены, structured concurrency и backpressure в <code>Flow</code>. Предполагается, что базовый слой — потоки и модель памяти — уже знаком (см. раздел <a href="threads.html">«Потоки и память JVM»</a>); здесь — абстракция исполнения поверх потоков.</p>
+          <div class="meta">
+            <span class="tag lvl-mid">Middle</span>
+            <span class="tag lvl-sen">Senior</span>
+            <span class="tag hot">Частый вопрос</span>
+          </div>
+        </header>
+
+        <section class="section" id="suspend">
+          <h2>Корутина: suspend как стейт-машина</h2>
+          <p>Корутина — это «приостанавливаемое вычисление»: его можно поставить на паузу в точке <code>suspend</code>-вызова, освободить поток, а позже возобновить — возможно, на другом потоке. Ключ к пониманию — то, что компилятор делает с <code>suspend</code>-функцией.</p>
+
+          <p class="subhead">Continuation и CPS-преобразование</p>
+          <p>Каждая <code>suspend</code>-функция компилируется в <strong>CPS (Continuation-Passing Style)</strong>: компилятор добавляет скрытый последний параметр <code>Continuation&lt;T&gt;</code> — «что делать с результатом». Сама функция возвращает <code>Any?</code>: либо реальный результат, либо специальный маркер <code>COROUTINE_SUSPENDED</code>, означающий «я приостановилась, поток свободен».</p>
+<pre><code class="language-kotlin">// как пишем мы:
+suspend fun loadUser(id: String): User { ... }
+
+// во что превращает компилятор (упрощённо):
+fun loadUser(id: String, cont: Continuation&lt;User&gt;): Any?
+// вернёт либо User, либо COROUTINE_SUSPENDED
+
+interface Continuation&lt;in T&gt; {
+    val context: CoroutineContext
+    fun resumeWith(result: Result&lt;T&gt;)   // возобновить (успех или ошибка)
+}</code></pre>
+
+          <p class="subhead">Стейт-машина: каждая suspend-точка — это состояние</p>
+          <p>Тело функции с несколькими <code>suspend</code>-вызовами компилятор разбивает на части по точкам приостановки и сворачивает в <strong>стейт-машину</strong>: целочисленное поле <code>label</code> хранит текущее состояние, локальные переменные «спиллятся» в поля объекта-continuation, а <code>when(label)</code> прыгает в нужную ветку при возобновлении. По сути это «фальшивый стек вызовов» на куче — цепочка continuation’ов.</p>
+          <div class="diagram">
+          <div class="mermaid">
+stateDiagram-v2
+[*] --> L0
+L0 --> L1: suspend fetchUser → приостановка
+L1 --> L2: suspend fetchPosts → приостановка
+L2 --> Done: возврат результата
+Done --> [*]
+note right of L1 : label=1, локали сохранены в Continuation
+note right of L2 : resumeWith возобновляет с нужного label
+          </div>
+          <div class="cap">suspend-функция как стейт-машина: label кодирует, с какого места возобновлять исполнение</div>
+          </div>
+<pre><code class="language-kotlin">// Иллюстрация: что прячется за линейным suspend-кодом
+suspend fun profile(id: String): Profile {
+    val user = fetchUser(id)        // точка приостановки 1 (label 0 -> 1)
+    val posts = fetchPosts(user)    // точка приостановки 2 (label 1 -> 2)
+    return Profile(user, posts)     // финальное состояние
+}
+// компилятор: один класс-continuation с полем label (0,1,2),
+// полями user/posts и when(label){ 0->...; 1->...; 2->... }</code></pre>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Вывод для собеса.</strong> Корутина «не блокирует поток» именно потому, что приостановка — это <em>возврат из функции</em> с маркером, а не парковка потока. Освободившийся поток диспетчер отдаёт другим корутинам. Поэтому десятки тысяч корутин живут на пуле из нескольких потоков.</div>
+          </div>
+        </section>
+
+        <section class="section" id="dispatchers">
+          <h2>Dispatchers и withContext</h2>
+          <p><code>CoroutineDispatcher</code> решает, на каком потоке или пуле исполнять корутину.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Dispatcher</th><th>Пул</th><th>Для чего</th></tr></thead>
+              <tbody>
+                <tr><td><code>Main</code></td><td>Главный (UI) поток</td><td>Работа с View, лёгкая оркестрация, обновление состояния.</td></tr>
+                <tr><td><code>IO</code></td><td>Большой эластичный пул (по умолчанию до 64 потоков)</td><td>Блокирующий I/O: сеть, диск, БД, файлы.</td></tr>
+                <tr><td><code>Default</code></td><td>Пул размером ≈ числу ядер CPU</td><td>CPU-bound: парсинг, сортировка, сжатие, вычисления.</td></tr>
+                <tr><td><code>Unconfined</code></td><td>Не привязан, стартует в вызывающем потоке</td><td>Спец-случаи и тесты; в проде почти не нужен.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><code>withContext(dispatcher)</code> — приостанавливаемо переключает контекст на время блока и возвращает результат. Это идиоматичный способ «уйти в IO и вернуться».</p>
+<pre><code class="language-kotlin">suspend fun loadProfile(id: String): Profile = withContext(Dispatchers.IO) {
+    val user = api.user(id)          // сеть — на IO
+    val posts = api.posts(id)
+    Profile(user, posts)             // результат вернётся в исходный контекст
+}
+// в ViewModel: viewModelScope.launch { val p = loadProfile(id); _state.value = p }</code></pre>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><code>Dispatchers.Main</code> на Android реализован поверх <code>Handler</code> к главному <code>Looper</code> (см. раздел <a href="looper-handler.html">«Looper и Handler»</a>): возобновление корутины — это, по сути, <code>post</code> в очередь главного потока.</div>
+          </div>
+        </section>
+
+        <section class="section" id="launch-async">
+          <h2>launch vs async</h2>
+          <p>Оба — «билдеры» корутин, но с разной семантикой результата.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th></th><th><code>launch</code></th><th><code>async</code></th></tr></thead>
+              <tbody>
+                <tr><td>Возвращает</td><td><code>Job</code> (без значения)</td><td><code>Deferred&lt;T&gt;</code> (есть <code>await()</code>)</td></tr>
+                <tr><td>Назначение</td><td>«Запустил и забыл» — побочный эффект</td><td>Параллельно посчитать и получить результат</td></tr>
+                <tr><td>Исключение</td><td>Кидается сразу, уходит в <code>CoroutineExceptionHandler</code></td><td>Откладывается до <code>await()</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+<pre><code class="language-kotlin">// параллельная загрузка двух запросов и ожидание обоих
+suspend fun dashboard(): Dashboard = coroutineScope {
+    val user = async { api.user() }      // стартуют параллельно
+    val feed = async { api.feed() }
+    Dashboard(user.await(), feed.await())   // ждём оба результата
+}</code></pre>
+        </section>
+
+        <section class="section" id="structured-concurrency">
+          <h2>Structured concurrency</h2>
+          <p>Главная идея: <strong>у каждой корутины есть родитель, и она не может «пережить» свой скоуп</strong>. Это даёт автоматическое управление жизненным циклом — никаких «потерянных» корутин, утечек и забытых задач. Скоуп завершится, только когда завершатся все его дети; отмена скоупа отменяет всех детей.</p>
+
+          <p class="subhead">CoroutineScope, Job и иерархия</p>
+          <p><code>CoroutineScope</code> привязывает корутины к жизненному циклу (например, <code>viewModelScope</code> отменяется в <code>onCleared()</code>). Внутри контекста живёт <code>Job</code> — он образует дерево: <code>Job</code> запущенной корутины становится потомком <code>Job</code> скоупа.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TB
+Scope["CoroutineScope: parent Job"] --> J1["Job: launch A"]
+Scope --> J2["Job: launch B"]
+J1 --> J11["Job: вложенный launch"]
+J1 --> J12["Job: async"]
+          </div>
+          <div class="cap">Иерархия Job: отмена/ошибка родителя каскадом доходит до всех потомков</div>
+          </div>
+
+          <p class="subhead">coroutineScope vs supervisorScope, Job vs SupervisorJob</p>
+          <p>Разница — в <strong>распространении ошибок</strong>. С обычным <code>Job</code> (и <code>coroutineScope</code>) падение одного ребёнка отменяет родителя и всех братьев. С <code>SupervisorJob</code> (и <code>supervisorScope</code>) дети изолированы: падение одного не трогает остальных.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Аспект</th><th><code>coroutineScope</code> / <code>Job</code></th><th><code>supervisorScope</code> / <code>SupervisorJob</code></th></tr></thead>
+              <tbody>
+                <tr><td>Ошибка ребёнка</td><td>Отменяет родителя и всех братьев</td><td>Изолирована, братья продолжают работу</td></tr>
+                <tr><td>Когда уместно</td><td>Связанные подзадачи: «всё или ничего»</td><td>Независимые задачи (несколько виджетов, параллельные загрузки)</td></tr>
+                <tr><td>Где обрабатывать ошибку</td><td>На уровне родительского скоупа</td><td>В каждом дочернем <code>launch</code> (свой handler/try)</td></tr>
+              </tbody>
+            </table>
+          </div>
+<pre><code class="language-kotlin">// независимые секции: падение одной не рушит экран целиком
+supervisorScope {
+    launch { loadHeader() }     // если упадёт —
+    launch { loadFeed() }       // эта продолжит работать
+    launch { loadAds() }
+}</code></pre>
+        </section>
+
+        <section class="section" id="cancellation">
+          <h2>Кооперативная отмена</h2>
+          <p>Отмена в корутинах — <strong>кооперативная</strong>: никто не «убивает» поток. <code>cancel()</code> лишь выставляет флаг и бросает <code>CancellationException</code> в ближайшей точке приостановки. Все библиотечные <code>suspend</code>-функции (<code>delay</code>, I/O, каналы) проверяют отмену сами. Но <strong>чисто вычислительный цикл без suspend нужно делать отменяемым вручную</strong>.</p>
+<pre><code class="language-kotlin">val job = scope.launch {
+    var i = 0
+    while (isActive) {                 // проверяем флаг отмены кооперативно
+        i = heavyStep(i)               // CPU-работа без suspend-точек
+        // или: ensureActive() — кинет CancellationException, если отменено
+    }
+}
+job.cancel()                            // отмена сработает на следующей итерации</code></pre>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Не глушите <code>CancellationException</code>.</strong> <code>try/catch(e: Exception)</code> вокруг suspend-кода случайно ловит и отмену — корутина «не отменится». Ловите конкретные типы либо пробрасывайте <code>CancellationException</code> дальше. Очистку ресурсов, которая должна выполниться даже при отмене, заворачивайте в <code>withContext(NonCancellable) { ... }</code>.</div>
+          </div>
+
+          <p class="subhead">CoroutineExceptionHandler</p>
+          <p>Необработанные исключения из <code>launch</code> всплывают до корневого скоупа и попадают в <code>CoroutineExceptionHandler</code> (если он есть в контексте) — это «последний рубеж» для логирования/краш-репорта. Для <code>async</code> handler не вызывается: там ошибку получают через <code>await()</code>.</p>
+<pre><code class="language-kotlin">val handler = CoroutineExceptionHandler { _, e ->
+    Log.e("APP", "необработанная ошибка корутины", e)
+}
+val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main + handler)
+scope.launch { riskyWork() }            // если упадёт — попадёт в handler</code></pre>
+        </section>
+
+        <section class="section" id="custom-delay">
+          <h2>Свой delay через suspendCancellableCoroutine</h2>
+          <p>Любимое задание на «понимание корутин изнутри»: написать собственный <code>delay</code>, не блокируя поток. Решение — мост между миром коллбэков и корутинами: <code>suspendCancellableCoroutine</code> даёт <code>Continuation</code>, который мы возобновим из коллбэка таймера. Критично — корректно обработать отмену через <code>invokeOnCancellation</code>, иначе утечёт запланированная задача.</p>
+          <div class="code-label">CustomDelay.kt</div>
+<pre><code class="language-kotlin">import kotlinx.coroutines.*
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+
+// один общий планировщик на приложение
+private val scheduler = Executors.newSingleThreadScheduledExecutor { r ->
+    Thread(r, "custom-delay").apply { isDaemon = true }
+}
+
+suspend fun customDelay(timeMillis: Long): Unit =
+    suspendCancellableCoroutine { cont ->                // даёт CancellableContinuation
+        // планируем возобновление через timeMillis, НЕ блокируя поток
+        val future = scheduler.schedule({
+            cont.resume(Unit) {}                          // возобновляем корутину
+        }, timeMillis, TimeUnit.MILLISECONDS)
+
+        // если корутину отменят, пока мы «спим» — отменяем задачу таймера
+        cont.invokeOnCancellation {
+            future.cancel(false)                          // нет утечки
+        }
+    }
+
+// проверка кооперативной отмены:
+suspend fun demo() = coroutineScope {
+    val job = launch { customDelay(5_000); println("проснулся") }
+    delay(100)
+    job.cancel()    // future.cancel сработает, "проснулся" не напечатается
+}</code></pre>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Что проверяет интервьюер.</strong> (1) Понимаешь, что приостановка — это сохранённый <code>Continuation</code>, который кто-то должен возобновить. (2) Не блокируешь поток (<code>Thread.sleep</code> — провал). (3) Чистишь ресурсы при отмене (<code>invokeOnCancellation</code>) — иначе таймер «выстрелит» в отменённую корутину или утечёт. Обратите внимание: планировщик здесь — это <code>ScheduledExecutorService</code> из раздела <a href="executors.html">«Executor и пулы потоков»</a>.</div>
+          </div>
+        </section>
+
+        <section class="section" id="flow">
+          <h2>Flow: cold и hot потоки данных</h2>
+          <p><code>Flow</code> — асинхронный поток значений поверх корутин. По умолчанию он <strong>холодный (cold)</strong>: код-продюсер не выполняется, пока на поток не подписались через терминальный оператор (<code>collect</code>), и для каждого подписчика запускается заново. <strong>Горячие (hot)</strong> потоки (<code>StateFlow</code>, <code>SharedFlow</code>) эмитят независимо от подписчиков и шарят значения между ними.</p>
+<pre><code class="language-kotlin">// холодный Flow: тело запускается на каждый collect
+fun ticks(): Flow&lt;Int&gt; = flow {
+    var i = 0
+    while (true) { emit(i++); delay(1000) }   // продюсер
+}.flowOn(Dispatchers.Default)                  // upstream — на Default
+
+// сборка (потребитель) на главном потоке:
+scope.launch { ticks().collect { value -> render(value) } }</code></pre>
+
+          <p class="subhead">StateFlow / SharedFlow vs LiveData</p>
+          <p><code>StateFlow</code> — горячий поток с одним актуальным значением (state holder), всегда имеет initial. <code>SharedFlow</code> — настраиваемая шина событий (replay/buffer). Сравнение с <code>LiveData</code> — частый вопрос в Android-контексте.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Критерий</th><th><code>StateFlow</code></th><th><code>SharedFlow</code></th><th><code>LiveData</code></th></tr></thead>
+              <tbody>
+                <tr><td>Начальное значение</td><td>Обязательно</td><td>Нет (настраивается replay)</td><td>Не обязательно (nullable)</td></tr>
+                <tr><td>Хранит последнее</td><td>Да (1 значение)</td><td>Опционально (replay N)</td><td>Да</td></tr>
+                <tr><td>Дедупликация (conflate)</td><td>Да (только новые значения)</td><td>Нет по умолчанию</td><td>Нет</td></tr>
+                <tr><td>Lifecycle-aware</td><td>Нет (нужен <code>repeatOnLifecycle</code>)</td><td>Нет (нужен <code>repeatOnLifecycle</code>)</td><td>Да, из коробки</td></tr>
+                <tr><td>Поток/диспетчеры</td><td>Любой, гибкая работа с потоками</td><td>Любой</td><td>Главный поток</td></tr>
+                <tr><td>Назначение</td><td>Состояние экрана (UI state)</td><td>Одноразовые события (навигация, тост)</td><td>Состояние (legacy/простые кейсы)</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Сбор Flow на Android — через <code>repeatOnLifecycle(STARTED)</code></strong> (или <code>flowWithLifecycle</code>), а не голый <code>launch</code> в <code>onCreate</code>. Иначе корутина продолжит собирать поток, когда экран в фоне — лишняя работа и риск падений при обновлении невидимого UI.</div>
+          </div>
+
+          <p class="subhead">Операторы, flowOn и backpressure</p>
+          <p>Промежуточные операторы (<code>map</code>, <code>filter</code>, <code>transform</code>, <code>debounce</code>) ленивы и собираются в конвейер. <code>flowOn(dispatcher)</code> меняет контекст <em>вышестоящей</em> части потока (продюсера и операторов до него), не трогая <code>collect</code> — отсюда строгое разделение «producer на IO, collect на Main».</p>
+          <p><strong>Backpressure</strong> — когда продюсер быстрее потребителя. У <code>Flow</code> базовая модель — приостановка (<code>emit</code> ждёт, пока соберут предыдущее). Управлять буферизацией можно операторами:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Оператор</th><th>Поведение</th><th>Когда</th></tr></thead>
+              <tbody>
+                <tr><td><code>buffer(n)</code></td><td>Развязывает продюсер и потребитель буфером, эмиссия не ждёт сбора</td><td>Нужны все элементы, но потребитель медленнее «рывками»</td></tr>
+                <tr><td><code>conflate()</code></td><td>Хранит только последнее значение, промежуточные дропаются</td><td>Важно лишь актуальное состояние (прогресс, позиция)</td></tr>
+                <tr><td><code>collectLatest { }</code></td><td>Отменяет обработку предыдущего при новом значении</td><td>Перезапуск работы на каждое новое значение (поиск)</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="subhead">callbackFlow — мост из коллбэков в Flow</p>
+          <p>Когда API отдаёт данные через слушатель (геолокация, BLE, Firebase), его оборачивают в <code>callbackFlow</code>: эмитим из коллбэка через <code>trySend</code>, а в <code>awaitClose</code> снимаем слушатель при отмене сбора.</p>
+<pre><code class="language-kotlin">fun locationUpdates(client: LocationClient): Flow&lt;Location&gt; = callbackFlow {
+    val listener = object : LocationListener {
+        override fun onLocation(loc: Location) { trySend(loc) }   // эмиссия из коллбэка
+    }
+    client.register(listener)
+    awaitClose { client.unregister(listener) }   // обязательно снять при отмене
+}</code></pre>
+        </section>
+
+        <section class="section" id="threads-vs-coroutines">
+          <h2>Потоки vs корутины</h2>
+          <p>Итоговое сравнение — частый «закрывающий» вопрос темы. Корутины не «быстрее» потоков сами по себе; они дешевле по памяти и удобнее по модели исполнения.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Критерий</th><th>Потоки (Thread)</th><th>Корутины</th></tr></thead>
+              <tbody>
+                <tr><td>Стоимость создания</td><td>Дорого: ~1 МБ стека, объект ядра ОС</td><td>Дёшево: объект на куче (сотни байт), тысячи на пуле</td></tr>
+                <tr><td>Переключение контекста</td><td>Через планировщик ОС (дорого, режим ядра)</td><td>Приостановка = возврат из функции (в user-space, дёшево)</td></tr>
+                <tr><td>Блокировка</td><td>Блокирует поток целиком</td><td>Приостановка освобождает поток для других корутин</td></tr>
+                <tr><td>Масштаб</td><td>Сотни–тысячи (упор в память)</td><td>Сотни тысяч на нескольких потоках</td></tr>
+                <tr><td>Читаемость</td><td>Коллбэки/Future → «callback hell»</td><td>Линейный последовательный код с <code>suspend</code></td></tr>
+                <tr><td>Отмена</td><td>Сложно/небезопасно (<code>interrupt</code>)</td><td>Кооперативная, структурированная, каскадная</td></tr>
+                <tr><td>Управление жизненным циклом</td><td>Вручную</td><td>Structured concurrency (скоупы)</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><strong>Точная формулировка для собеса.</strong> Корутина — не поток, а абстракция исполнения <em>поверх</em> потоков. Множество корутин мультиплексируются на пул потоков диспетчера; «лёгкость» — следствие того, что приостановка не держит поток. Поэтому IO-bound нагрузка (много ждущих запросов) выигрывает особенно сильно.</div>
+          </div>
+        </section>
+
+        <section class="section" id="video">
+          <h2>Видео-разбор</h2>
+          <a class="ytcard" href="https://youtu.be/KUnYT4CZICU?t=75" target="_blank" rel="noopener">
+            <span class="yt-thumb" style="background-image:url('https://img.youtube.com/vi/KUnYT4CZICU/hqdefault.jpg')">
+              <span class="yt-play"></span>
+              <span class="yt-time">▶ с 1:15</span>
+            </span>
+            <span class="yt-meta">
+              <strong>Почему Kotlin Coroutines — лучшее для Android</strong>
+              <span class="yt-by">Кирилл Розов (Android Broadcast) · RU</span>
+              <span class="yt-why">С <b>1:15</b> (после вступления) — зачем корутины и как они устроены под капотом.</span>
+            </span>
+          </a>
+        </section>
+
+        <section class="section" id="faq">
+          <h2>Частые вопросы интервьюера</h2>
+
+          <details class="qa">
+            <summary>Как <code>suspend</code> работает под капотом? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Компилятор применяет CPS: добавляет скрытый параметр <code>Continuation</code> и заставляет функцию возвращать <code>Any?</code> — либо результат, либо маркер <code>COROUTINE_SUSPENDED</code>. Тело с несколькими suspend-точками превращается в стейт-машину: поле <code>label</code> кодирует состояние, локальные переменные спиллятся в поля continuation, а <code>when(label)</code> возобновляет с нужного места через <code>resumeWith</code>. Поэтому приостановка не блокирует поток — это возврат из функции, а не парковка потока.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Чем <code>launch</code> отличается от <code>async</code>? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p><code>launch</code> возвращает <code>Job</code> и предназначен для «запустил и забыл» — побочный эффект без результата; необработанное исключение сразу всплывает в <code>CoroutineExceptionHandler</code>. <code>async</code> возвращает <code>Deferred&lt;T&gt;</code> с <code>await()</code> — для параллельного вычисления значения; исключение откладывается до <code>await()</code>. Для параллельной загрузки нескольких значений берут несколько <code>async</code> внутри <code>coroutineScope</code> и ждут все через <code>await()</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Чем <code>Job</code> отличается от <code>SupervisorJob</code>? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Разница в распространении ошибок между детьми. С обычным <code>Job</code> падение любого ребёнка отменяет родителя и всех братьев («всё или ничего»). С <code>SupervisorJob</code> дети изолированы: падение одного не трогает остальных — удобно для независимых задач (несколько виджетов экрана, параллельные несвязанные загрузки). При этом обрабатывать ошибку нужно в каждом дочернем <code>launch</code> (или через <code>CoroutineExceptionHandler</code>), а не на уровне скоупа.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Почему корутина не отменяется и как это чинить? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Отмена кооперативная: чисто вычислительный цикл без suspend-точек её «не замечает». Нужно проверять <code>isActive</code>/вызывать <code>ensureActive()</code> или периодически <code>yield()</code>. Вторая частая причина — проглоченный <code>CancellationException</code>: широкий <code>catch(e: Exception)</code> вокруг suspend-кода ловит и отмену. Пробрасывайте <code>CancellationException</code> дальше; а финализацию, которая обязана выполниться при отмене, оборачивайте в <code>withContext(NonCancellable)</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>StateFlow vs SharedFlow vs LiveData — когда что? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p><code>StateFlow</code> — для состояния экрана: всегда есть актуальное значение, дедуплицирует одинаковые, начальное обязательно. <code>SharedFlow</code> — для одноразовых событий (навигация, snackbar): настраиваемый replay/buffer, без дедупликации. <code>LiveData</code> — lifecycle-aware из коробки, но привязан к главному потоку и беднее операторами; в новом коде его место занимают Flow + <code>repeatOnLifecycle</code>. Главный нюанс: Flow на Android собирают через <code>repeatOnLifecycle(STARTED)</code>, иначе сбор продолжится в фоне.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Чем cold Flow отличается от hot? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>Cold (<code>flow { }</code>) ленив: продюсер не работает без подписчика и перезапускается для каждого <code>collect</code> — у каждого подписчика свой независимый поток данных. Hot (<code>StateFlow</code>/<code>SharedFlow</code>, каналы) эмитит независимо от наличия подписчиков и шарит значения между всеми. Cold подходит для «запросов по требованию» (вызов API), hot — для общего состояния/шины событий, живущей дольше отдельной подписки.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как написать свой <code>delay</code>, не блокируя поток? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Через <code>suspendCancellableCoroutine</code>: получаем <code>CancellableContinuation</code>, планируем его возобновление через <code>ScheduledExecutorService</code> (а не <code>Thread.sleep</code> — это бы заблокировало поток), и в <code>invokeOnCancellation</code> отменяем запланированную задачу таймера. Так корутина приостанавливается, поток свободен, а при отмене скоупа таймер корректно снимается без утечки. Это демонстрирует понимание, что приостановка — это сохранённый Continuation, который кто-то обязан возобновить.</p></div>
+          </details>
+
+        </section>
+
+        <section class="section" id="tasks">
+          <h2>Задачи</h2>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 1.</strong> Реализуйте функцию <code>parallelMap</code>, которая принимает список элементов и suspend-преобразование, запускает все преобразования параллельно и возвращает список результатов в исходном порядке. При ошибке любого из элементов функция должна немедленно отменить остальные и пробросить исключение.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">suspend fun &lt;T, R&gt; List&lt;T&gt;.parallelMap(
+    transform: suspend (T) -&gt; R
+): List&lt;R&gt; = coroutineScope {
+    map { item -&gt; async { transform(item) } }
+        .map { it.await() }
+}</code></pre>
+                <p>Объяснение: <code>coroutineScope</code> даёт семантику «всё или ничего» — если любой <code>async</code>-блок упадёт с исключением, скоуп отменит все остальные дочерние корутины и пробросит ошибку наружу. Вызов <code>async { ... }</code> для каждого элемента запускает преобразования параллельно; второй <code>map { it.await() }</code> собирает результаты в том же порядке, что и исходный список — порядок гарантирован, потому что мы обходим список <code>Deferred</code> в том же порядке.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 2.</strong> Найдите и исправьте баг в коде ниже — функция должна возвращать результат только самого быстрого из двух источников, отменяя медленный. Код компилируется, но работает неверно.</p>
+            <pre><code class="language-kotlin">suspend fun fastest(
+    sourceA: suspend () -&gt; String,
+    sourceB: suspend () -&gt; String
+): String = coroutineScope {
+    val a = async { sourceA() }
+    val b = async { sourceB() }
+    val result = select&lt;String&gt; {
+        a.onAwait { it }
+        b.onAwait { it }
+    }
+    result
+}
+// Проблема: медленная корутина продолжит работать после возврата.</code></pre>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">suspend fun fastest(
+    sourceA: suspend () -&gt; String,
+    sourceB: suspend () -&gt; String
+): String = coroutineScope {
+    val a = async { sourceA() }
+    val b = async { sourceB() }
+    val result = select&lt;String&gt; {
+        a.onAwait { it }
+        b.onAwait { it }
+    }
+    // Явно отменяем обе — проигравшая ещё жива
+    a.cancel()
+    b.cancel()
+    result
+}</code></pre>
+                <p>Объяснение: <code>select</code> снимает подписку со второго <code>Deferred</code>, но не отменяет корутину — та продолжает выполняться в фоне. После получения результата нужно явно вызвать <code>cancel()</code> на обоих. Вызов на уже завершённом <code>Deferred</code> — no-op, поэтому безопасно отменять оба без проверки. Альтернатива — <code>raceOf</code> из библиотеки Arrow или использование <code>channelFlow</code> с <code>first()</code>.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 3.</strong> Реализуйте оператор <code>throttleLatest(windowMs: Long)</code> для <code>Flow&lt;T&gt;</code>: в течение окна <code>windowMs</code> оператор пропускает все значения, кроме последнего, и эмитит его по истечении окна. Если за всё окно пришло одно значение, эмитит его сразу по истечении. Используйте только стандартный API корутин без сторонних библиотек.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">fun &lt;T&gt; Flow&lt;T&gt;.throttleLatest(windowMs: Long): Flow&lt;T&gt; = channelFlow {
+    var lastValue: T? = null
+    var hasValue = false
+    val mutex = kotlinx.coroutines.sync.Mutex()
+
+    var timerJob: kotlinx.coroutines.Job? = null
+
+    collect { value -&gt;
+        mutex.withLock {
+            @Suppress("UNCHECKED_CAST")
+            lastValue = value as T
+            hasValue = true
+        }
+        if (timerJob?.isActive != true) {
+            timerJob = launch {
+                delay(windowMs)
+                mutex.withLock {
+                    if (hasValue) {
+                        send(lastValue as T)
+                        hasValue = false
+                    }
+                }
+            }
+        }
+    }
+    // эмитим оставшееся значение, если таймер ещё не сработал
+    timerJob?.join()
+}</code></pre>
+                <p>Объяснение: <code>channelFlow</code> позволяет эмитить из дочерних корутин. При каждом входящем значении запоминаем «последнее» в переменной и запускаем таймер только если он ещё не активен — таймер по истечении <code>windowMs</code> эмитит накопленное. Mutex защищает от гонки между потоком-продюсером и таймером. В отличие от <code>debounce</code>, здесь таймер запускается по первому значению окна и не сбрасывается при новых — это throttle, а не debounce.</p>
+              </div>
+            </details>
+          </div>
+
+        </section>
+
+        <div class="sources">
+          <h2>Источники</h2>
+          <ol>
+            <li><a href="https://kotlinlang.org/docs/coroutines-guide.html" target="_blank" rel="noopener">Kotlin Docs — Coroutines guide</a> — официальное руководство: suspend, билдеры, контекст.</li>
+            <li><a href="https://kotlinlang.org/docs/cancellation-and-timeouts.html" target="_blank" rel="noopener">Kotlin Docs — Cancellation and timeouts</a> — кооперативная отмена, <code>isActive</code>, <code>NonCancellable</code>.</li>
+            <li><a href="https://kotlinlang.org/docs/flow.html" target="_blank" rel="noopener">Kotlin Docs — Asynchronous Flow</a> — cold/hot, операторы, <code>flowOn</code>, backpressure (<code>buffer</code>/<code>conflate</code>).</li>
+            <li><a href="https://developer.android.com/kotlin/coroutines" target="_blank" rel="noopener">Android Developers — Kotlin coroutines on Android</a> — скоупы (<code>viewModelScope</code>), Dispatchers, лучшие практики.</li>
+            <li><a href="https://www.youtube.com/watch?v=YrrUCSi72E8" target="_blank" rel="noopener">Roman Elizarov — Deep Dive into Coroutines on JVM (KotlinConf 2017)</a> — стейт-машина и CPS-преобразование от автора корутин.</li>
+            <li><a href="https://habr.com/ru/articles/659699/" target="_blank" rel="noopener">Habr — Kotlin: как работает suspend под капотом</a> — разбор Continuation/стейт-машины на русском.</li>
+          </ol>
+        </div>
+      </article>
+    </div>
+    <aside id="toc"></aside>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="../assets/app.js?v=20260620-4"></script>
+</body>
+</html>

@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    (() => {
+      const key = "aip-theme";
+      let theme = null;
+      try { theme = localStorage.getItem(key); } catch(e) {}
+      if (theme !== "dark" && theme !== "light") {
+        theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <title>Executor и пулы потоков · Android-собес</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+</head>
+<body data-page="executors">
+  <div class="layout">
+    <aside id="sidebar"></aside>
+    <div id="content">
+      <article class="page">
+        <div class="breadcrumb"></div>
+        <header class="page-head">
+          <span class="eyebrow">Многопоточность</span>
+          <h1>Executor и пулы потоков</h1>
+          <p class="lead">Прямое создание потоков (<code>new Thread</code>) не масштабируется, поэтому работу отдают <strong>пулу</strong>. На собесе по <code>ThreadPoolExecutor</code> чаще всего «топят» на одном: в каком порядке пул создаёт потоки и ставит задачи в очередь. Этот порядок контринтуитивен, и именно его здесь разбираем — вместе с очередями, политиками отказа, планировщиком и тем, почему <code>AsyncTask</code> устарел.</p>
+          <div class="meta">
+            <span class="tag lvl-mid">Middle</span>
+            <span class="tag lvl-sen">Senior</span>
+            <span class="tag hot">Частый вопрос</span>
+          </div>
+        </header>
+
+        <section class="section" id="executor-basics">
+          <h2>Executor, ExecutorService и задачи</h2>
+          <p><code>Executor</code> — минимальный интерфейс с единственным методом <code>execute(Runnable)</code>: он отделяет <em>отправку</em> задачи от того, <em>как</em> и <em>на каком</em> потоке она исполнится. <code>ExecutorService</code> расширяет его до полноценного фреймворка: приём <code>Callable</code> (задача с результатом), возврат <code>Future</code>, групповые операции и управляемое завершение.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Тип</th><th>Роль</th></tr></thead>
+              <tbody>
+                <tr><td><code>Runnable</code></td><td>Задача без результата (<code>run()</code>), не бросает проверяемых исключений.</td></tr>
+                <tr><td><code>Callable&lt;V&gt;</code></td><td>Задача с результатом (<code>call(): V</code>), может бросить исключение.</td></tr>
+                <tr><td><code>Future&lt;V&gt;</code></td><td>Дескриптор результата: <code>get()</code> (блокирует), <code>cancel()</code>, <code>isDone()</code>.</td></tr>
+                <tr><td><code>Executor</code></td><td><code>execute(Runnable)</code> — отправить задачу на исполнение.</td></tr>
+                <tr><td><code>ExecutorService</code></td><td><code>submit()</code>, <code>invokeAll()</code>, <code>shutdown()</code>, <code>awaitTermination()</code>.</td></tr>
+              </tbody>
+            </table>
+          </div>
+<pre><code class="language-kotlin">val pool = java.util.concurrent.Executors.newFixedThreadPool(4)
+val future = pool.submit(java.util.concurrent.Callable { heavyCompute() })  // Future&lt;T&gt;
+val result = future.get()        // блокирующе ждём результат (или исключение в ExecutionException)
+pool.shutdown()                  // корректное завершение</code></pre>
+        </section>
+
+        <section class="section" id="tpe-params">
+          <h2>ThreadPoolExecutor: параметры</h2>
+          <p>Фабрики <code>Executors</code> — это обёртки над настраиваемым <code>ThreadPoolExecutor</code>. Его полный конструктор (Java SE):</p>
+<pre><code class="language-kotlin">ThreadPoolExecutor(
+    int corePoolSize,                 // сколько потоков держать живыми, даже если простаивают
+    int maximumPoolSize,              // верхний предел числа потоков
+    long keepAliveTime,               // сколько лишний (сверх core) поток ждёт задачу перед смертью
+    TimeUnit unit,                    // единица keepAliveTime
+    BlockingQueue&lt;Runnable&gt; workQueue, // очередь задач до их исполнения
+    ThreadFactory threadFactory,      // как создавать поток (имя, приоритет, daemon)
+    RejectedExecutionHandler handler  // что делать, когда пул и очередь переполнены
+)</code></pre>
+          <p>По умолчанию (без <code>allowCoreThreadTimeOut</code>) <code>keepAliveTime</code> касается только потоков сверх <code>corePoolSize</code>: core-потоки живут постоянно. Если задать <code>corePoolSize == maximumPoolSize</code>, получится пул фиксированного размера.</p>
+        </section>
+
+        <section class="section" id="growth-model">
+          <h2>Модель роста пула (ключевой вопрос)</h2>
+          <p>Главная контринтуитивность: пул <strong>предпочитает очередь созданию нового потока</strong>. Порядок, дословно по документации Oracle, такой:</p>
+          <ol>
+            <li>Потоков меньше <code>corePoolSize</code> → <strong>создаётся новый поток</strong>, даже если другие простаивают.</li>
+            <li>Потоков ≥ <code>corePoolSize</code> → задача <strong>ставится в очередь</strong>.</li>
+            <li>Очередь <strong>переполнена</strong> и потоков меньше <code>maximumPoolSize</code> → создаётся новый (не-core) поток.</li>
+            <li>Очередь переполнена и достигнут <code>maximumPoolSize</code> → задача <strong>отклоняется</strong> (<code>RejectedExecutionHandler</code>).</li>
+          </ol>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TB
+S["execute(task)"] --> A{"Меньше core потоков?"}
+A -->|да| T1["Создать поток"]
+A -->|нет| B{"Очередь не полна?"}
+B -->|да| Q["Поставить в очередь"]
+B -->|нет| C{"Меньше max потоков?"}
+C -->|да| T2["Создать поток"]
+C -->|нет| R["Отклонить (handler)"]
+          </div>
+          <div class="cap">Порядок принятия задачи: сначала core-потоки, затем очередь, затем рост до max, и лишь потом отказ</div>
+          </div>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Следствие, на котором ловят.</strong> Новый поток сверх <code>corePoolSize</code> создаётся <em>только когда очередь полна</em>. С неограниченной очередью шаг 3 не наступает никогда — значит <code>maximumPoolSize</code> просто <strong>игнорируется</strong>, и пул не вырастет за пределы core, сколько бы задач ни пришло.</div>
+          </div>
+        </section>
+
+        <section class="section" id="queues">
+          <h2>Очередь определяет поведение пула</h2>
+          <p>Поскольку рост потоков завязан на «полноту очереди», именно тип <code>BlockingQueue</code> задаёт характер пула.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Очередь</th><th>Поведение пула</th><th>Риск</th></tr></thead>
+              <tbody>
+                <tr><td><code>SynchronousQueue</code> (прямая передача)</td><td>Очередь не хранит задачи — каждая требует свободный или новый поток. Это режим <code>newCachedThreadPool</code>.</td><td>Неограниченный рост числа потоков, если задачи приходят быстрее, чем исполняются.</td></tr>
+                <tr><td><code>LinkedBlockingQueue</code> без ёмкости (неограниченная)</td><td>Задачи копятся в очереди; потоков не больше <code>corePoolSize</code> (<code>max</code> не действует). Это режим <code>newFixedThreadPool</code>.</td><td>Неограниченный рост очереди под перегрузкой → <code>OutOfMemoryError</code>.</td></tr>
+                <tr><td><code>ArrayBlockingQueue</code> (ограниченная)</td><td>И очередь, и число потоков ограничены — защита от исчерпания ресурсов.</td><td>Сложнее тюнить: размер очереди и <code>max</code> приходится подбирать вместе.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section" id="factories">
+          <h2>Фабрики Executors и их ловушки</h2>
+          <p><code>Executors</code> даёт готовые конфигурации. Удобно, но у «школьных» фабрик есть документированные подводные камни — поэтому в проде чаще конфигурируют <code>ThreadPoolExecutor</code> вручную с <strong>ограниченной</strong> очередью.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Фабрика</th><th>Что внутри</th><th>Ловушка</th></tr></thead>
+              <tbody>
+                <tr><td><code>newFixedThreadPool(n)</code></td><td><code>n</code> потоков, неограниченная очередь</td><td>Бэклог растёт без предела → OOM при устойчивой перегрузке.</td></tr>
+                <tr><td><code>newCachedThreadPool()</code></td><td><code>SynchronousQueue</code>, потоки по требованию; простаивающие 60 секунд завершаются</td><td>«Взрыв» числа потоков при быстром потоке задач.</td></tr>
+                <tr><td><code>newSingleThreadExecutor()</code></td><td>Один поток, неограниченная очередь</td><td>Гарантирует последовательность, но один медленный таск тормозит всё; очередь не ограничена.</td></tr>
+                <tr><td><code>newScheduledThreadPool(n)</code></td><td>Пул с поддержкой отложенных и периодических задач</td><td>См. раздел про планировщик ниже.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><strong>Про виртуальные потоки.</strong> Java 21 добавила <code>newVirtualThreadPerTaskExecutor()</code> (Project Loom). Но это фича <em>JVM</em>; среда исполнения Android (ART) виртуальные потоки <strong>не предоставляет</strong>, поэтому в Android-проекте на неё не рассчитывают — лёгкую конкурентность там дают корутины.</div>
+          </div>
+        </section>
+
+        <section class="section" id="rejection">
+          <h2>Политики отказа</h2>
+          <p>Когда задачу нельзя ни поставить в очередь, ни запустить (достигнут <code>maximumPoolSize</code> при полной ограниченной очереди), срабатывает <code>RejectedExecutionHandler</code>. Четыре готовые политики:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Политика</th><th>Что делает</th></tr></thead>
+              <tbody>
+                <tr><td><code>AbortPolicy</code> <strong>(по умолчанию)</strong></td><td>Бросает <code>RejectedExecutionException</code>.</td></tr>
+                <tr><td><code>CallerRunsPolicy</code></td><td>Задачу выполняет вызывающий поток — естественный «тормоз» темпа отправки.</td></tr>
+                <tr><td><code>DiscardPolicy</code></td><td>Молча отбрасывает задачу.</td></tr>
+                <tr><td><code>DiscardOldestPolicy</code></td><td>Выбрасывает самую старую задачу из очереди и повторяет попытку.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><code>CallerRunsPolicy</code> — частый ответ на «как сделать мягкий backpressure без OOM»: когда пул перегружен, поток-отправитель сам исполняет задачу и временно перестаёт принимать новые.</p>
+        </section>
+
+        <section class="section" id="scheduled">
+          <h2>ScheduledExecutorService: отложенное и периодическое</h2>
+          <p><code>ScheduledExecutorService</code> добавляет отложенный запуск и периодику. Два периодических метода различаются точкой отсчёта интервала:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Метод</th><th>Когда стартует следующий запуск</th></tr></thead>
+              <tbody>
+                <tr><td><code>scheduleAtFixedRate</code></td><td>По «сетке»: <code>initialDelay</code>, затем <code>+period</code>, <code>+2·period</code>… — интервал от <strong>начала</strong> предыдущего запуска. Если задача дольше периода, запуски не накладываются, а идут подряд.</td></tr>
+                <tr><td><code>scheduleWithFixedDelay</code></td><td>Через фиксированную паузу <strong>после завершения</strong> предыдущего запуска. Длительность задачи сдвигает следующий старт.</td></tr>
+              </tbody>
+            </table>
+          </div>
+<pre><code class="language-kotlin">val ses = java.util.concurrent.Executors.newScheduledThreadPool(1)
+// каждые 10 c от НАЧАЛА запуска:
+ses.scheduleAtFixedRate({ poll() }, 0, 10, java.util.concurrent.TimeUnit.SECONDS)
+// 10 c паузы ПОСЛЕ завершения предыдущего:
+ses.scheduleWithFixedDelay({ sync() }, 0, 10, java.util.concurrent.TimeUnit.SECONDS)</code></pre>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Необработанное исключение убивает периодику.</strong> Если периодическая задача бросит исключение наружу, <strong>последующие запуски подавляются</strong> (молча перестают выполняться). Поэтому тело периодической задачи оборачивают в <code>try/catch</code>, иначе «таймер тихо умрёт».</div>
+          </div>
+        </section>
+
+        <section class="section" id="shutdown">
+          <h2>Завершение пула</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Метод</th><th>Поведение</th></tr></thead>
+              <tbody>
+                <tr><td><code>shutdown()</code></td><td>Упорядоченное завершение: новые задачи не принимаются, ранее отправленные — доисполняются.</td></tr>
+                <tr><td><code>shutdownNow()</code></td><td>Пытается прервать активные задачи (через <code>Thread.interrupt()</code> — best-effort) и возвращает <code>List&lt;Runnable&gt;</code> задач, которые не успели стартовать.</td></tr>
+                <tr><td><code>awaitTermination(t, unit)</code></td><td>Блокирует до завершения всех задач после shutdown, таймаута или прерывания. <code>true</code> — завершился, <code>false</code> — истёк таймаут.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><code>shutdownNow()</code> прерывает <em>best-effort</em>: задача, которая не реагирует на <code>interrupt</code> (нет проверки <code>isInterrupted</code>, не ловит <code>InterruptedException</code>), может не остановиться. Прерывание — это кооперативный механизм, как и отмена корутин.</div>
+          </div>
+        </section>
+
+        <section class="section" id="asynctask-workmanager">
+          <h2>Почему AsyncTask устарел и что вместо</h2>
+          <p><code>AsyncTask</code> объявлен устаревшим в <strong>API 30 (Android 11)</strong>. Документация прямо рекомендует вместо него «стандартные <code>java.util.concurrent</code> или утилиты конкурентности Kotlin» (то есть корутины). Исторические проблемы <code>AsyncTask</code> стали хрестоматийными:</p>
+          <ul>
+            <li><strong>Утечки памяти:</strong> нестатический внутренний класс держит ссылку на <code>Activity</code>; при повороте экрана задача переживает уничтожение и течёт.</li>
+            <li><strong>Проблемы при смене конфигурации:</strong> результат может прийти на «мёртвую» Activity → <code>NullPointerException</code> или потерянный апдейт.</li>
+            <li><strong>Один последовательный исполнитель</strong> по умолчанию (с Honeycomb) — задачи не параллелятся.</li>
+            <li><strong>Неудобная обработка ошибок</strong> и навязанный жизненный цикл коллбэков.</li>
+          </ul>
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>Что вместо.</strong> Для in-process фоновой работы — <code>ExecutorService</code> или <strong>корутины</strong> (привязка к <code>lifecycleScope</code>/<code>viewModelScope</code> с авто-отменой решает и утечки, и читаемость). См. раздел <a href="coroutines.html">«Корутины и Flow»</a>.</div>
+          </div>
+          <p class="subhead">Граница с WorkManager</p>
+          <p>Важно не путать две задачи. <code>Executor</code>/корутины — это <strong>in-process</strong> работа: она умирает вместе с процессом приложения. <strong>WorkManager</strong> — для <em>отложенной и гарантированной</em> работы, которая обязана выполниться, даже если пользователь ушёл с экрана, приложение закрылось или устройство перезагрузилось (синхронизация, выгрузка логов, периодические задачи). Не используйте пул потоков для гарантированной фоновой работы и WorkManager — для мгновенных внутрипроцессных вычислений.</p>
+        </section>
+
+        <section class="section" id="faq">
+          <h2>Частые вопросы интервьюера</h2>
+
+          <details class="qa">
+            <summary>В каком порядке <code>ThreadPoolExecutor</code> создаёт потоки и использует очередь? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Сначала, пока потоков меньше <code>corePoolSize</code>, на каждую задачу создаётся новый core-поток (даже если есть простаивающие). Когда core заполнен — задачи идут <strong>в очередь</strong>. Новый поток сверх core создаётся <strong>только если очередь переполнена</strong> и не достигнут <code>maximumPoolSize</code>. Если и очередь полна, и достигнут max — задача отклоняется через <code>RejectedExecutionHandler</code>. Главное: пул предпочитает очередь росту потоков.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Почему у <code>newFixedThreadPool</code> игнорируется <code>maximumPoolSize</code>? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Потому что он использует неограниченную <code>LinkedBlockingQueue</code>. Новый не-core поток создаётся лишь когда очередь полна, а неограниченная очередь не переполняется никогда — значит шаг роста до <code>max</code> недостижим, и потоков всегда ровно <code>corePoolSize</code>. Обратная сторона — очередь может расти до OOM под перегрузкой.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Чем <code>scheduleAtFixedRate</code> отличается от <code>scheduleWithFixedDelay</code>? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p><code>scheduleAtFixedRate</code> отсчитывает период от <strong>начала</strong> предыдущего запуска (фиксированная «сетка» времени): initialDelay, +period, +2·period… Если задача длиннее периода, запуски не накладываются, а выстраиваются подряд. <code>scheduleWithFixedDelay</code> выдерживает паузу <strong>после завершения</strong> задачи, поэтому её длительность сдвигает следующий старт. И помните: необработанное исключение в периодической задаче подавляет все последующие запуски.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Что вернёт <code>shutdownNow()</code> и гарантирует ли остановку? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Он возвращает <code>List&lt;Runnable&gt;</code> — задачи, которые ещё не начали исполняться. Активные задачи он пытается прервать через <code>Thread.interrupt()</code>, но это best-effort: задача, не проверяющая флаг прерывания и не ловящая <code>InterruptedException</code>, может не остановиться. Гарантированной «жёсткой» остановки потока в Java нет — прерывание кооперативно.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Какую политику отказа взять, чтобы не словить OOM под нагрузкой? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Сначала — <strong>ограниченную</strong> очередь (а не неограниченную), иначе отказа не наступит вовсе и память переполнится. Затем, для мягкого backpressure, — <code>CallerRunsPolicy</code>: при переполнении задачу исполняет поток-отправитель, что замедляет темп подачи и даёт пулу разгрести бэклог. <code>AbortPolicy</code> (по умолчанию) бросает исключение — подходит, если перегрузку нужно явно заметить.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Почему <code>AsyncTask</code> устарел и что вместо него? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>Устарел в API 30 (Android 11): утечки через ссылку на <code>Activity</code>, проблемы при смене конфигурации, неудобная обработка ошибок, последовательный исполнитель по умолчанию. Документация рекомендует <code>java.util.concurrent</code> или корутины. Для гарантированной фоновой работы, переживающей закрытие приложения, — отдельный инструмент, <code>WorkManager</code>; пул потоков и корутины живут лишь в пределах процесса.</p></div>
+          </details>
+
+        </section>
+
+        <section class="section" id="tasks">
+          <h2>Задачи</h2>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 1.</strong> Реализуй пул потоков, который принимает не более 100 задач в очередь, запускает до 4 потоков, а при перегрузке замедляет отправителя вместо выброса исключения. Продемонстрируй конфигурацию и объясни, почему <code>newFixedThreadPool(4)</code> здесь не подходит.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">import java.util.concurrent.*
+
+fun buildBoundedPool(): ExecutorService =
+    ThreadPoolExecutor(
+        2,                                        // corePoolSize: 2 постоянных потока
+        4,                                        // maximumPoolSize: до 4 при перегрузке
+        60L, TimeUnit.SECONDS,                    // keepAlive для не-core потоков
+        ArrayBlockingQueue(100),                  // ограниченная очередь: ключевой параметр
+        Executors.defaultThreadFactory(),
+        ThreadPoolExecutor.CallerRunsPolicy()     // backpressure: отправитель сам выполнит задачу
+    )
+
+fun main() {
+    val pool = buildBoundedPool()
+    repeat(200) { i -&gt;
+        pool.submit { Thread.sleep(50); println("task $i on ${Thread.currentThread().name}") }
+    }
+    pool.shutdown()
+    pool.awaitTermination(30, TimeUnit.SECONDS)
+}</code></pre>
+                <p>Объяснение: <code>newFixedThreadPool(4)</code> использует неограниченную <code>LinkedBlockingQueue</code> — шаг роста до <code>maximumPoolSize</code> никогда не достигается, а очередь растёт в память до OOM. Здесь <code>ArrayBlockingQueue(100)</code> ограничивает бэклог; когда и очередь, и 4 потока заняты, <code>CallerRunsPolicy</code> замедляет отправителя вместо исключения. Сложность добавления задачи O(1), памяти O(queue\_size).</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 2.</strong> Напиши код с <code>ScheduledExecutorService</code>, который раз в 5 секунд опрашивает некий ресурс. Внутри периодической задачи может выброситься исключение. Покажи, как не дать таймеру «тихо умереть», и поясни разницу между <code>scheduleAtFixedRate</code> и <code>scheduleWithFixedDelay</code> для задачи длиннее интервала.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">import java.util.concurrent.*
+
+fun startPolling(intervalSec: Long = 5): ScheduledFuture&lt;*&gt; {
+    val scheduler = Executors.newScheduledThreadPool(1)
+
+    return scheduler.scheduleAtFixedRate(
+        {
+            try {
+                pollResource()          // может бросить исключение
+            } catch (e: Exception) {
+                // Без этого catch любое исключение подавит все последующие запуски
+                System.err.println("poll failed: ${e.message}")
+            }
+        },
+        0L, intervalSec, TimeUnit.SECONDS
+    )
+}
+
+fun pollResource() {
+    println("polling at ${System.currentTimeMillis()}")
+    if (Math.random() &lt; 0.3) throw RuntimeException("transient error")
+}</code></pre>
+                <p>Объяснение: <code>scheduleAtFixedRate</code> отсчитывает интервал от <em>начала</em> предыдущего запуска — если задача занимает 7 секунд при периоде 5 с, следующий запуск стартует сразу по завершению (накладываться не дадут). <code>scheduleWithFixedDelay</code> выдерживает паузу <em>после завершения</em>, поэтому время между запусками всегда не меньше <code>delay</code>. Главное: исключение, пролетевшее наружу из задачи, молча отменяет все последующие запуски — обёртка в <code>try/catch</code> обязательна.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 3.</strong> Дан список из N URL-адресов. Скачай содержимое каждого параллельно в пуле из 8 потоков, дождись всех результатов и верни список строк в исходном порядке. Обработай ситуацию, когда один из запросов упал с исключением: остальные должны завершиться, а в результирующем списке на месте сбойного URL должна стоять строка <code>"ERROR"</code>.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">import java.util.concurrent.*
+
+fun fetchAll(urls: List&lt;String&gt;): List&lt;String&gt; {
+    val pool = Executors.newFixedThreadPool(8)
+    try {
+        val futures: List&lt;Future&lt;String&gt;&gt; = urls.map { url -&gt;
+            pool.submit(Callable {
+                fetchUrl(url)           // бросает IOException при сбое
+            })
+        }
+        return futures.map { future -&gt;
+            try {
+                future.get(10, TimeUnit.SECONDS)
+            } catch (e: Exception) {
+                // ExecutionException оборачивает исключение из задачи;
+                // TimeoutException — таймаут ожидания
+                "ERROR"
+            }
+        }
+    } finally {
+        pool.shutdown()
+    }
+}
+
+fun fetchUrl(url: String): String {
+    // имитация: в реальности — HttpURLConnection или OkHttp
+    if (url.contains("bad")) throw java.io.IOException("unreachable: $url")
+    return "content of $url"
+}
+
+fun main() {
+    val urls = listOf("https://a.com", "https://bad.url", "https://b.com")
+    println(fetchAll(urls))   // [content of https://a.com, ERROR, content of https://b.com]
+}</code></pre>
+                <p>Объяснение: <code>submit(Callable)</code> возвращает <code>Future</code> немедленно; задачи стартуют параллельно. <code>future.get()</code> блокирует до готовности и бросает <code>ExecutionException</code>, если задача упала — это позволяет поймать ошибку отдельно для каждого URL, не прерывая остальные. Порядок сохраняется, потому что мы итерируемся по списку <code>futures</code> в том же порядке, что и <code>urls</code>.</p>
+              </div>
+            </details>
+          </div>
+
+        </section>
+
+        <div class="sources">
+          <h2>Источники</h2>
+          <ol>
+            <li><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/concurrent/ThreadPoolExecutor.html" target="_blank" rel="noopener">Java SE — ThreadPoolExecutor</a> — конструктор, модель роста пула, стратегии очередей, политики отказа.</li>
+            <li><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/concurrent/Executors.html" target="_blank" rel="noopener">Java SE — Executors</a> — фабрики пулов и их конфигурации (включая 60-секундный keep-alive у cached).</li>
+            <li><a href="https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/concurrent/ScheduledExecutorService.html" target="_blank" rel="noopener">Java SE — ScheduledExecutorService</a> — <code>scheduleAtFixedRate</code> vs <code>scheduleWithFixedDelay</code>, подавление запусков при исключении.</li>
+            <li><a href="https://developer.android.com/reference/android/os/AsyncTask" target="_blank" rel="noopener">Android Developers — AsyncTask</a> — статус deprecated (API 30) и рекомендованные замены.</li>
+            <li><a href="https://developer.android.com/topic/libraries/architecture/workmanager" target="_blank" rel="noopener">Android Developers — WorkManager</a> — граница гарантированной/отложенной фоновой работы против in-process пулов.</li>
+          </ol>
+        </div>
+      </article>
+    </div>
+    <aside id="toc"></aside>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="../assets/app.js?v=20260620-4"></script>
+</body>
+</html>
