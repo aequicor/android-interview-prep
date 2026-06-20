@@ -5,4 +5,6 @@ desktop.ini
 *~
 .idea/
 .vscode/
-.claude/
+
+# Claude Code config and skills are tracked on purpose — the whole .claude/
+# config (settings + skills) lives in git so it is reusable across machines.

@@ -5,11 +5,11 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 ## AUTO-LOAD: Read these files at session start (no need to be asked)
 
 Before doing anything else in this project, read:
-1. `interview-prep-author/SKILL.md` — markup/page authoring contract (HTML skeleton, components, nav wiring)
-2. `interview-prep-author/references/components.md` — all copy-paste snippets
-3. `tech-author/SKILL.md` — text-quality contract (factual accuracy + no AI markers); pull its `references/` when writing/editing prose
-4. `infographic-author/SKILL.md` — visual-quality contract for diagrams/infographics (right type, restraint, semantic color, theming, accessibility, no AI "slop"); pull its `references/` when designing or fixing a diagram
-5. `ru-humanizer/SKILL.md` — чистка русского текста от ИИ-стиля и канцелярита; применять при любом редактировании или генерации русскоязычной прозы
+1. `.claude/skills/interview-prep-author/SKILL.md` — markup/page authoring contract (HTML skeleton, components, nav wiring)
+2. `.claude/skills/interview-prep-author/references/components.md` — all copy-paste snippets
+3. `.claude/skills/tech-author/SKILL.md` — text-quality contract (factual accuracy + no AI markers); pull its `references/` when writing/editing prose
+4. `.claude/skills/infographic-author/SKILL.md` — visual-quality contract for diagrams/infographics (right type, restraint, semantic color, theming, accessibility, no AI "slop"); pull its `references/` when designing or fixing a diagram
+5. `.claude/skills/ru-humanizer/SKILL.md` — чистка русского текста от ИИ-стиля и канцелярита; применять при любом редактировании или генерации русскоязычной прозы
 
 This applies to **every request** involving content (new pages, section edits, study material, конспекты, методички). The four skills compose: `interview-prep-author` governs the markup (where a diagram goes), `tech-author` governs the writing (prose and captions), `infographic-author` governs the visualization itself (is the diagram good), and `ru-humanizer` governs the Russian prose style (human-sounding, no AI markers). Do NOT skip this step even if the user doesn't say "use the skill".
 
@@ -20,11 +20,11 @@ A self-contained project for preparing for an **Android developer interview** (M
 | Path | What it is |
 | --- | --- |
 | `site/` | A build-less static website — the interactive study guide (HTML + one CSS + one JS file). The main deliverable. |
-| `interview-prep-author/` | A Codex **skill** (`SKILL.md` + `references/`) — the markup contract for authoring pages (HTML skeleton, styled components, nav wiring). |
-| `interview-prep-author.skill` | A zip-packaged copy of that skill (the distributable bundle). Keep it in sync with the `interview-prep-author/` source if you edit the skill. |
-| `tech-author/` | A Codex **skill** (`SKILL.md` + `references/`) — the text-quality contract: factual accuracy (no hallucinated APIs/versions/numbers) and prose free of AI markers. Governs *what the writing says and how it reads*, independent of markup. |
-| `infographic-author/` | A Codex **skill** (`SKILL.md` + `references/`) — the visual-quality contract for diagrams/infographics: right diagram type, restraint, semantic color, hierarchy, dark/light theming, accessibility, and no AI "slop". Governs *whether the visualization is good*, independent of markup and prose. |
-| `infographic-author.skill` | A zip-packaged copy of that skill (the distributable bundle). Keep it in sync with the `infographic-author/` source if you edit the skill. |
+| `.claude/skills/interview-prep-author/` | A Codex **skill** (`SKILL.md` + `references/`) — the markup contract for authoring pages (HTML skeleton, styled components, nav wiring). |
+| `interview-prep-author.skill` | A zip-packaged copy of that skill (the distributable bundle). Keep it in sync with the `.claude/skills/interview-prep-author/` source if you edit the skill. |
+| `.claude/skills/tech-author/` | A Codex **skill** (`SKILL.md` + `references/`) — the text-quality contract: factual accuracy (no hallucinated APIs/versions/numbers) and prose free of AI markers. Governs *what the writing says and how it reads*, independent of markup. |
+| `.claude/skills/infographic-author/` | A Codex **skill** (`SKILL.md` + `references/`) — the visual-quality contract for diagrams/infographics: right diagram type, restraint, semantic color, hierarchy, dark/light theming, accessibility, and no AI "slop". Governs *whether the visualization is good*, independent of markup and prose. |
+| `infographic-author.skill` | A zip-packaged copy of that skill (the distributable bundle). Keep it in sync with the `.claude/skills/infographic-author/` source if you edit the skill. |
 | `ПЛАН_ПОДГОТОВКИ.md` | The long-form source prep plan (~30 KB). The site is the interactive rendering of this material; the homepage links to it. |
 | `books/` | Specialist books converted to `.md` for grep-based research (see below). The orignal PDFs live alongside. |
 
@@ -41,6 +41,14 @@ The study material has exactly **three** structural levels. Use these names ever
 | **Параграф** | paragraph | A specific topic *inside* a глава (e.g. «Null-safety», «Scope-функции»). One entry in the on-page table of contents. | A `<section class="section" id="…">` whose first child is an `<h2>`. `buildTOC` emits one TOC link per параграф. |
 
 **Подпараграфов нет (no sub-paragraphs).** The hierarchy stops at the параграф — `группа → глава → параграф` — and nothing below it is a navigational level. Inside a параграф a minor sub-point may be set off with a run-in lead-in `<p class="subhead">…</p>`, but that is **plain text: not a heading, not a TOC entry**. Never reintroduce `<h3>`/`<h4>` as a structural sub-level. The on-page TOC is therefore single-level (параграфы only).
+
+## «Вопрос со звёздочкой» (starred question)
+
+A **вопрос со звёздочкой** is a deliberately advanced, often counter-intuitive question that goes at the **end of each content параграф** — one per параграф, right after its body. It targets what you rarely need in day-to-day application development but interviewers prize: the mechanism «под капотом», the non-obvious edge case, the «почему именно так» behind an API — a level *above* the baseline Middle+/Senior material in the параграф itself («то, что не требуется знать в проде, но ценят на собесе»).
+
+- **Placement:** one per content параграф, at its end (skip the meta параграфы — `#faq`, video, tasks, sources). It lives inside the параграф's `<section>`, so it never creates a TOC entry (the TOC is built only from `.section > h2`).
+- **Markup:** render it as a Q&A `.qa` card (the same component as «Частые вопросы») flagged with a `★` badge — `<span class="q-badge">★</span>` — so it reads as distinct from the collected FAQ block. No new CSS needed.
+- **Bar:** it must be genuinely beyond-baseline. If a параграф has nothing worth asking above its own body, leave it out rather than padding with a filler question.
 
 ## Running the site
 
@@ -77,22 +85,22 @@ Edits to `.html`/`.css`/`.js` show up on reload (mind the cache-busting note bel
 When the task is to **add a глава, expand a параграф, or write study content**, three skills are the authoritative spec — read them first rather than reinventing markup, prose, or diagrams. `interview-prep-author` governs the *markup*, `tech-author` governs the *writing*, `infographic-author` governs the *diagrams/infographics*.
 
 Markup (`interview-prep-author`):
-- `interview-prep-author/SKILL.md` — the mandatory page skeleton, workflow (research facts first → build from templates → run the checklist), and the navigation-wiring steps.
-- `interview-prep-author/references/components.md` — copy-paste snippets for every styled component (callout, code block, comparison table, Q&A `.qa`, `.ytcard` video card, Mermaid diagram, sources list).
-- `interview-prep-author/references/review-checklist.md` — pre-submit checklist that catches the common breakages.
+- `.claude/skills/interview-prep-author/SKILL.md` — the mandatory page skeleton, workflow (research facts first → build from templates → run the checklist), and the navigation-wiring steps.
+- `.claude/skills/interview-prep-author/references/components.md` — copy-paste snippets for every styled component (callout, code block, comparison table, Q&A `.qa`, `.ytcard` video card, Mermaid diagram, sources list).
+- `.claude/skills/interview-prep-author/references/review-checklist.md` — pre-submit checklist that catches the common breakages.
 
 Writing (`tech-author`) — apply to the prose that goes *inside* that markup, and when editing/de-slopping any draft:
-- `tech-author/SKILL.md` — two modes (author / vacuum out AI markers), the non-negotiable accuracy + anti-marker rules inline, and a pre-submit checklist.
-- `tech-author/references/fact-discipline.md` — anti-hallucination protocol; the hot zones (signatures, API levels, versions, defaults, numbers) where you must quote the source, not memory.
-- `tech-author/references/ai-markers.md` — full catalog of AI tells (RU lexis/syntax, structure, EN) with concrete bad→good rewrites.
-- `tech-author/references/completeness.md` — what makes a chapter technically complete at Middle+/Senior depth (mechanism, edge cases, trade-offs, failure modes).
+- `.claude/skills/tech-author/SKILL.md` — two modes (author / vacuum out AI markers), the non-negotiable accuracy + anti-marker rules inline, and a pre-submit checklist.
+- `.claude/skills/tech-author/references/fact-discipline.md` — anti-hallucination protocol; the hot zones (signatures, API levels, versions, defaults, numbers) where you must quote the source, not memory.
+- `.claude/skills/tech-author/references/ai-markers.md` — full catalog of AI tells (RU lexis/syntax, structure, EN) with concrete bad→good rewrites.
+- `.claude/skills/tech-author/references/completeness.md` — what makes a chapter technically complete at Middle+/Senior depth (mechanism, edge cases, trade-offs, failure modes).
 
 Visuals (`infographic-author`) — apply when designing, adding, or fixing any diagram/infographic on a page:
-- `infographic-author/SKILL.md` — workflow (pick diagram type → pick engine → build to the design system → de-slop → checklist) and the non-negotiable visual minimum.
-- `infographic-author/references/diagram-types.md` — choosing the visualization: route on the verb, the "request → type" table, Mermaid vs hand-written SVG vs table vs chart, and when NOT to draw a diagram.
-- `infographic-author/references/design-system.md` — the visual contract bound to this project's tokens (semantic color from `--accent`/`--accent-2`/…, hierarchy, complexity budget, dark/light theming, accessibility, "text fits the box" math, Mermaid theming).
-- `infographic-author/references/anti-slop.md` — catalog of visual AI markers (rainbow color, shadows/gradients/glow, all-bold, rings for cycles, labels on arrows, decoration) with bad→good fixes.
-- `infographic-author/references/review-checklist.md` — pre-submit checklist: render integrity + diagram strength + theming/accessibility.
+- `.claude/skills/infographic-author/SKILL.md` — workflow (pick diagram type → pick engine → build to the design system → de-slop → checklist) and the non-negotiable visual minimum.
+- `.claude/skills/infographic-author/references/diagram-types.md` — choosing the visualization: route on the verb, the "request → type" table, Mermaid vs hand-written SVG vs table vs chart, and when NOT to draw a diagram.
+- `.claude/skills/infographic-author/references/design-system.md` — the visual contract bound to this project's tokens (semantic color from `--accent`/`--accent-2`/…, hierarchy, complexity budget, dark/light theming, accessibility, "text fits the box" math, Mermaid theming).
+- `.claude/skills/infographic-author/references/anti-slop.md` — catalog of visual AI markers (rainbow color, shadows/gradients/glow, all-bold, rings for cycles, labels on arrows, decoration) with bad→good fixes.
+- `.claude/skills/infographic-author/references/review-checklist.md` — pre-submit checklist: render integrity + diagram strength + theming/accessibility.
 
 The hard rules from that skill that, if violated, break rendering:
 - **Escape `<`, `>`, `&`** inside `<code>`/`<pre>` as `&lt; &gt; &amp;` — otherwise Kotlin generics (`List&lt;T&gt;`) are parsed as HTML tags.
@@ -102,7 +110,7 @@ The hard rules from that skill that, if violated, break rendering:
 
 After changing `app.js` or `style.css`, **bump the cache-busting version** `assets/app.js?v=YYYYMMDD-N` (currently `?v=20260620-4`) in **all** HTML files (root + every page in `site/pages/`) so browsers don't serve a stale copy.
 
-If you edit a packaged skill (`interview-prep-author/` or `infographic-author/`), repackage its `.skill` bundle (a zip whose top-level folder is the skill name, containing `SKILL.md` + `references/`) so the bundled copy stays current.
+If you edit a packaged skill (`.claude/skills/interview-prep-author/` or `.claude/skills/infographic-author/`), repackage its `.skill` bundle (a zip whose top-level folder is the skill name, containing `SKILL.md` + `references/`) so the bundled copy stays current.
 
 ## Research workflow — use the books first
 
