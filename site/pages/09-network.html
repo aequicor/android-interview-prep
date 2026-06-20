@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    (() => {
+      const key = "aip-theme";
+      let theme = null;
+      try { theme = localStorage.getItem(key); } catch(e) {}
+      if (theme !== "dark" && theme !== "light") {
+        theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <title>Сеть · Android-собес</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+</head>
+<body data-page="network">
+  <div class="layout">
+    <aside id="sidebar"></aside>
+    <div id="content">
+      <article class="page">
+        <div class="breadcrumb"></div>
+        <header class="page-head">
+          <span class="eyebrow">Тема 09 · Данные и сеть</span>
+          <h1>Сеть</h1>
+          <p class="lead">HTTP (HyperText Transfer Protocol — протокол передачи гипертекста) и его семантика, TLS/HTTPS (Transport Layer Security и защищённый HTTP — шифрованное соединение), рукопожатие и доверие к сертификатам, стек OkHttp + Retrofit (HTTP-клиент и клиент API, программного интерфейса), обработка сетевых ошибок и сериализация. Один из самых частых блоков: интервьюер проверяет, понимаешь ли ты, что происходит «под капотом» между нажатием кнопки и появлением данных на экране.</p>
+          <div class="meta">
+            <span class="tag lvl-mid">Middle</span>
+            <span class="tag lvl-sen">Senior</span>
+            <span class="tag hot">Частый вопрос</span>
+          </div>
+        </header>
+
+        <section class="section" id="http">
+          <h2>HTTP: методы, статусы, семантика</h2>
+          <p>HTTP — текстовый (в HTTP/2 — бинарный) запрос-ответный протокол. Запрос = метод + URL + заголовки + тело; ответ = статус + заголовки + тело. Ключевые свойства методов, которые спрашивают: <strong>безопасность</strong> (safe — не меняет состояние) и <strong>идемпотентность</strong> (повтор даёт тот же эффект).</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Метод</th><th>Назначение</th><th>Safe</th><th>Идемпотентный</th></tr></thead>
+              <tbody>
+                <tr><td><code>GET</code></td><td>Получить ресурс</td><td>да</td><td>да</td></tr>
+                <tr><td><code>HEAD</code></td><td>GET без тела (только заголовки)</td><td>да</td><td>да</td></tr>
+                <tr><td><code>POST</code></td><td>Создать/выполнить действие</td><td>нет</td><td><strong>нет</strong></td></tr>
+                <tr><td><code>PUT</code></td><td>Заменить ресурс целиком</td><td>нет</td><td>да</td></tr>
+                <tr><td><code>PATCH</code></td><td>Частичное изменение</td><td>нет</td><td>нет</td></tr>
+                <tr><td><code>DELETE</code></td><td>Удалить ресурс</td><td>нет</td><td>да</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Почему это важно: <strong>повторять (retry) автоматически можно только идемпотентные запросы</strong>. Повторный <code>POST «создать заказ»</code> создаст дубль — поэтому для него вводят ключ идемпотентности (<code>Idempotency-Key</code>), а OkHttp по умолчанию не ретраит не-идемпотентные методы при разрыве.</p>
+
+          <h3>Статус-коды</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Класс</th><th>Смысл</th><th>Частые коды</th></tr></thead>
+              <tbody>
+                <tr><td><code>2xx</code></td><td>Успех</td><td>200 OK, 201 Created, 204 No Content</td></tr>
+                <tr><td><code>3xx</code></td><td>Перенаправление</td><td>301/308 (постоянный), 302/307 (временный), 304 Not Modified</td></tr>
+                <tr><td><code>4xx</code></td><td>Ошибка клиента</td><td>400, 401 (нет аутентификации), 403 (нет прав), 404, 409 (конфликт), 429 (too many requests)</td></tr>
+                <tr><td><code>5xx</code></td><td>Ошибка сервера</td><td>500, 502, 503 (недоступен), 504 (таймаут шлюза)</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>401 vs 403.</strong> <code>401 Unauthorized</code> — «я не знаю, кто ты» (нет/протух токен → обнови и повтори). <code>403 Forbidden</code> — «я знаю, кто ты, но тебе сюда нельзя» (повтор бессмыслен). Разное поведение на клиенте.</div>
+          </div>
+
+          <h3>Кэширование: ETag и Cache-Control</h3>
+          <p>Сервер отдаёт <code>Cache-Control: max-age=60</code> (сколько секунд ответ «свежий») и/или валидатор <code>ETag</code> — хэш версии ресурса. Когда срок истёк, клиент шлёт <strong>условный запрос</strong> с <code>If-None-Match: "etag"</code>. Если ресурс не менялся, сервер отвечает <code>304 Not Modified</code> <em>без тела</em> — экономия трафика и батареи.</p>
+<pre><code class="language-kotlin">// Запрос -&gt; первый ответ
+// &lt; HTTP/1.1 200 OK
+// &lt; ETag: "v3-abc"
+// &lt; Cache-Control: max-age=60
+
+// Повторный запрос после устаревания
+// &gt; GET /profile
+// &gt; If-None-Match: "v3-abc"
+// &lt; HTTP/1.1 304 Not Modified   (тело не передаётся — берём из кэша)</code></pre>
+          <p>Дополнительно: <code>no-store</code> — не кэшировать вообще; <code>no-cache</code> — кэшировать, но всегда перепроверять; <code>private</code> — только клиентский кэш, не прокси. <code>Cookie</code>/<code>Set-Cookie</code> переносят сессионное состояние, но в мобильных API чаще используют токены в <code>Authorization: Bearer</code> (stateless), а не cookie.</p>
+
+          <h3>REST vs gRPC, HTTP/2</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Критерий</th><th>REST (JSON/HTTP)</th><th>gRPC (Protobuf/HTTP2)</th></tr></thead>
+              <tbody>
+                <tr><td>Формат</td><td>JSON, человекочитаемый</td><td>Protobuf, бинарный, компактный</td></tr>
+                <tr><td>Контракт</td><td>OpenAPI/Swagger (опц.)</td><td>.proto — строгая схема, кодогенерация</td></tr>
+                <tr><td>Стриминг</td><td>ограничен (SSE/long-poll)</td><td>двунаправленный стриминг из коробки</td></tr>
+                <tr><td>Браузер</td><td>нативно</td><td>нужен gRPC-Web/прокси</td></tr>
+                <tr><td>Где удобен</td><td>публичные API, простота</td><td>микросервисы, низкая латентность</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p><strong>HTTP/2</strong> — общий фундамент: бинарные фреймы, <strong>мультиплексирование</strong> (много запросов в одном TCP-соединении без head-of-line блокировки уровня HTTP), сжатие заголовков HPACK, server push. OkHttp поддерживает HTTP/2 автоматически (через ALPN при TLS) — на одном соединении параллельно идут десятки запросов, что снижает overhead на установку TCP/TLS.</p>
+        </section>
+
+        <section class="section" id="tls">
+          <h2>TLS/HTTPS: рукопожатие и доверие</h2>
+          <p>HTTPS = HTTP поверх TLS. TLS решает три задачи: <strong>конфиденциальность</strong> (шифрование), <strong>целостность</strong> (MAC/AEAD), <strong>аутентификация сервера</strong> (сертификат). Главная идея, которую ждут на собесе: <strong>асимметричная криптография используется только при рукопожатии</strong>, чтобы безопасно договориться об общем симметричном ключе сессии, а дальше весь трафик шифруется быстрым симметричным алгоритмом (AES-GCM/ChaCha20).</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th></th><th>Симметричное</th><th>Асимметричное</th></tr></thead>
+              <tbody>
+                <tr><td>Ключи</td><td>один общий секрет</td><td>пара: публичный + приватный</td></tr>
+                <tr><td>Скорость</td><td>быстро (массив данных)</td><td>медленно (дорогая математика)</td></tr>
+                <tr><td>Роль в TLS</td><td>шифрование данных сессии</td><td>аутентификация + обмен ключом при handshake</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Рукопожатие (TLS 1.3)</h3>
+          <div class="diagram">
+          <div class="mermaid">
+sequenceDiagram
+participant C as Клиент
+participant S as Сервер
+C->>S: ClientHello (версии TLS, cipher suites, key_share, client random)
+S->>S: Выбор cipher suite, генерация ключа сессии
+S->>C: ServerHello (выбранный suite, key_share, server random)
+S->>C: Certificate + CertificateVerify (зашифровано)
+S->>C: Finished
+Note over C: Проверка цепочки сертификата до доверенного CA
+C->>S: Finished
+Note over C,S: Установлен общий симметричный ключ — данные шифруются
+C->>S: HTTP-запрос (зашифрован, application data)
+S->>C: HTTP-ответ (зашифрован)
+          </div>
+          <div class="cap">TLS 1.3: 1-RTT — ключ согласуется за один круг, после ServerHello всё зашифровано (включая сам сертификат)</div>
+          </div>
+          <p>В TLS 1.3 клиент шлёт свой <code>key_share</code> (половину эфемерного Diffie-Hellman) уже в <code>ClientHello</code>, поэтому handshake укладывается в один round-trip (в TLS 1.2 их было два). Общий секрет вычисляется по DH — приватные ключи по сети не передаются, что даёт <strong>forward secrecy</strong>: даже компрометация приватного ключа сервера в будущем не расшифрует старые сессии.</p>
+
+          <h3>Сертификаты и цепочка доверия</h3>
+          <p>Сертификат (X.509) связывает домен с публичным ключом и подписан <strong>удостоверяющим центром (CA)</strong>. Клиент проверяет цепочку: листовой сертификат сервера → промежуточный CA → корневой CA, который уже лежит в системном trust store устройства. Если подпись валидна, домен совпадает и срок не истёк — серверу доверяют.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart LR
+Leaf["Сертификат сервера (домен + публичный ключ)"] --> Inter["Промежуточный CA"]
+Inter --> Root["Корневой CA (в trust store ОС)"]
+Root -.подписывает.-> Inter
+Inter -.подписывает.-> Leaf
+          </div>
+          <div class="cap">Цепочка доверия: доверие «спускается» от предустановленного корневого CA к сертификату сервера</div>
+          </div>
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>MITM.</strong> Если злоумышленник подсунет свой CA в trust store (rooted-устройство, корпоративный прокси, малварь), он сможет расшифровать «защищённый» трафик. Защита прикладного уровня от этого — <strong>pinning</strong>.</div>
+          </div>
+
+          <h3>Certificate pinning vs public-key pinning, mTLS</h3>
+          <p><strong>Pinning</strong> — приложение доверяет не «любому валидному CA», а конкретному заранее зашитому отпечатку. Два варианта:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th></th><th>Certificate pinning</th><th>Public-key pinning (SPKI)</th></tr></thead>
+              <tbody>
+                <tr><td>Что пинят</td><td>хэш всего сертификата</td><td>хэш публичного ключа (SubjectPublicKeyInfo)</td></tr>
+                <tr><td>Ротация сертификата</td><td>ломается при <em>любой</em> пере-выписке</td><td>переживает, если ключ тот же</td></tr>
+                <tr><td>Рекомендация</td><td>хрупко</td><td><strong>предпочтительно</strong> (так делает OkHttp <code>CertificatePinner</code>)</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>OkHttp <code>CertificatePinner</code> на самом деле пинит именно <strong>SPKI-хэш</strong> (base64 SHA-256), несмотря на имя класса. Обязательно держи <strong>backup-пин</strong> (резервный ключ): иначе при экстренной смене ключа приложение потеряет связь до выката апдейта.</p>
+<pre><code class="language-kotlin">val pinner = CertificatePinner.Builder()
+    .add("api.example.com", "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+    .add("api.example.com", "sha256/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=") // backup
+    .build()
+
+val client = OkHttpClient.Builder()
+    .certificatePinner(pinner)
+    .build()</code></pre>
+          <p><strong>mTLS (mutual TLS)</strong> — двусторонняя аутентификация: не только клиент проверяет сервер, но и сервер требует клиентский сертификат. Применяется в банковских/корпоративных API и B2B — приложение предъявляет свой сертификат из <code>KeyStore</code>.</p>
+        </section>
+
+        <section class="section" id="okhttp">
+          <h2>OkHttp: клиент, интерсепторы, пул</h2>
+          <p><code>OkHttpClient</code> — тяжёлый объект: держит пул соединений, пул потоков (dispatcher) и кэш. <strong>Создавай его один раз</strong> (синглтон/DI) и переиспользуй через <code>newBuilder()</code> — так клиенты делят connection pool и кэш.</p>
+          <div class="code-label">NetworkModule.kt</div>
+<pre><code class="language-kotlin">val client = OkHttpClient.Builder()
+    .connectTimeout(10, TimeUnit.SECONDS)   // установка TCP+TLS
+    .readTimeout(15, TimeUnit.SECONDS)      // ожидание байтов ответа
+    .writeTimeout(15, TimeUnit.SECONDS)     // отправка тела
+    .callTimeout(30, TimeUnit.SECONDS)      // суммарный лимит на весь вызов
+    .retryOnConnectionFailure(true)         // retry при сбое соединения (idempotent)
+    .connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES))
+    .cache(Cache(File(cacheDir, "http"), 10L * 1024 * 1024)) // 10 МБ
+    .addInterceptor(AuthInterceptor(tokenStore))   // application
+    .addNetworkInterceptor(StethoLikeLogger())     // network
+    .build()</code></pre>
+
+          <h3>Application vs Network интерсепторы</h3>
+          <p>Это любимый вопрос. Интерсептор — это <code>Interceptor</code> с методом <code>intercept(chain)</code>, который может изменить запрос, вызвать <code>chain.proceed()</code> и изменить ответ. Разница — в <em>месте</em> в цепочке.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th></th><th>Application (<code>addInterceptor</code>)</th><th>Network (<code>addNetworkInterceptor</code>)</th></tr></thead>
+              <tbody>
+                <tr><td>Положение</td><td>между приложением и ядром OkHttp</td><td>между ядром OkHttp и сетью</td></tr>
+                <tr><td>Вызовов на 1 запрос</td><td>ровно один (даже при кэш-хите)</td><td>по разу на каждый редирект/retry; не вызывается при отдаче из кэша</td></tr>
+                <tr><td>Видит редиректы</td><td>нет (только финальный ответ)</td><td>да (каждый «прыжок»)</td></tr>
+                <tr><td>Доступ к <code>Connection</code></td><td>нет</td><td>да (IP, TLS-параметры)</td></tr>
+                <tr><td>Типичное применение</td><td>auth-токен, общие заголовки, верхнеуровневое логирование</td><td>логирование «по проводу», подмена/сжатие, метрики на хоп</td></tr>
+              </tbody>
+            </table>
+          </div>
+<pre><code class="language-kotlin">class AuthInterceptor(private val tokens: TokenStore) : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request().newBuilder()
+            .header("Authorization", "Bearer ${tokens.access()}")
+            .build()
+        val response = chain.proceed(request)
+
+        // прозрачное обновление токена на 401 (без рекурсии)
+        if (response.code == 401 &amp;&amp; tokens.refresh()) {
+            response.close()
+            val retried = request.newBuilder()
+                .header("Authorization", "Bearer ${tokens.access()}")
+                .build()
+            return chain.proceed(retried)
+        }
+        return response
+    }
+}</code></pre>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Authenticator vs Interceptor.</strong> Для реактивного обновления токена на 401 каноничнее <code>OkHttpClient.authenticator()</code>: OkHttp сам вызовет его при 401 и встроит ретрай, исключив гонки. В интерсепторе обновление токена легко получить дубли запросов — синхронизируй доступ к refresh.</div>
+          </div>
+          <p><strong>Connection pool</strong> переиспользует keep-alive соединения: не тратится время на TCP+TLS для каждого запроса. <strong>EventListener</strong> даёт тайминги по фазам (DNS, connect, TLS, время до первого байта) — основа сетевых метрик и диагностики «почему медленно».</p>
+<pre><code class="language-kotlin">val listener = object : EventListener() {
+    override fun dnsEnd(call: Call, domainName: String, results: List&lt;InetAddress&gt;) { /* ... */ }
+    override fun secureConnectEnd(call: Call, handshake: Handshake?) { /* TLS готов */ }
+    override fun responseHeadersStart(call: Call) { /* TTFB */ }
+}
+val client = base.newBuilder().eventListener(listener).build()</code></pre>
+        </section>
+
+        <section class="section" id="retrofit">
+          <h2>Retrofit: конвертеры, suspend, обёртки</h2>
+          <p>Retrofit превращает аннотированный Kotlin-интерфейс в реализацию HTTP-клиента. Под капотом — OkHttp; сверху — <strong>конвертеры</strong> (тело ↔ объект) и <strong>call-адаптеры</strong> (тип возврата: <code>Call</code>, <code>suspend</code>, <code>Flow</code>, кастомный <code>Result</code>).</p>
+          <div class="code-label">Api.kt</div>
+<pre><code class="language-kotlin">interface UserApi {
+    @GET("users/{id}")
+    suspend fun getUser(@Path("id") id: String): UserDto          // тело напрямую
+
+    @GET("users/{id}")
+    suspend fun getUserResponse(@Path("id") id: String): Response&lt;UserDto&gt; // + код/заголовки
+
+    @POST("users")
+    suspend fun create(@Body body: CreateUserDto): UserDto
+}
+
+val retrofit = Retrofit.Builder()
+    .baseUrl("https://api.example.com/")
+    .client(okHttpClient)
+    .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
+    .build()
+
+val api = retrofit.create&lt;UserApi&gt;()</code></pre>
+          <p><strong>suspend-функции:</strong> начиная с Retrofit 2.6, метод можно объявить <code>suspend</code> — Retrofit сам адаптирует <code>Call</code> в корутину и переключает на IO-диспетчер OkHttp. Возврат <code>UserDto</code> — бросит исключение на не-2xx; возврат <code>Response&lt;UserDto&gt;</code> — отдаст код и тело, давая контроль над ошибками.</p>
+
+          <h3>Оборачивание в Result/sealed</h3>
+          <p>Голые исключения в data-слое неудобны. Два пути: (1) кастомный <strong>CallAdapter</strong>, чтобы интерфейс возвращал <code>ApiResult&lt;T&gt;</code> прямо из Retrofit; (2) обернуть вызов в репозитории через <code>runCatching</code>/<code>try-catch</code> и маппить в доменный sealed-тип. Второй проще и переносим между источниками — его и покажем в следующем разделе.</p>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>DTO ≠ domain.</strong> Возвращай из API <code>*Dto</code> (поля как в JSON), а в репозитории маппь в доменную модель. Так контракт сервера не протекает в UI, а смена формата не ломает весь код.</div>
+          </div>
+        </section>
+
+        <section class="section" id="errors">
+          <h2>Обработка ошибок и устойчивость</h2>
+          <p>Сетевой вызов падает множеством способов: нет связи (<code>IOException</code>/<code>UnknownHostException</code>), HTTP-ошибка (<code>HttpException</code> / не-2xx), таймаут (<code>SocketTimeoutException</code>), ошибка парсинга (<code>SerializationException</code>), отмена (<code>CancellationException</code>). Цель — поймать всё это в одном месте и отдать наверх <strong>предсказуемый доменный результат</strong>, а не «сырое» исключение.</p>
+          <div class="code-label">DataResult.kt</div>
+<pre><code class="language-kotlin">sealed interface DataResult&lt;out T&gt; {
+    data class Success&lt;T&gt;(val data: T) : DataResult&lt;T&gt;
+    sealed interface Failure : DataResult&lt;Nothing&gt; {
+        data class Network(val cause: Throwable) : Failure         // нет связи/таймаут
+        data class Http(val code: Int, val body: String?) : Failure // 4xx/5xx
+        data class Parse(val cause: Throwable) : Failure           // битый JSON
+        data class Unknown(val cause: Throwable) : Failure
+    }
+}</code></pre>
+          <div class="code-label">safeApiCall.kt</div>
+<pre><code class="language-kotlin">suspend fun &lt;T&gt; safeApiCall(block: suspend () -&gt; T): DataResult&lt;T&gt; =
+    try {
+        DataResult.Success(block())
+    } catch (e: CancellationException) {
+        throw e                          // отмену НЕ глотаем — пробрасываем
+    } catch (e: HttpException) {
+        DataResult.Failure.Http(e.code(), e.response()?.errorBody()?.string())
+    } catch (e: IOException) {
+        DataResult.Failure.Network(e)    // нет сети/таймаут/DNS
+    } catch (e: SerializationException) {
+        DataResult.Failure.Parse(e)
+    } catch (e: Throwable) {
+        DataResult.Failure.Unknown(e)
+    }</code></pre>
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>Никогда не глотай <code>CancellationException</code>.</strong> При отмене корутины (ушли с экрана) исключение должно пробрасываться, иначе сломается структурированный параллелизм и корутина «зависнет». Лови его <em>первым</em> и делай <code>throw</code>.</div>
+          </div>
+
+          <h3>Безопасный вызов в репозитории</h3>
+          <div class="code-label">UserRepository.kt</div>
+<pre><code class="language-kotlin">class UserRepository(
+    private val api: UserApi,
+    private val dao: UserDao,
+) {
+    suspend fun user(id: String): DataResult&lt;User&gt; =
+        when (val r = safeApiCall { api.getUser(id) }) {
+            is DataResult.Success -&gt; {
+                dao.upsert(r.data.toEntity())          // кэшируем в Room
+                DataResult.Success(r.data.toDomain())  // маппим DTO -&gt; domain
+            }
+            is DataResult.Failure.Network -&gt; {
+                // оффлайн: отдаём кэш, если он есть
+                dao.find(id)?.let { DataResult.Success(it.toDomain()) } ?: r
+            }
+            is DataResult.Failure -&gt; r
+        }
+}</code></pre>
+
+          <h3>Retry с экспоненциальным backoff</h3>
+          <p>Ретраить стоит транзиентные ошибки (сеть, 5xx, 429) и только идемпотентные запросы. Backoff с джиттером не даёт «толпе» клиентов синхронно долбить сервер после сбоя.</p>
+<pre><code class="language-kotlin">suspend fun &lt;T&gt; retry(
+    times: Int = 3,
+    initialDelay: Long = 500,
+    maxDelay: Long = 8000,
+    factor: Double = 2.0,
+    block: suspend () -&gt; T,
+): T {
+    var delayMs = initialDelay
+    repeat(times - 1) {
+        try { return block() }
+        catch (e: CancellationException) { throw e }
+        catch (e: IOException) { /* транзиентная — повторяем */ }
+        delay(delayMs + Random.nextLong(0, 200))      // + джиттер
+        delayMs = (delayMs * factor).toLong().coerceAtMost(maxDelay)
+    }
+    return block()  // последняя попытка — без перехвата
+}</code></pre>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><strong>Отмена и оффлайн.</strong> Отмену даёт сама корутина: <code>viewModelScope</code> отменит запрос при очистке VM, OkHttp прервёт сокет. Оффлайн — стратегия SSOT: репозиторий отдаёт кэш (Room) и помечает данные «устаревшими», фоновая синхронизация догоняет (single source of truth).</div>
+          </div>
+        </section>
+
+        <section class="section" id="serialization">
+          <h2>Сериализация: kotlinx vs Moshi vs Gson</h2>
+          <p>Конвертер превращает JSON-тело в объект и обратно. Выбор библиотеки — частый вопрос «что и почему».</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th></th><th>kotlinx.serialization</th><th>Moshi</th><th>Gson</th></tr></thead>
+              <tbody>
+                <tr><td>Механизм</td><td>compile-time (KSP/плагин)</td><td>codegen (KSP) или рефлексия</td><td>рефлексия в рантайме</td></tr>
+                <tr><td>Kotlin-aware</td><td>да (default-значения, null-safety, sealed)</td><td>да (с codegen)</td><td>нет (игнорит default, ставит null)</td></tr>
+                <tr><td>Производительность</td><td>высокая, без рефлексии</td><td>высокая с codegen</td><td>ниже, рефлексия</td></tr>
+                <tr><td>Полиморфизм</td><td>встроенный (sealed + discriminator)</td><td>через адаптеры</td><td>ручные TypeAdapter</td></tr>
+                <tr><td>Статус</td><td>рекомендуется для нового кода</td><td>зрелый, надёжный</td><td><strong>в maintenance, не для нового кода</strong></td></tr>
+              </tbody>
+            </table>
+          </div>
+<pre><code class="language-kotlin">@Serializable
+data class UserDto(
+    val id: String,
+    val name: String,
+    @SerialName("avatar_url") val avatarUrl: String? = null, // default переживёт отсутствие поля
+)
+
+val json = Json {
+    ignoreUnknownKeys = true   // не падать на новых полях сервера
+    coerceInputValues = true   // null -&gt; default, где это допустимо
+}</code></pre>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Главный риск Gson.</strong> Он создаёт объект через <code>Unsafe</code>, минуя конструктор Kotlin: non-null поле может оказаться <code>null</code>, default-значение проигнорируется — и приложение упадёт с NPE в неожиданном месте. На new-проектах берут kotlinx.serialization или Moshi.</div>
+          </div>
+        </section>
+
+        <section class="section" id="video">
+          <h2>Видео-разбор</h2>
+                    <a class="ytcard" href="https://youtu.be/eBOaBucNUJg?t=60" target="_blank" rel="noopener">
+            <span class="yt-thumb" style="background-image:url('https://img.youtube.com/vi/eBOaBucNUJg/hqdefault.jpg')">
+              <span class="yt-play"></span>
+              <span class="yt-time">▶ с 1:00</span>
+            </span>
+            <span class="yt-meta">
+              <strong>Работа с сетью: Retrofit, OkHttp, Coroutines</strong>
+              <span class="yt-by">RU · REST API на практике</span>
+              <span class="yt-why">С <b>1:00</b> (после настройки) — Retrofit/OkHttp, корутины и обработка ответов.</span>
+            </span>
+          </a>
+        </section>
+
+        <section class="section" id="faq">
+          <h2>Частые вопросы интервьюера</h2>
+
+          <details class="qa">
+            <summary>Чем отличается idempotent от safe? Какие методы можно ретраить? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p><strong>Safe</strong> — метод не меняет состояние на сервере (<code>GET</code>, <code>HEAD</code>). <strong>Idempotent</strong> — повтор даёт тот же результат (<code>GET</code>, <code>PUT</code>, <code>DELETE</code>, но <em>не</em> <code>POST</code>/<code>PATCH</code>). Автоматический retry безопасен только для идемпотентных запросов: повторный <code>POST «создать заказ»</code> создаст дубль. Для не-идемпотентных вводят <code>Idempotency-Key</code>, по которому сервер дедуплицирует.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Расскажи, что происходит при TLS-рукопожатии. <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Клиент шлёт <code>ClientHello</code> (версии TLS, cipher suites, случайное число, в TLS 1.3 — key_share). Сервер выбирает шифр, отвечает <code>ServerHello</code> + свой key_share, присылает сертификат и <code>Finished</code>. Клиент проверяет цепочку сертификата до доверенного корневого CA, и обе стороны по Diffie-Hellman вычисляют общий симметричный ключ. Дальше весь трафик шифруется симметрично (AES-GCM). Асимметрия — только для аутентификации и согласования ключа; эфемерный DH даёт forward secrecy. В TLS 1.3 всё это — за 1 round-trip.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Чем application-интерсептор отличается от network в OkHttp? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Application-интерсептор стоит между приложением и ядром OkHttp: вызывается ровно один раз на запрос (даже при кэш-хите), не видит редиректы, не имеет доступа к <code>Connection</code>. Идеален для auth-заголовков и верхнеуровневого логирования. Network-интерсептор — между ядром и сетью: вызывается на каждый редирект/retry, видит реальные «по проводу» заголовки (например <code>Accept-Encoding: gzip</code>), имеет доступ к <code>Connection</code> (IP, TLS). Подходит для логирования по хопам и метрик. Из кэша — не вызывается вообще.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Certificate pinning или public-key pinning — что выберешь и почему? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Public-key (SPKI) pinning. Он пинит хэш публичного ключа, а не всего сертификата, поэтому переживает плановую пере-выписку сертификата с тем же ключом — не требует релиза приложения. OkHttp <code>CertificatePinner</code> как раз пинит SPKI. Обязательно добавляю backup-пин (резервный ключ): без него экстренная смена ключа отрежет всех пользователей до выката апдейта. Pinning защищает от MITM даже при скомпрометированном/подложном CA в trust store.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как обработать ошибку сети, чтобы приложение не падало? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Оборачиваю вызов в <code>safeApiCall</code>, который ловит <code>HttpException</code> (4xx/5xx), <code>IOException</code> (нет связи/таймаут/DNS), <code>SerializationException</code> (парсинг) и маппит в sealed <code>DataResult.Failure.{Http, Network, Parse, Unknown}</code>. <code>CancellationException</code> ловлю первым и пробрасываю. UI получает предсказуемый тип и решает, что показать: ретрай, «нет интернета», экран ошибки. На транзиентных ошибках — retry с экспоненциальным backoff и джиттером, только для идемпотентных запросов.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Почему нельзя глотать CancellationException? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Отмена корутины реализована через бросок <code>CancellationException</code>. Если поймать его в общем <code>catch (e: Exception)</code> и не пробросить, родительский scope не узнает об отмене — структурированный параллелизм сломается, корутина «повиснет», ресурсы (сокет, курсор) не освободятся. Поэтому <code>CancellationException</code> ловят отдельной первой веткой и делают <code>throw</code>, либо используют <code>currentCoroutineContext().ensureActive()</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>ETag и Cache-Control — как работает условный запрос? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p><code>Cache-Control: max-age=N</code> задаёт время «свежести» ответа — пока оно не истекло, клиент берёт данные из кэша без запроса. Когда истекло, клиент шлёт условный запрос с <code>If-None-Match: "&lt;etag&gt;"</code> (ETag — версия/хэш ресурса). Если ресурс не менялся, сервер отвечает <code>304 Not Modified</code> без тела, и клиент использует кэш — экономия трафика и батареи. OkHttp с настроенным <code>Cache</code> делает это прозрачно.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Зачем HTTP/2 и что такое мультиплексирование? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>HTTP/1.1 на одном TCP-соединении обрабатывает запросы по очереди (head-of-line блокировка), поэтому браузеры/клиенты открывали несколько соединений. HTTP/2 ввёл бинарные фреймы и <strong>мультиплексирование</strong>: множество запросов и ответов идут параллельно в одном TCP-соединении, разбитые на фреймы и переплетённые. Плюс сжатие заголовков HPACK и server push. Итог — меньше соединений, меньше overhead на TCP/TLS, ниже латентность. OkHttp включает HTTP/2 автоматически через ALPN при TLS.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>kotlinx.serialization, Moshi или Gson — что и почему? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Для нового кода — kotlinx.serialization (compile-time, без рефлексии, понимает default-значения, null-safety и sealed-полиморфизм) или Moshi с codegen. Gson — в режиме поддержки: он использует рефлексию и <code>Unsafe</code>, создаёт объект минуя конструктор Kotlin, поэтому игнорирует default-значения и может поставить <code>null</code> в non-null поле → NPE. Это его главный подводный камень. Производительность и безопасность типов на стороне kotlinx/Moshi.</p></div>
+          </details>
+
+        </section>
+
+        <div class="sources">
+          <h2>Источники</h2>
+          <ol>
+            <li><a href="https://www.cloudflare.com/learning/ssl/what-happens-in-a-tls-handshake/" target="_blank" rel="noopener">Cloudflare — What happens in a TLS handshake?</a> — пошаговый разбор рукопожатия и роли асимметрии.</li>
+            <li><a href="https://square.github.io/okhttp/features/interceptors/" target="_blank" rel="noopener">OkHttp Docs — Interceptors</a> — application vs network, цепочка, кэш и редиректы.</li>
+            <li><a href="https://square.github.io/okhttp/features/https/" target="_blank" rel="noopener">OkHttp Docs — HTTPS & CertificatePinner</a> — pinning по SPKI и backup-пины.</li>
+            <li><a href="https://developer.android.com/privacy-and-security/security-config" target="_blank" rel="noopener">Android Developers — Network security configuration</a> — доверие к CA, pinning, debug-overrides.</li>
+            <li><a href="https://square.github.io/retrofit/" target="_blank" rel="noopener">Retrofit — официальная документация</a> — аннотации, конвертеры, suspend и call-адаптеры.</li>
+            <li><a href="https://github.com/Kotlin/kotlinx.serialization" target="_blank" rel="noopener">kotlinx.serialization (GitHub)</a> — конфигурация Json и сравнение подходов сериализации.</li>
+            <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods" target="_blank" rel="noopener">MDN — HTTP request methods</a> — safe/idempotent семантика методов и статус-коды.</li>
+            <li><a href="https://www.youtube.com/watch?v=eBOaBucNUJg" target="_blank" rel="noopener">Работа с сетью в Android: Retrofit, OkHttp, Coroutines (RU)</a> — практический видео-разбор стека.</li>
+          </ol>
+        </div>
+      </article>
+    </div>
+    <aside id="toc"></aside>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="../assets/app.js?v=20260620-2"></script>
+</body>
+</html>

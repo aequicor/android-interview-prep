@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    (() => {
+      const key = "aip-theme";
+      let theme = null;
+      try { theme = localStorage.getItem(key); } catch(e) {}
+      if (theme !== "dark" && theme !== "light") {
+        theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <title>Системный дизайн (mobile) · Android-собес</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+</head>
+<body data-page="system-design">
+  <div class="layout">
+    <aside id="sidebar"></aside>
+    <div id="content">
+      <article class="page">
+        <div class="breadcrumb"></div>
+        <header class="page-head">
+          <span class="eyebrow">Тема 13 · Дизайн и софт-скиллы</span>
+          <h1>Системный дизайн (mobile)</h1>
+          <p class="lead">Как за 45 минут спроектировать клиент мобильного приложения: от сбора требований до offline-first (сначала локальные данные), синхронизации, пагинации и trade-offs (компромиссов). Это про мышление инженера, а не про знание API (программных интерфейсов) — интервьюер смотрит, как ты структурируешь неопределённость.</p>
+          <div class="meta">
+            <span class="tag lvl-mid">Middle</span>
+            <span class="tag lvl-sen">Senior</span>
+            <span class="tag hot">Частый вопрос</span>
+          </div>
+        </header>
+
+        <section class="section" id="framework">
+          <h2>Фреймворк ответа (чеклист)</h2>
+          <p>Держи в голове последовательность шагов и не перепрыгивай. Сначала договорись <em>что</em> строим и для <em>кого</em>, и только потом <em>как</em>. Каждый блок — это 3–7 минут разговора.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TB
+  R["1. Требования<br/>функц. + нефункц."] --> U["2. Пользователи и нагрузка<br/>кол-во, сеть, девайсы"]
+  U --> A["3. Высокоуровневая архитектура<br/>слои и модули"]
+  A --> API["4. API-контракт<br/>endpoints, пагинация, формат"]
+  API --> D["5. Модель данных и кэш<br/>Room как SSOT"]
+  D --> OFF["6. Offline-first и синхронизация<br/>outbox, retry, конфликты"]
+  OFF --> ST["7. Состояние и пагинация<br/>Paging 3, UDF"]
+  ST --> SEC["8. Безопасность<br/>токены, хранилище, TLS"]
+  SEC --> OBS["9. Наблюдаемость<br/>логи, метрики, крэши"]
+  OBS --> TO["10. Trade-offs<br/>что и почему пожертвовали"]
+          </div>
+          <div class="cap">Каркас ответа: от требований к компромиссам. Возвращайся к началу, если интервьюер меняет вводные</div>
+          </div>
+
+          <h3>Требования: функциональные и нефункциональные</h3>
+          <p>Функциональные — <em>что</em> делает фича (показать ленту, поставить лайк, отправить сообщение). Нефункциональные (NFR) — <em>как хорошо</em>: офлайн-доступность, latency прокрутки, размер кэша, расход батареи и трафика, поддержка слабых устройств. Именно NFR в mobile важнее всего — фиксируй их явно.</p>
+
+          <h3>Пользователи и нагрузка</h3>
+          <p>Спроси: сколько пользователей и активных сессий, какой профиль сети (3G в метро vs Wi-Fi), какие устройства (бюджетные Android One vs флагманы), сколько данных на пользователя. Это влияет на размер локального кэша, агрессивность префетча и выбор форматов.</p>
+
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Скажи это вслух.</strong> «Прежде чем проектировать, уточню scope и нефункциональные требования — в mobile они определяют архитектуру сильнее, чем сами фичи». Так ты сразу показываешь зрелость.</div>
+          </div>
+        </section>
+
+        <section class="section" id="architecture">
+          <h2>Высокоуровневая архитектура</h2>
+          <p>Стандарт индустрии — слоистая архитектура с однонаправленным потоком данных (UDF) и БД как единственным источником истины. Три слоя: <strong>UI</strong> (Compose + ViewModel), <strong>domain</strong> (UseCase, бизнес-правила), <strong>data</strong> (Repository поверх сети и БД). Repository прячет источники и решает, когда идти в сеть, а когда отдать кэш.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TB
+  subgraph ui["UI layer"]
+    S["Compose Screen"] --> VM["ViewModel<br/>StateFlow&lt;UiState&gt;"]
+  end
+  subgraph domain["domain layer"]
+    UC["UseCase / Interactor"]
+  end
+  subgraph data["data layer"]
+    REPO["Repository"]
+    REPO --> DB[("Room — SSOT")]
+    REPO --> NET["Retrofit API"]
+    REPO --> OUT[("Outbox — очередь записей")]
+  end
+  VM --> UC --> REPO
+  DB -. "Flow наблюдает UI" .-> VM
+          </div>
+          <div class="cap">Слоистая архитектура: UI наблюдает БД через Flow, запись идёт в БД и outbox, сеть — деталь внутри Repository</div>
+          </div>
+          <p>Ключевая идея: <strong>UI читает только из БД</strong> (через <code>Flow</code>), а сеть лишь наполняет БД. Тогда экран всегда показывает что-то осмысленное, даже без интернета, и обновляется автоматически при синхронизации.</p>
+<pre><code class="language-kotlin">// Repository: сеть наполняет БД, UI подписан на БД (single source of truth)
+class FeedRepository(
+    private val api: FeedApi,
+    private val dao: FeedDao,
+    private val outbox: OutboxDao,
+) {
+    // UI всегда читает из БД — офлайн отдаёт кэш, онлайн обновляется сам
+    fun feed(): Flow&lt;List&lt;Product&gt;&gt; = dao.observeFeed()
+
+    suspend fun refresh() {
+        val remote = api.getFeed()             // деталь, скрыта от UI
+        dao.upsertAll(remote.map { it.toEntity() })
+    }
+
+    // запись «оптимистична»: сразу в БД + в outbox на отправку
+    suspend fun like(productId: String) {
+        dao.setLiked(productId, liked = true)              // UI обновится мгновенно
+        outbox.enqueue(Operation.Like(productId))          // отправим, когда будет сеть
+    }
+}</code></pre>
+        </section>
+
+        <section class="section" id="api-data">
+          <h2>API-контракт и модель данных</h2>
+          <p>Проговори контракт хотя бы на пальцах: эндпоинты, метод пагинации, формат полезной нагрузки, версионирование. В mobile важны <strong>экономия трафика</strong> (поля по требованию, сжатие, дельта-синхронизация) и <strong>стабильность контракта</strong> (бэкенд-driven UI, чтобы не релизить приложение ради каждого изменения).</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Аспект</th><th>Выбор</th><th>Почему для mobile</th></tr></thead>
+              <tbody>
+                <tr><td>Пагинация</td><td>Курсорная (cursor/keyset), а не offset</td><td>Стабильна при вставках, не «прыгает» лента; меньше дублей</td></tr>
+                <tr><td>Формат</td><td>JSON по умолчанию; protobuf при высокой нагрузке</td><td>protobuf компактнее и быстрее парсится на слабых девайсах</td></tr>
+                <tr><td>Синхронизация</td><td>Дельта по <code>updatedSince</code></td><td>Тянем только изменения — экономим трафик и батарею</td></tr>
+                <tr><td>Картинки</td><td>CDN + варианты размеров + WebP/AVIF</td><td>Не грузим 4K на экран превью; меньше трафика</td></tr>
+                <tr><td>UI-схема</td><td>Server-driven компоненты (опц.)</td><td>Меняем layout без релиза; A/B без выкатки</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Модель данных проектируй сразу под офлайн: каждая синхронизируемая сущность несёт служебные поля для синхронизации и разрешения конфликтов.</p>
+          <div class="code-label">FeedEntities.kt</div>
+<pre><code class="language-kotlin">@Entity(tableName = "products")
+data class ProductEntity(
+    @PrimaryKey val id: String,
+    val title: String,
+    val priceMinor: Long,
+    val liked: Boolean,
+    // --- служебные поля для синхронизации ---
+    val updatedAt: Long,            // когда изменено локально (для LWW)
+    val serverVersion: Long,        // версия сервера (для optimistic concurrency)
+    val syncState: SyncState,       // SYNCED / PENDING / CONFLICT
+)
+
+enum class SyncState { SYNCED, PENDING, CONFLICT }
+
+// Курсор для пагинации храним отдельно — чтобы знать «откуда грузить дальше»
+@Entity(tableName = "remote_keys")
+data class RemoteKey(
+    @PrimaryKey val label: String,  // напр. "feed"
+    val nextCursor: String?,
+)</code></pre>
+        </section>
+
+        <section class="section" id="offline">
+          <h2>Offline-first и синхронизация</h2>
+          <p>Это сердце mobile system design и любимая зона вопросов. Базовый принцип: <strong>локальная БД — источник истины</strong>, сеть — слой оптимизации, а не обязательное условие работы. Пользователь должен видеть данные и совершать действия офлайн, а синхронизация происходит в фоне.</p>
+
+          <h3>Четыре кита offline-first</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Механизм</th><th>Назначение</th><th>Инструмент</th></tr></thead>
+              <tbody>
+                <tr><td>Single Source of Truth</td><td>UI читает только БД; сеть пишет в БД</td><td>Room + <code>Flow</code></td></tr>
+                <tr><td>Outbox (очередь записей)</td><td>Долговечная очередь исходящих операций</td><td>Таблица Room <code>outbox</code></td></tr>
+                <tr><td>Фоновая синхронизация</td><td>Отправить outbox + подтянуть изменения</td><td><code>WorkManager</code> с constraints</td></tr>
+                <tr><td>Разрешение конфликтов</td><td>Решить, чья версия победит</td><td>LWW / версии / merge</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Поток данных при записи (оптимистичный апдейт)</h3>
+          <div class="diagram">
+          <div class="mermaid">
+sequenceDiagram
+  participant U as Пользователь
+  participant VM as ViewModel
+  participant DB as Room (SSOT)
+  participant OB as Outbox
+  participant W as WorkManager
+  participant S as Сервер
+  U->>VM: лайк товара
+  VM->>DB: liked=true, syncState=PENDING
+  DB-->>VM: Flow эмитит новое состояние
+  VM-->>U: UI обновлён мгновенно (оптимистично)
+  VM->>OB: enqueue(Like, idempotencyKey)
+  Note over W: триггер по сети (constraint)
+  W->>OB: читать pending-операции
+  W->>S: POST /like (Idempotency-Key)
+  alt успех
+    S-->>W: 200 OK
+    W->>DB: syncState=SYNCED
+    W->>OB: удалить операцию
+  else конфликт/ошибка
+    S-->>W: 409 / 5xx
+    W->>DB: разрешить конфликт или syncState=CONFLICT
+    Note over W: backoff и повтор позже
+  end
+          </div>
+          <div class="cap">Оптимистичный апдейт: UI меняется сразу, отправка асинхронна через outbox + WorkManager с ретраями</div>
+          </div>
+
+          <h3>Outbox: очередь исходящих операций</h3>
+          <p>Outbox — это таблица в БД, где каждая запись описывает намерение изменить данные на сервере. Она переживает перезапуск процесса и потерю сети. Воркер «дренирует» очередь, когда появляется соединение.</p>
+          <div class="code-label">Outbox.kt</div>
+<pre><code class="language-kotlin">@Entity(tableName = "outbox")
+data class OutboxOp(
+    @PrimaryKey(autoGenerate = true) val localId: Long = 0,
+    val type: OpType,                 // LIKE, SEND_MESSAGE, UPDATE_PROFILE...
+    val payloadJson: String,
+    val idempotencyKey: String,       // UUID — защита от дублей при ретраях
+    val createdAt: Long,
+    val attempts: Int = 0,
+)
+
+@Dao
+interface OutboxDao {
+    @Insert suspend fun enqueue(op: OutboxOp)
+    @Query("SELECT * FROM outbox ORDER BY createdAt ASC LIMIT 50")
+    suspend fun peek(): List&lt;OutboxOp&gt;
+    @Delete suspend fun ack(op: OutboxOp)
+    @Query("UPDATE outbox SET attempts = attempts + 1 WHERE localId = :id")
+    suspend fun bumpAttempts(id: Long)
+}</code></pre>
+
+          <h3>WorkManager: гарантированная фоновая синхронизация</h3>
+          <p><code>WorkManager</code> — правильный инструмент для отложенной, гарантированной работы: переживает рестарт приложения и перезагрузку устройства, поддерживает constraints (сеть, зарядка), экспоненциальный backoff и уникальные цепочки. Для синхронизации используем именно его, а не <code>CoroutineScope</code> внутри ViewModel.</p>
+          <div class="code-label">SyncWorker.kt</div>
+<pre><code class="language-kotlin">@HiltWorker
+class SyncWorker @AssistedInject constructor(
+    @Assisted ctx: Context,
+    @Assisted params: WorkerParameters,
+    private val outbox: OutboxDao,
+    private val api: SyncApi,
+) : CoroutineWorker(ctx, params) {
+
+    override suspend fun doWork(): Result {
+        val ops = outbox.peek()
+        for (op in ops) {
+            val res = runCatching {
+                api.execute(op.type, op.payloadJson, op.idempotencyKey)
+            }
+            when {
+                res.isSuccess -> outbox.ack(op)               // отправлено
+                op.attempts &gt;= MAX_ATTEMPTS -> outbox.ack(op) // dead-letter, не зацикливаемся
+                else -> { outbox.bumpAttempts(op.localId); return Result.retry() }
+            }
+        }
+        return Result.success()
+    }
+    companion object { const val MAX_ATTEMPTS = 10 }
+}
+
+// планирование с constraints и backoff
+fun scheduleSync(wm: WorkManager) {
+    val req = OneTimeWorkRequestBuilder&lt;SyncWorker&gt;()
+        .setConstraints(Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED).build())
+        .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+        .build()
+    // ExistingWorkPolicy.KEEP — не плодим параллельные синхронизации
+    wm.enqueueUniqueWork("sync", ExistingWorkPolicy.KEEP, req)
+}</code></pre>
+
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Идемпотентность обязательна.</strong> При ретраях запрос может выполниться дважды (сеть упала после того, как сервер уже обработал). Передавай <code>Idempotency-Key</code> (UUID операции) — сервер по нему отбрасывает дубликат. Без этого «двойные лайки» и «два списания» гарантированы.</div>
+          </div>
+
+          <h3>Разрешение конфликтов</h3>
+          <p>Конфликт — когда локальная и серверная версии разошлись (оба изменили запись офлайн). Стратегии по возрастанию сложности:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Стратегия</th><th>Как работает</th><th>Когда применять</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Last-Write-Wins (LWW)</strong></td><td>Побеждает запись с большим timestamp</td><td>Просто, ок для лайков/настроек; теряет данные при гонке</td></tr>
+                <tr><td><strong>Версионирование</strong> (optimistic concurrency)</td><td>Шлём <code>version</code>; сервер отвечает 409, если устарела</td><td>Когда важно не затереть чужие изменения</td></tr>
+                <tr><td><strong>Merge по полям</strong></td><td>Сливаем непересекающиеся изменения</td><td>Профиль, документ — где поля независимы</td></tr>
+                <tr><td><strong>CRDT</strong></td><td>Структуры, сходящиеся без конфликтов</td><td>Совместное редактирование, заметки (сложно)</td></tr>
+                <tr><td><strong>Ручной выбор</strong></td><td>Показываем обе версии пользователю</td><td>Критичные данные, где автослияние опасно</td></tr>
+              </tbody>
+            </table>
+          </div>
+<pre><code class="language-kotlin">// LWW + версионирование: отправляем version, обрабатываем 409
+suspend fun pushUpdate(local: ProductEntity): SyncOutcome {
+    val resp = api.update(
+        id = local.id,
+        body = local.toDto(),
+        ifMatchVersion = local.serverVersion,   // optimistic concurrency
+    )
+    return when (resp.code()) {
+        200 -&gt; SyncOutcome.Synced(resp.body()!!.version)
+        409 -&gt; {                                  // на сервере новее
+            val server = api.get(local.id)
+            // LWW: чей updatedAt больше — тот и побеждает
+            if (local.updatedAt &gt; server.updatedAt) SyncOutcome.Retry
+            else SyncOutcome.OverwrittenByServer(server)  // приняли серверную
+        }
+        else -&gt; SyncOutcome.Retry
+    }
+}</code></pre>
+        </section>
+
+        <section class="section" id="paging">
+          <h2>Пагинация: Paging 3</h2>
+          <p>Бесконечная лента — почти в каждом кейсе. Библиотека <strong>Paging 3</strong> решает подгрузку страниц, состояния загрузки/ошибки, retry и (главное для офлайна) кэширование в БД. Два режима:</p>
+          <ul>
+            <li><strong>PagingSource</strong> — когда источник один (только сеть или только БД).</li>
+            <li><strong>RemoteMediator + PagingSource</strong> — слоистый источник: <code>RemoteMediator</code> тянет страницы из сети в Room, а <code>PagingSource</code> от Room отдаёт их UI. БД — источник истины, сеть дёргается только когда кэш кончился.</li>
+          </ul>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart LR
+  UI["LazyColumn<br/>collectAsLazyPagingItems"] --> PS["PagingSource<br/>(Room)"]
+  PS --> DB[("Room cache")]
+  DB -- "кэш кончился" --> RM["RemoteMediator"]
+  RM --> NET["Network API"]
+  NET --> DB
+  RM -. "пишет nextCursor" .-> RK[("remote_keys")]
+          </div>
+          <div class="cap">Paging 3 со слоистым источником: UI читает из Room, RemoteMediator подгружает сеть в БД при исчерпании кэша</div>
+          </div>
+          <div class="code-label">FeedRemoteMediator.kt</div>
+<pre><code class="language-kotlin">@OptIn(ExperimentalPagingApi::class)
+class FeedRemoteMediator(
+    private val db: AppDatabase,
+    private val api: FeedApi,
+) : RemoteMediator&lt;Int, ProductEntity&gt;() {
+
+    override suspend fun load(
+        loadType: LoadType,
+        state: PagingState&lt;Int, ProductEntity&gt;,
+    ): MediatorResult {
+        val cursor = when (loadType) {
+            LoadType.REFRESH -&gt; null
+            LoadType.PREPEND -&gt; return MediatorResult.Success(endOfPaginationReached = true)
+            LoadType.APPEND -&gt; db.keysDao().get("feed")?.nextCursor
+                ?: return MediatorResult.Success(endOfPaginationReached = true)
+        }
+        return try {
+            val page = api.getFeed(cursor = cursor, limit = 20)
+            db.withTransaction {
+                if (loadType == LoadType.REFRESH) db.feedDao().clear()
+                db.keysDao().upsert(RemoteKey("feed", page.nextCursor))
+                db.feedDao().upsertAll(page.items.map { it.toEntity() })
+            }
+            MediatorResult.Success(endOfPaginationReached = page.nextCursor == null)
+        } catch (e: IOException) {
+            MediatorResult.Error(e)   // Paging покажет состояние ошибки + retry
+        }
+    }
+}
+
+// Сборка Pager: источник истины — Room
+val pager = Pager(
+    config = PagingConfig(pageSize = 20, prefetchDistance = 5),
+    remoteMediator = FeedRemoteMediator(db, api),
+    pagingSourceFactory = { db.feedDao().pagingSource() },
+).flow.cachedIn(viewModelScope)</code></pre>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Почему через Room, а не напрямую из сети?</strong> Тогда лента работает офлайн (отдаём кэш), переживает поворот экрана и убийство процесса, не дёргает сеть на каждый скролл. Это прямое следствие принципа «БД — источник истины».</div>
+          </div>
+        </section>
+
+        <section class="section" id="case">
+          <h2>Разбор кейса: лента маркетплейса</h2>
+          <p>Соберём всё вместе на примере «Спроектируй ленту товаров маркетплейса (как Wildberries)». Показываю, как провести интервьюера по каркасу.</p>
+
+          <h3>1. Требования</h3>
+          <p><strong>Функциональные:</strong> бесконечная лента товаров, карточка (фото, цена, рейтинг), лайк/в избранное, поиск/фильтры, открытие товара. <strong>Нефункциональные:</strong> мгновенный показ кэша при старте (офлайн-доступ к ранее виденному), плавный скролл 60 fps на бюджетных девайсах, экономия трафика на картинках, лайк работает офлайн.</p>
+
+          <h3>2. Пользователи и нагрузка</h3>
+          <p>Десятки миллионов MAU, частые сессии в дороге (нестабильный 4G), много бюджетных Android. Вывод: агрессивное кэширование, курсорная пагинация, варианты картинок под размер, дельта-синхронизация избранного.</p>
+
+          <h3>3. Архитектура</h3>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TB
+  subgraph ui["UI"]
+    FEED["FeedScreen<br/>LazyColumn"]
+    VM["FeedViewModel"]
+  end
+  subgraph data["data"]
+    REPO["FeedRepository"]
+    RM["RemoteMediator"]
+    DB[("Room: products,<br/>favorites, outbox")]
+    IMG["Coil image loader<br/>память + диск"]
+    API["FeedApi (Retrofit)"]
+  end
+  CDN["CDN картинок"]
+  FEED --> VM --> REPO
+  REPO --> RM --> API
+  RM --> DB
+  DB -. Flow .-> VM
+  FEED --> IMG --> CDN
+  REPO --> OUT[("Outbox → WorkManager")]
+          </div>
+          <div class="cap">Лента маркетплейса: Paging через RemoteMediator в Room, картинки через Coil+CDN, избранное через outbox</div>
+          </div>
+
+          <h3>4. Данные и кэш</h3>
+          <p>Таблицы <code>products</code> (кэш ленты + <code>remote_keys</code> для курсора), <code>favorites</code> (с <code>syncState</code>), <code>outbox</code> (операции лайка). Картинки кэширует Coil двухуровнево: LRU в памяти + диск. Лимит дискового кэша ставим явно, чтобы не раздуть приложение.</p>
+
+          <h3>5. Офлайн и крайние случаи</h3>
+          <ul>
+            <li><strong>Старт без сети:</strong> показываем кэш из Room, баннер «оффлайн, данные могут быть неактуальны».</li>
+            <li><strong>Лайк офлайн:</strong> оптимистично в БД + outbox, отправка при появлении сети через WorkManager.</li>
+            <li><strong>Конфликт избранного:</strong> простое LWW — состояние «лайкнуто/нет» не критично, последняя запись побеждает.</li>
+            <li><strong>Цена изменилась на сервере:</strong> при refresh затираем кэш свежими данными (server wins для read-only полей).</li>
+            <li><strong>Процесс убит во время скролла:</strong> Paging восстановит позицию из Room, состояние UI — из <code>SavedStateHandle</code>.</li>
+            <li><strong>Дубли при ретрае лайка:</strong> Idempotency-Key отбрасывает повтор на сервере.</li>
+          </ul>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><strong>Вариант «чат».</strong> Если попросят мессенджер — каркас тот же, но: сообщения тоже идут через outbox со статусами (отправляется → доставлено → прочитано), порядок гарантируем монотонным <code>clientSeq</code>, новые сообщения тянем дельтой/через сокет, конфликтов почти нет (append-only), зато важна идемпотентность отправки и устойчивая очередь.</div>
+          </div>
+        </section>
+
+        <section class="section" id="other-cases">
+          <h2>Другие кейсы кратко</h2>
+
+          <h3>Загрузчик файлов с ретраями</h3>
+          <p>Большие файлы → <strong>chunked upload</strong> (резюмируемая загрузка по частям): храним прогресс и offset загруженных кусков в БД, при обрыве догружаем с места, а не сначала. Сам процесс — <code>WorkManager</code> с foreground-сервисом (длительная работа + уведомление о прогрессе), constraints на сеть, экспоненциальный backoff. Идемпотентность по <code>uploadId</code>, серверная сборка чанков.</p>
+
+          <h3>Кэш изображений</h3>
+          <p>Двухуровневый кэш: <strong>memory (LRU)</strong> для мгновенного повторного показа + <strong>disk</strong> для переживания рестарта. Готовое решение — Coil/Glide, но на собесе проговори устройство: ключ кэша (URL + размер/трансформация), вытеснение по LRU, лимиты размера, downsampling под размер <code>ImageView</code>/Composable (не держать 12 Мп для превью 100×100), уважение HTTP-кэш-заголовков, отмена загрузки при ресайклинге элемента списка.</p>
+          <div class="code-label">ImageCache (схема LRU)</div>
+<pre><code class="language-kotlin">// Идея двухуровневого кэша; в проде — Coil ImageLoader с memory+disk cache
+class ImageCache(maxMemBytes: Int, private val disk: DiskLruCache) {
+    private val memory = object : LruCache&lt;String, Bitmap&gt;(maxMemBytes) {
+        override fun sizeOf(key: String, value: Bitmap) = value.byteCount
+    }
+    suspend fun load(url: String, reqW: Int, reqH: Int): Bitmap {
+        val key = "$url@${reqW}x$reqH"           // размер — часть ключа
+        memory.get(key)?.let { return it }        // L1: память
+        disk.get(key)?.let {                       // L2: диск
+            val bmp = it.decodeSampled(reqW, reqH) // downsampling под размер
+            memory.put(key, bmp); return bmp
+        }
+        return download(url).also {                // L3: сеть → заполняем кэши
+            disk.put(key, it); memory.put(key, decode(it, reqW, reqH))
+        }.let { memory.get(key)!! }
+    }
+}</code></pre>
+
+          <h3>Аналитика и трекинг событий</h3>
+          <p>События нельзя терять и нельзя слать по одному (батарея, трафик). Решение: <strong>буфер в БД</strong> (events table) → <strong>батчинг</strong> по размеру/времени → отправка через <code>WorkManager</code> при сети. Каждое событие с <code>eventId</code> (UUID) для дедупликации на бэкенде, отправленные удаляем после ACK. При переполнении — дроп старых или сэмплирование. По сути это тот же outbox-паттерн, что и для записей.</p>
+        </section>
+
+        <section class="section" id="tradeoffs">
+          <h2>Trade-offs и наблюдаемость</h2>
+          <p>Сильный кандидат сам называет минусы своего решения — это половина оценки. Держи список типовых компромиссов:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Решение</th><th>Плюс</th><th>Минус / цена</th></tr></thead>
+              <tbody>
+                <tr><td>Оптимистичный апдейт</td><td>Мгновенный отклик UI</td><td>Откат и объяснение при ошибке; сложнее логика</td></tr>
+                <tr><td>БД как SSOT (Room)</td><td>Офлайн, консистентность, переживает рестарт</td><td>Доп. слой и миграции; данные могут устареть</td></tr>
+                <tr><td>Last-Write-Wins</td><td>Простота</td><td>Потеря изменений при гонке</td></tr>
+                <tr><td>Агрессивный префетч</td><td>Плавный скролл, нет «дёрганья»</td><td>Лишний трафик и батарея, если не доскроллили</td></tr>
+                <tr><td>WorkManager для синка</td><td>Гарантии, constraints, backoff</td><td>Не realtime; задержка до отправки</td></tr>
+                <tr><td>Server-driven UI</td><td>Меняем UI без релиза</td><td>Сложнее клиент, риск рассинхрона версий</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3>Наблюдаемость: логи, метрики, крэши</h3>
+          <p>Не забудь упомянуть — на проде без этого фича «слепая». Минимум: <strong>крэш-репортинг</strong> (Crashlytics/Sentry), <strong>метрики</strong> (latency загрузки ленты, доля попаданий в кэш, размер outbox, success rate синхронизации), <strong>структурные логи</strong> с корреляцией по requestId, <strong>performance-трейсы</strong> (cold start, jank/dropped frames через JankStats), фичефлаги для безопасной выкатки. Метрика «средний возраст данных в кэше» помогает понять, насколько часто пользователи видят устаревшее.</p>
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>Безопасность не забываем.</strong> Токены — в защищённом хранилище: ключ в <code>Android Keystore</code>, данные в шифрованном DataStore/Tink (не в обычных prefs; <code>EncryptedSharedPreferences</code> уже в maintenance). TLS + опционально certificate pinning. Чувствительные данные не логируем. Кэш на диске для приватных данных — шифруем (SQLCipher). На rooted-устройствах считаем локальное хранилище потенциально скомпрометированным.</div>
+          </div>
+        </section>
+
+        <section class="section" id="video">
+          <h2>Видео-разбор</h2>
+                    <a class="ytcard" href="https://youtu.be/GFFFdIvfJgM?t=90" target="_blank" rel="noopener">
+            <span class="yt-thumb" style="background-image:url('https://img.youtube.com/vi/GFFFdIvfJgM/hqdefault.jpg')">
+              <span class="yt-play"></span>
+              <span class="yt-time">▶ с 1:30</span>
+            </span>
+            <span class="yt-meta">
+              <strong>Design Instagram Feed — Mobile System Design</strong>
+              <span class="yt-by">Alexey Glukharev · EN</span>
+              <span class="yt-why">С <b>1:30</b> — фреймворк ответа и разбор ленты: пагинация и кэш.</span>
+            </span>
+          </a>
+        </section>
+
+        <section class="section" id="faq">
+          <h2>Частые вопросы интервьюера</h2>
+
+          <details class="qa">
+            <summary>С чего ты начнёшь проектирование? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Не с экранов и не с кода. Сначала <strong>уточняю требования</strong> (функциональные + нефункциональные) и ограничения: офлайн нужен? сколько данных? какая сеть и устройства? Затем фиксирую scope (что НЕ делаем), и только потом рисую высокоуровневую архитектуру слоёв. В mobile нефункциональные требования — офлайн, latency, батарея, трафик — определяют дизайн сильнее самих фич, поэтому я проговариваю их явно и веду диалог, а не монолог.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Что такое offline-first и как его реализовать? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Это подход, где <strong>локальная БД — источник истины</strong>, а сеть — слой оптимизации, не обязательное условие. UI читает только из БД (через <code>Flow</code>), поэтому работает без интернета. Записи идут оптимистично: сразу в БД + в <strong>outbox</strong> (долговечную очередь). Фоновый <code>WorkManager</code> с constraints дренирует outbox и подтягивает изменения дельтой. Конфликты разрешаем по стратегии (LWW/версии/merge). Обязательна идемпотентность операций (Idempotency-Key) — иначе ретраи продублируют действия.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Зачем outbox, если можно просто повторить запрос корутиной? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Корутина в <code>ViewModel</code> умрёт вместе с экраном/процессом — операция потеряется. Outbox — это запись в БД, она переживает убийство процесса, перезагрузку устройства и долгое отсутствие сети. <code>WorkManager</code> гарантированно вернётся к ней позже, с backoff и constraints. То есть outbox даёт <strong>долговечность и гарантию доставки</strong>, чего сырая корутина не обеспечивает. Это классический паттерн «надёжная очередь исходящих операций».</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как разрешать конфликты при синхронизации? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Зависит от данных. Для некритичных (лайк, настройка) — <strong>Last-Write-Wins</strong> по timestamp, просто и дёшево. Где важно не затереть чужое — <strong>optimistic concurrency</strong>: шлём <code>version</code>, сервер отвечает 409 при устаревании, мы перечитываем и решаем. Для независимых полей (профиль) — <strong>merge</strong>. Для совместного редактирования — <strong>CRDT</strong> или ручной выбор пользователем. Главное — проговорить, что LWW теряет данные при гонке, и выбрать стратегию под бизнес-критичность поля.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Почему ленту кэшируешь в БД, а не грузишь из сети напрямую? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Чтобы лента работала офлайн, переживала поворот экрана и убийство процесса, и не дёргала сеть на каждый скролл. Связка <strong>Paging 3 + RemoteMediator + Room</strong>: <code>RemoteMediator</code> тянет страницы из сети в Room, <code>PagingSource</code> от Room отдаёт их UI. БД — источник истины, сеть дёргается только когда кэш исчерпан. Минус — данные могут устареть, поэтому делаем pull-to-refresh и показываем «возраст» данных.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Чем оптимистичный апдейт лучше пессимистичного и какова его цена? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Оптимистичный (сразу меняем UI/БД, отправляем в фоне) даёт мгновенный отклик — критично для лайков, корзины, сообщений. Пессимистичный (ждём ответ сервера, потом меняем) ощущается медленным на плохой сети. Цена оптимизма — нужно корректно <strong>откатывать</strong> изменение при провале и объяснять пользователю, плюс сложнее логика состояний и обязательна идемпотентность. Для финансовых операций иногда осознанно выбирают пессимистичный путь ради корректности.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как спроектировать надёжный загрузчик больших файлов? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Резюмируемая загрузка по частям (<strong>chunked / resumable upload</strong>): храню в БД offset и статусы загруженных кусков, при обрыве догружаю с места, а не сначала. Запускаю через <code>WorkManager</code> с <strong>foreground</strong>-сервисом (длительная работа + уведомление прогресса), constraints на сеть (можно «только Wi-Fi»), экспоненциальный backoff. Идемпотентность по <code>uploadId</code>, сборка чанков на сервере, проверка контрольной суммы. Так загрузка переживает потерю сети, рестарт приложения и не начинается заново.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Какие нефункциональные требования специфичны для mobile? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>Главные: <strong>офлайн-доступность</strong> и поведение на нестабильной сети; <strong>энергопотребление</strong> (не будить устройство зря, батчить сеть); <strong>экономия трафика</strong> (дельта-синхронизация, сжатие, варианты картинок); <strong>производительность UI</strong> (60+ fps на бюджетных девайсах, отсутствие jank); <strong>размер приложения и кэша</strong>; устойчивость к <strong>убийству процесса</strong> ОС и восстановление состояния. Это всё то, чего нет в backend-дизайне и что отличает mobile-секцию.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как не потерять аналитические события? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Тот же outbox-паттерн: пишу события в таблицу БД, <strong>батчу</strong> по размеру/времени и отправляю через <code>WorkManager</code> при наличии сети, удаляю после ACK. Каждому событию — <code>eventId</code> (UUID) для дедупликации на бэкенде (ретраи не задвоят метрики). При переполнении буфера — дроп старых или сэмплирование. Отправлять по одному событию нельзя — это бьёт по батарее и трафику.</p></div>
+          </details>
+
+        </section>
+
+        <div class="sources">
+          <h2>Источники</h2>
+          <ol>
+            <li><a href="https://developer.android.com/topic/architecture/data-layer/offline-first" target="_blank" rel="noopener">Build an offline-first app — Android Developers</a> — официальное руководство: БД как SSOT, синхронизация, WorkManager.</li>
+            <li><a href="https://developer.android.com/topic/libraries/architecture/paging/v3-network-db" target="_blank" rel="noopener">Page from network and database — Android Developers</a> — Paging 3 с RemoteMediator и Room для офлайн-кэша.</li>
+            <li><a href="https://developer.android.com/topic/architecture" target="_blank" rel="noopener">Guide to app architecture — Android Developers</a> — слои UI/domain/data и однонаправленный поток данных.</li>
+            <li><a href="https://developer.android.com/develop/background-work/services/workmanager" target="_blank" rel="noopener">WorkManager — Android Developers</a> — гарантированная фоновая работа, constraints, backoff.</li>
+            <li><a href="https://proandroiddev.com/a-simple-framework-for-mobile-system-design-interviews-89f6f4134b84" target="_blank" rel="noopener">A Simple Framework For Mobile System Design Interviews — ProAndroidDev</a> — практичный каркас ответа.</li>
+            <li><a href="https://newsletter.systemdesign.one/p/mobile-system-design-interview" target="_blank" rel="noopener">The Mobile Engineer's Guide to System Design Interviews</a> — обзор формата и mobile-специфики.</li>
+            <li><a href="https://www.droidcon.com/2025/12/16/the-complete-guide-to-offline-first-architecture-in-android/" target="_blank" rel="noopener">The Complete Guide to Offline-First Architecture in Android — droidcon</a> — outbox, идемпотентность, конфликты.</li>
+            <li><a href="https://www.youtube.com/watch?v=GFFFdIvfJgM" target="_blank" rel="noopener">Design Instagram Feed or TikTok — Mobile System Design (видео)</a> — разбор кейса ленты на интервью.</li>
+          </ol>
+        </div>
+      </article>
+    </div>
+    <aside id="toc"></aside>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="../assets/app.js?v=20260620-2"></script>
+</body>
+</html>

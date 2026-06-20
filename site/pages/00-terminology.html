@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    (() => {
+      const key = "aip-theme";
+      let theme = null;
+      try { theme = localStorage.getItem(key); } catch(e) {}
+      if (theme !== "dark" && theme !== "light") {
+        theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <title>Терминология инженера · Android-собес</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+</head>
+<body data-page="terminology">
+  <div class="layout">
+    <aside id="sidebar"></aside>
+    <div id="content">
+      <article class="page">
+        <div class="breadcrumb"></div>
+        <header class="page-head">
+          <span class="eyebrow">Справочник · Терминология</span>
+          <h1>Терминология инженера</h1>
+          <p class="lead">Мини-словарь слов, которые часто звучат на техническом собеседовании. Для каждого термина — короткое точное определение и формулировка «как сказать вслух», чтобы звучать уверенно и по делу. Это сквозной справочник ко всем темам сайта.</p>
+          <div class="meta">
+            <span class="tag lvl-mid">Базовый словарь</span>
+            <span class="tag lvl-sen">50+ терминов</span>
+          </div>
+        </header>
+
+        <section class="section" id="how">
+          <h2>Как пользоваться</h2>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Не зубри определения — умей объяснить своими словами на примере.</strong> Интервьюер ценит, когда термин подкреплён кодом или ситуацией из твоего опыта. Колонка «как сказать на интервью» — это готовая короткая формулировка, которую можно адаптировать.</div>
+          </div>
+          <p>Термины сгруппированы по областям: <a href="#design">проектирование и ООП</a>, <a href="#kotlin">язык Kotlin и JVM</a>, <a href="#concurrency">конкурентность</a>, <a href="#perf">производительность и данные</a>, <a href="#netsec">сеть и безопасность</a>.</p>
+        </section>
+
+        <section class="section" id="design">
+          <h2>Проектирование и ООП</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Термин</th><th>Что означает (точно)</th><th>Как сказать на интервью</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Абстракция</strong></td><td>Модель, описывающая только существенные свойства объекта и скрывающая детали реализации.</td><td>«<code>Repository</code> говорит "дай профиль", не уточняя — это Retrofit или Room».</td></tr>
+                <tr><td><strong>Реализация</strong></td><td>Конкретный код, выполняющий обещания абстракции (интерфейса).</td><td>«<code>NetworkProfileRepository</code> реализует контракт <code>ProfileRepository</code>».</td></tr>
+                <tr><td><strong>Контракт</strong></td><td>Обещание типа/метода: что принимает, что возвращает, какие ошибки и побочные эффекты допустимы.</td><td>«<code>StateFlow</code> наружу — контракт чтения; методы ViewModel — контракт изменения состояния».</td></tr>
+                <tr><td><strong>Инвариант</strong></td><td>Условие, которое остаётся истинным до и после любой публичной операции над объектом.</td><td>«Баланс не уходит в минус; <code>state</code> всегда валиден — это инвариант».</td></tr>
+                <tr><td><strong>Эвристика</strong></td><td>Практическое правило, основанное на опыте, а не на формальном доказательстве.</td><td>«SOLID — это эвристики снижения связанности, а не математические законы».</td></tr>
+                <tr><td><strong>Связанность (coupling)</strong></td><td>Степень, в которой один модуль зависит от деталей другого. Цель — <em>низкая</em>.</td><td>«Зависим от интерфейса, а не от конкретного класса — это снижает coupling».</td></tr>
+                <tr><td><strong>Сплочённость (cohesion)</strong></td><td>Насколько элементы внутри модуля служат одной задаче. Цель — <em>высокая</em>.</td><td>«ViewModel оркеструет UI-state, а не парсит JSON — высокая cohesion».</td></tr>
+                <tr><td><strong>is-a</strong></td><td>Отношение «является разновидностью» — основа наследования.</td><td>«<code>CardPayment</code> is-a <code>PaymentMethod</code> — подставим везде, где ждут способ оплаты».</td></tr>
+                <tr><td><strong>has-a</strong></td><td>Отношение «имеет/использует» — основа композиции.</td><td>«ViewModel has-a UseCase, UseCase has-a Repository».</td></tr>
+                <tr><td><strong>can-do</strong></td><td>Отношение роли/способности — реализация интерфейса.</td><td>«<code>Logger</code> — это способность логировать, а не базовый класс».</td></tr>
+                <tr><td><strong>Полиморфизм</strong></td><td>Один и тот же вызов работает с разными типами или сигнатурами.</td><td>«Динамический — через <code>override</code>; статический — перегрузка и дженерики».</td></tr>
+                <tr><td><strong>Инкапсуляция</strong></td><td>Объединение состояния и поведения с контролем доступа ради сохранения инвариантов.</td><td>«<code>private</code>-поле + публичный метод, который проверяет правила изменения».</td></tr>
+                <tr><td><strong>Dependency Injection (DI)</strong></td><td>Зависимость передаётся объекту снаружи, а не создаётся внутри.</td><td>«<code>Repository</code> приходит в конструктор VM, а не <code>new Retrofit()</code> внутри».</td></tr>
+                <tr><td><strong>Inversion of Control (IoC)</strong></td><td>Управление потоком выполнения отдано фреймворку/контейнеру, а не пишется вручную.</td><td>«Android сам вызывает lifecycle-методы; Hilt сам собирает граф зависимостей».</td></tr>
+                <tr><td><strong>Boilerplate</strong></td><td>Шаблонный повторяющийся код без бизнес-смысла.</td><td>«<code>findViewById</code>, ручные фабрики — убираем кодогенерацией/DI».</td></tr>
+                <tr><td><strong>Побочный эффект (side effect)</strong></td><td>Изменение состояния за пределами возвращаемого значения: I/O, запись, лог, навигация.</td><td>«В Compose эффекты выносим в <code>LaunchedEffect</code>/<code>DisposableEffect</code>».</td></tr>
+                <tr><td><strong>Чистая функция (pure function)</strong></td><td>Результат зависит только от аргументов, без побочных эффектов.</td><td>«Чистую функцию легко тестировать и кэшировать — нет скрытого состояния».</td></tr>
+                <tr><td><strong>Идемпотентность</strong></td><td>Повторный вызов операции даёт тот же результат, что и однократный.</td><td>«<code>PUT</code>/<code>DELETE</code> идемпотентны; повтор запроса при ретрае безопасен».</td></tr>
+                <tr><td><strong>GoF</strong></td><td>Gang of Four — авторы книги «Design Patterns»; так называют 23 классических паттерна.</td><td>«Builder, Factory, Observer, Adapter, Strategy — это GoF-паттерны».</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section" id="kotlin">
+          <h2>Язык Kotlin и JVM</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Термин</th><th>Что означает (точно)</th><th>Как сказать на интервью</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Стирание типов (type erasure)</strong></td><td>На JVM параметры дженериков недоступны в рантайме — компилятор стирает их после проверки.</td><td>«Поэтому нельзя <code>is T</code> без <code>reified</code> — тип в рантайме неизвестен».</td></tr>
+                <tr><td><strong>reified</strong></td><td>Параметр типа <code>inline</code>-функции, доступный в рантайме (тип подставляется в место вызова).</td><td>«<code>inline fun &lt;reified T&gt;</code> позволяет <code>T::class</code> и <code>is T</code>».</td></tr>
+                <tr><td><strong>Платформенный тип (<code>T!</code>)</strong></td><td>Тип из Java без аннотаций nullability — Kotlin не знает, может ли он быть <code>null</code>.</td><td>«Источник внезапных NPE на границе с Java — лучше принимать как <code>T?</code>».</td></tr>
+                <tr><td><strong>Неизменяемость (immutability)</strong></td><td>Объект не меняет состояние после создания.</td><td>«<code>val</code>, <code>data class</code> + <code>copy()</code>, <code>List</code> вместо <code>MutableList</code>».</td></tr>
+                <tr><td><strong>== vs ===</strong></td><td>Структурное равенство (через <code>equals</code>) против ссылочного (тот же объект в памяти).</td><td>«У <code>data class</code> <code>==</code> сравнивает поля; <code>===</code> — идентичность ссылки».</td></tr>
+                <tr><td><strong>Контракт equals/hashCode</strong></td><td>Если <code>a == b</code>, то <code>a.hashCode() == b.hashCode()</code>.</td><td>«Иначе ломается поиск в <code>HashMap</code>/<code>HashSet</code>».</td></tr>
+                <tr><td><strong>Боксинг (boxing)</strong></td><td>Оборачивание примитива в объект (<code>int</code> → <code>Integer</code>).</td><td>«Дженерики и nullable-примитивы вызывают боксинг — лишние аллокации».</td></tr>
+                <tr><td><strong>Ленивая инициализация</strong></td><td>Значение вычисляется при первом обращении и кэшируется.</td><td>«<code>by lazy</code> — для дорогого <code>val</code>, вычисляемого один раз».</td></tr>
+                <tr><td><strong>Higher-order function</strong></td><td>Функция, принимающая или возвращающая функцию.</td><td>«<code>map</code>/<code>filter</code>; делаем <code>inline</code>, чтобы лямбда не аллоцировалась».</td></tr>
+                <tr><td><strong>suspend / Continuation</strong></td><td><code>suspend</code>-функция компилируется в стейт-машину; <code>Continuation</code> — колбэк продолжения.</td><td>«Корутина приостанавливается, не блокируя поток — на этом стоит весь async».</td></tr>
+                <tr><td><strong>Делегирование (<code>by</code>)</strong></td><td>Передача реализации интерфейса/свойства другому объекту.</td><td>«<code>class A(b: B) : I by b</code> — композиция без наследования».</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section" id="concurrency">
+          <h2>Конкурентность и многопоточность</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Термин</th><th>Что означает (точно)</th><th>Как сказать на интервью</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Гонка (race condition)</strong></td><td>Результат зависит от непредсказуемого порядка выполнения потоков.</td><td>«Два потока инкрементят счётчик без синхронизации — часть инкрементов теряется».</td></tr>
+                <tr><td><strong>Атомарность</strong></td><td>Операция выполняется целиком и неделимо для других потоков.</td><td>«<code>AtomicInteger.incrementAndGet()</code> — атомарно, без блокировки».</td></tr>
+                <tr><td><strong>CAS (Compare-And-Swap)</strong></td><td>Атомарно заменить значение, только если оно равно ожидаемому.</td><td>«Основа lock-free структур и атомиков; в цикле повторяет до успеха».</td></tr>
+                <tr><td><strong>ABA-проблема</strong></td><td>Значение сменилось A→B→A, и CAS «не заметил» промежуточного изменения.</td><td>«Лечится версией/штампом — <code>AtomicStampedReference</code>».</td></tr>
+                <tr><td><strong>Thread-safety</strong></td><td>Корректная работа при одновременном доступе из нескольких потоков.</td><td>«<code>ConcurrentHashMap</code> потокобезопасна, обычная <code>HashMap</code> — нет».</td></tr>
+                <tr><td><strong>volatile</strong></td><td>Гарантирует видимость изменений переменной между потоками (но не атомарность).</td><td>«Видимость — да, <code>i++</code> атомарным не делает».</td></tr>
+                <tr><td><strong>happens-before</strong></td><td>Гарантия, что изменения одного потока видны другому в определённом порядке.</td><td>«<code>synchronized</code>/<code>volatile</code> устанавливают happens-before».</td></tr>
+                <tr><td><strong>Deadlock</strong></td><td>Взаимная блокировка: потоки бесконечно ждут ресурсы друг друга.</td><td>«Избегаем единым порядком захвата локов».</td></tr>
+                <tr><td><strong>Structured concurrency</strong></td><td>Дочерние корутины живут в рамках scope родителя; отмена и ошибки распространяются по иерархии.</td><td>«<code>coroutineScope</code>, <code>Job</code>/<code>SupervisorJob</code> — ничего не "утекает"».</td></tr>
+                <tr><td><strong>Backpressure</strong></td><td>Потребитель не успевает обрабатывать поток данных от производителя.</td><td>«В <code>Flow</code> — <code>buffer</code>/<code>conflate</code>/<code>collectLatest</code>».</td></tr>
+                <tr><td><strong>Мемоизация</strong></td><td>Кэширование результата по входу или позиции, чтобы не пересчитывать.</td><td>«<code>remember</code> в Compose, <code>by lazy</code> — это мемоизация».</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section" id="perf">
+          <h2>Производительность и данные</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Термин</th><th>Что означает (точно)</th><th>Как сказать на интервью</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Latency vs Throughput</strong></td><td>Задержка одного запроса против объёма запросов за единицу времени.</td><td>«UX чувствует latency; throughput — про нагрузку и пропускную способность».</td></tr>
+                <tr><td><strong>Cold / warm / hot start</strong></td><td>Степень «прогретости» процесса при запуске приложения.</td><td>«Baseline Profiles ускоряют именно cold start».</td></tr>
+                <tr><td><strong>Jank</strong></td><td>Пропущенные кадры, рывки UI; бюджет кадра ≈ 16 мс (60 Гц).</td><td>«Тяжёлая работа на main thread → jank; выносим в фон».</td></tr>
+                <tr><td><strong>Утечка памяти (memory leak)</strong></td><td>Объект не освобождается GC, потому что на него остаётся ссылка.</td><td>«<code>Activity</code> в статическом поле; ловим LeakCanary по leak trace».</td></tr>
+                <tr><td><strong>GC (сборщик мусора)</strong></td><td>Автоматически освобождает память недостижимых объектов.</td><td>«Частые аллокации → давление на GC → паузы и jank».</td></tr>
+                <tr><td><strong>Single source of truth (SSOT)</strong></td><td>Единственный авторитетный источник данных, от которого зависит UI.</td><td>«БД (Room) — источник истины; UI читает из неё через <code>Flow</code>».</td></tr>
+                <tr><td><strong>Offline-first</strong></td><td>Приложение работает без сети и синхронизируется при её появлении.</td><td>«Пишем в БД + outbox, синхронизируем фоном через WorkManager».</td></tr>
+                <tr><td><strong>Пагинация</strong></td><td>Подгрузка данных порциями вместо одного большого ответа.</td><td>«Paging 3; курсорная пагинация стабильнее offset при вставках».</td></tr>
+                <tr><td><strong>Debounce / Throttle</strong></td><td>Подавление частых событий: дождаться паузы / ограничить частоту.</td><td>«Поиск по вводу — debounce; обновление скролла — throttle».</td></tr>
+                <tr><td><strong>Кэш hit/miss</strong></td><td>Попадание/промах при обращении к кэшу.</td><td>«Метрика cache hit rate показывает эффективность кэша».</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section" id="netsec">
+          <h2>Сеть и безопасность</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Термин</th><th>Что означает (точно)</th><th>Как сказать на интервью</th></tr></thead>
+              <tbody>
+                <tr><td><strong>TLS handshake</strong></td><td>Согласование ключей и проверка сертификата сервера перед шифрованным обменом.</td><td>«Асимметрия — чтобы договориться о ключе, дальше быстрый симметричный обмен».</td></tr>
+                <tr><td><strong>Симметричное vs асимметричное шифрование</strong></td><td>Один общий ключ против пары открытый/закрытый.</td><td>«AES (симм) быстр для данных; RSA/EC (асимм) — для обмена ключом/подписи».</td></tr>
+                <tr><td><strong>Certificate / public-key pinning</strong></td><td>Доверяем только заранее зафиксированному сертификату или ключу сервера.</td><td>«Защита от подменённого CA и MITM-атаки».</td></tr>
+                <tr><td><strong>mTLS</strong></td><td>Взаимный TLS: сертификатом подтверждается и сервер, и клиент.</td><td>«Нужен, когда сервер должен доверять конкретному клиенту».</td></tr>
+                <tr><td><strong>Хеш</strong></td><td>Необратимая свёртка данных фиксированной длины.</td><td>«SHA-256; пароли — только с солью и медленным KDF».</td></tr>
+                <tr><td><strong>HMAC</strong></td><td>Хеш с секретным ключом — подтверждает целостность и подлинность.</td><td>«Проверяем, что сообщение не подменили и прислал тот, кто знает ключ».</td></tr>
+                <tr><td><strong>Token (JWT)</strong></td><td>Подтверждение аутентификации/доступа, часто подписанный JSON.</td><td>«Храним в защищённом хранилище с ключом из Keystore, не в обычных prefs».</td></tr>
+                <tr><td><strong>Android Keystore</strong></td><td>Аппаратное хранилище ключей (TEE/StrongBox); ключ не покидает устройство.</td><td>«Шифруем данные ключом, который физически нельзя извлечь».</td></tr>
+                <tr><td><strong>Обфускация</strong></td><td>Запутывание имён/структуры кода, чтобы усложнить реверс-инжиниринг.</td><td>«R8/ProGuard переименовывают классы и удаляют мёртвый код».</td></tr>
+                <tr><td><strong>MITM (man-in-the-middle)</strong></td><td>Атака, где злоумышленник встаёт между клиентом и сервером и читает/подменяет трафик.</td><td>«Защита — HTTPS + certificate pinning».</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="section" id="use">
+          <h2>Как звучать уверенно</h2>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><strong>Связывай термин с практикой.</strong> Вместо «инкапсуляция — это сокрытие данных» скажи: «инкапсуляция — объект сам отвечает за правила изменения состояния; например, <code>MutableStateFlow</code> приватный, наружу — только <code>StateFlow</code> для чтения». Конкретика отличает Middle+/Senior от заучивания.</div>
+          </div>
+        </section>
+
+        <div class="sources">
+          <h2>Источники</h2>
+          <ol>
+            <li><a href="https://developer.android.com/topic/architecture" target="_blank" rel="noopener">Android Developers — Guide to app architecture</a> — SSOT, UDF, слои.</li>
+            <li><a href="https://kotlinlang.org/docs/home.html" target="_blank" rel="noopener">Kotlin Docs</a> — null-safety, дженерики, корутины, делегаты.</li>
+            <li><a href="https://kotlinlang.org/docs/shared-mutable-state-and-concurrency.html" target="_blank" rel="noopener">Kotlin — Shared mutable state and concurrency</a> — атомарность, CAS, гонки.</li>
+            <li><a href="https://refactoring.guru/design-patterns" target="_blank" rel="noopener">Refactoring.Guru — Design Patterns</a> — GoF-паттерны и принципы.</li>
+            <li><a href="https://developer.android.com/training/articles/security-tips" target="_blank" rel="noopener">Android Developers — Security tips</a> — Keystore, TLS, хранение секретов.</li>
+          </ol>
+        </div>
+      </article>
+    </div>
+    <aside id="toc"></aside>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    (() => {
+      const key = "aip-theme";
+      let theme = null;
+      try { theme = localStorage.getItem(key); } catch(e) {}
+      if (theme !== "dark" && theme !== "light") {
+        theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <title>Профилирование и оптимизация · Android-собес</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+</head>
+<body data-page="profiling">
+  <div class="layout">
+    <aside id="sidebar"></aside>
+    <div id="content">
+      <article class="page">
+        <div class="breadcrumb"></div>
+        <header class="page-head">
+          <span class="eyebrow">Тема 11 · Безопасность и качество</span>
+          <h1>Профилирование и оптимизация</h1>
+          <p class="lead">Чем смотреть, что измерять и как чинить: утечки памяти, медленный старт, jank-кадры (рывки отрисовки) и раздутый APK (Android Package — установочный пакет приложения). На собесе ждут не названия инструментов, а инженерный цикл «измерил → нашёл причину → исправил → подтвердил метрикой».</p>
+          <div class="meta">
+            <span class="tag lvl-mid">Middle</span>
+            <span class="tag lvl-sen">Senior</span>
+            <span class="tag hot">Частый вопрос</span>
+          </div>
+        </header>
+
+        <section class="section" id="tools">
+          <h2>Инструменты: что чем смотреть</h2>
+          <p>Ключ к ответу — соответствие «симптом → инструмент». Держи эту таблицу в голове.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Инструмент</th><th>Что показывает</th><th>Когда применять</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Android Studio Profiler</strong> (CPU)</td><td>Трейс методов, flame chart, system trace, callstacks по потокам</td><td>«Где тратится время», hot-методы, блокировки main thread</td></tr>
+                <tr><td><strong>Profiler — Memory</strong></td><td>График памяти, аллокации, heap dump, частота GC</td><td>Рост памяти, OOM, поиск удержанных объектов</td></tr>
+                <tr><td><strong>Profiler — Network</strong></td><td>Запросы/ответы, тайминги, размер payload</td><td>Лишние/дублирующие запросы, тяжёлый трафик</td></tr>
+                <tr><td><strong>Profiler — Energy</strong></td><td>Wakelock, alarm, location, расход по подсистемам</td><td>Разряд батареи, фоновые «будильники»</td></tr>
+                <tr><td><strong>Layout Inspector</strong></td><td>Дерево View/Compose, recomposition &amp; skip counts</td><td>Лишние перекомпозиции, глубокая иерархия</td></tr>
+                <tr><td><strong>Perfetto / system trace</strong></td><td>Системный трейс: потоки, Choreographer, FrameTimeline, биндеры</td><td>Jank, frozen frames, что делает система «между кадрами»</td></tr>
+                <tr><td><strong>LeakCanary</strong></td><td>Автодетект утечек, leak trace от GC root к объекту</td><td>Утечки Activity/Fragment/View в debug</td></tr>
+                <tr><td><strong>Macrobenchmark</strong></td><td>Startup (cold/warm/hot), скролл, frame timing — на release</td><td>Регрессии в CI, эффект Baseline Profiles</td></tr>
+                <tr><td><strong>Microbenchmark</strong></td><td>Время отдельного куска кода (наносекунды), warmup, отсев JIT</td><td>Сравнить две реализации алгоритма/парсера</td></tr>
+                <tr><td><strong>StrictMode</strong></td><td>Disk/Network на main thread, утечки Closeable, leaked Activity</td><td>Ловить «грехи» в dev-сборке как можно раньше</td></tr>
+                <tr><td><strong>APK Analyzer</strong></td><td>Состав APK/AAB: dex, ресурсы, нативные либы, diff сборок</td><td>«Что раздувает размер», рост между релизами</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Profiler vs Benchmark.</strong> Профайлер — <em>интерактивный</em> поиск причины («почему медленно»). Бенчмарк — <em>воспроизводимая цифра</em> для регрессий в CI («стало ли медленнее на N мс»). На собесе подчеркни: Macrobenchmark гоняем на <strong>release/profileable</strong>-сборке, debug-замеры бессмысленны.</div>
+          </div>
+          <h3>StrictMode — дешёвый ранний детектор</h3>
+          <div class="code-label">App.kt</div>
+<pre><code class="language-kotlin">class App : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        if (BuildConfig.DEBUG) {
+            StrictMode.setThreadPolicy(
+                StrictMode.ThreadPolicy.Builder()
+                    .detectDiskReads().detectDiskWrites()
+                    .detectNetwork()            // I/O на main thread
+                    .penaltyLog()               // в проде — никогда не penaltyDeath()
+                    .build()
+            )
+            StrictMode.setVmPolicy(
+                StrictMode.VmPolicy.Builder()
+                    .detectLeakedClosableObjects()  // незакрытые Cursor/Stream
+                    .detectActivityLeaks()
+                    .penaltyLog()
+                    .build()
+            )
+        }
+    }
+}</code></pre>
+        </section>
+
+        <section class="section" id="memory">
+          <h2>Память: утечки, GC и heap dump</h2>
+          <p>Утечка в JVM/ART — это объект, который <strong>больше не нужен, но удерживается живой ссылкой</strong> от GC root, поэтому сборщик мусора не может его освободить. На Android самый дорогой «лист» такой цепочки — <code>Activity</code>/<code>Fragment</code>/<code>View</code>: они тянут за собой весь UI-граф и порой десятки мегабайт. Накопление → рост памяти → паузы GC → в пределе <code>OutOfMemoryError</code>.</p>
+          <h3>Типичные источники утечек</h3>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Антипаттерн</th><th>Почему течёт</th><th>Как чинить</th></tr></thead>
+              <tbody>
+                <tr><td><code>Context</code>/<code>Activity</code> в <code>static</code> / <code>companion object</code></td><td>Статика живёт всё время процесса и держит Activity после <code>onDestroy()</code></td><td>Хранить <code>applicationContext</code> или вообще не хранить</td></tr>
+                <tr><td>Не отписанный listener / callback</td><td>Внешний объект держит ссылку на слушателя, привязанного к экрану</td><td>Снимать в <code>onStop/onDestroyView</code>; lifecycle-aware</td></tr>
+                <tr><td>Корутина без скоупа экрана</td><td><code>GlobalScope</code> переживает экран и удерживает захваченный <code>this</code></td><td><code>viewModelScope</code> / <code>lifecycleScope</code></td></tr>
+                <tr><td>Нестатический inner-класс / анонимный <code>Handler</code>, <code>Runnable</code></td><td>Неявно держит ссылку на внешнюю Activity</td><td>static + <code>WeakReference</code>, снимать callbacks</td></tr>
+                <tr><td>Долгоживущий синглтон с <code>View</code>/<code>Context</code></td><td>DI-синглтон удерживает ссылку на UI</td><td>Передавать данные, не View; чистить ссылку</td></tr>
+                <tr><td>Незакрытые <code>Cursor</code>/<code>InputStream</code>/<code>Bitmap</code></td><td>Нативная память и дескрипторы не освобождаются</td><td><code>use { }</code>, <code>recycle()</code> для старых bitmap</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="code-label">LeakSamples.kt</div>
+<pre><code class="language-kotlin">// ❌ классика: Activity утекает в статическое поле
+object Cache { var ctx: Context? = null }          // держит Activity навсегда
+class BadActivity : AppCompatActivity() {
+    override fun onCreate(b: Bundle?) { super.onCreate(b); Cache.ctx = this }
+}
+
+// ✅ если нужен Context в синглтоне — только applicationContext
+object Cache2 { lateinit var app: Context }         // app-контекст живёт = процесс
+class OkActivity : AppCompatActivity() {
+    override fun onCreate(b: Bundle?) { super.onCreate(b); Cache2.app = applicationContext }
+}
+
+// ❌ корутина переживает экран
+GlobalScope.launch { repo.poll() }                  // захватывает this@Fragment
+
+// ✅ привязана к жизненному циклу — отменится в onCleared()/onDestroy()
+viewModelScope.launch { repo.poll() }</code></pre>
+          <h3>Как искать: LeakCanary → leak trace</h3>
+          <p>LeakCanary ставит «сторож» (<code>ObjectWatcher</code>) на объекты, которые обязаны умереть (Activity после <code>onDestroy</code>, Fragment-view, ViewModel). Если объект жив спустя задержку и принудительный GC, число удержанных объектов превышает порог — LeakCanary <strong>снимает heap dump (.hprof)</strong>, парсит его движком <strong>Shark</strong> и для каждого удержанного объекта строит <strong>кратчайший путь сильных ссылок от GC root</strong> — это и есть leak trace. В трейсе подсвечена подозрительная ссылка (<code>~~~</code>), с которой и начинается фикс.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart LR
+  GC["GC Root (static / thread / JNI)"] --> S["Cache.ctx : static field"]
+  S --> A["DetailActivity (LEAKING)"]
+  A --> V["DecorView"]
+  V --> BMP["Bitmap ~12 MB (нативная память)"]
+  classDef leak fill:#3a1d1d,stroke:#e06,stroke-width:2px,color:#fff;
+  class A leak
+          </div>
+          <div class="cap">Leak trace: цепочка сильных ссылок от GC root к утекшей Activity. Рвём слабое звено — static-ссылку</div>
+          </div>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>WeakReference — не серебряная пуля.</strong> Слабая ссылка не мешает GC собрать объект, но если по цепочке есть хоть одна сильная ссылка — утечка останется. <code>WeakReference</code> уместна для кэшей и callback-ов на UI, но не «затыкает» архитектурную проблему удержания.</div>
+          </div>
+          <h3>Память bitmap и heap dump вручную</h3>
+          <p>С Android 8.0 пиксели bitmap живут в <strong>нативной</strong> куче (вне Java-heap), но всё равно учитываются как память процесса — большие незакрытые/непереиспользуемые bitmap быстро приводят к OOM. В Profiler делаем <strong>Capture heap dump</strong>: смотрим вкладку <em>Apps Heap</em>, сортируем по <em>Retained Size</em>, ищем дубли Activity (счётчик &gt; 1 после ротаций — почти всегда утечка) и крупные массивы байт.</p>
+        </section>
+
+        <section class="section" id="startup">
+          <h2>Старт приложения: cold / warm / hot</h2>
+          <p>Метрика, которую видит пользователь и Play Store (Android Vitals). Различают три сценария по тому, сколько работы уже сделано.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Тип</th><th>Состояние процесса</th><th>Что делается</th><th>Цена</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Cold</strong></td><td>Процесса нет</td><td>Fork zygote → <code>Application.onCreate</code> → inflate → first draw</td><td>Максимальная; цель &lt; 500 мс</td></tr>
+                <tr><td><strong>Warm</strong></td><td>Процесс жив, Activity уничтожена</td><td>Пересоздать Activity, заново нарисовать</td><td>Средняя</td></tr>
+                <tr><td><strong>Hot</strong></td><td>Процесс и Activity живы</td><td>Вернуть на передний план</td><td>Минимальная; цель &lt; 100 мс</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Замеряют две точки: <strong>TTID</strong> (Time To Initial Display — первый кадр) и <strong>TTFD</strong> (Time To Full Display — когда контент реально готов, репортится через <code>reportFullyDrawn()</code>).</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart LR
+  Z["Zygote fork"] --> P["Process create"]
+  P --> AC["Application.onCreate"]
+  AC --> A["Activity create + inflate"]
+  A --> M["measure / layout / draw"]
+  M --> TTID["Первый кадр (TTID)"]
+  TTID --> D["Загрузка данных"]
+  D --> TTFD["reportFullyDrawn (TTFD)"]
+          </div>
+          <div class="cap">Путь cold start. Всё на критическом пути растягивает TTID — особенно тяжёлый Application.onCreate</div>
+          </div>
+          <h3>Что нельзя делать на старте (и на main thread)</h3>
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>Главный убийца cold start.</strong> Тяжёлая инициализация в <code>Application.onCreate</code>: сеть, чтение диска/БД, синхронная инициализация SDK, рефлексия, «прогрев» аналитики. Всё это блокирует main thread <em>до первого кадра</em>. Любой блокирующий I/O на UI-потоке → ANR-риск и jank.</div>
+          </div>
+          <h3>App Startup library — отложенная и упорядоченная инициализация</h3>
+          <p>Многие библиотеки втихую добавляют свой <code>ContentProvider</code>, чтобы инициализироваться на старте — каждый провайдер стоит времени. Jetpack <strong>App Startup</strong> заменяет их одним общим провайдером и даёт явный граф зависимостей инициализаторов, часть из которых можно сделать ленивыми.</p>
+          <div class="code-label">WorkManagerInitializer.kt</div>
+<pre><code class="language-kotlin">class AnalyticsInitializer : Initializer&lt;Analytics&gt; {
+    override fun create(context: Context): Analytics =
+        Analytics.init(context.applicationContext)
+    // зависит от логгера — App Startup сам выстроит порядок
+    override fun dependencies(): List&lt;Class&lt;out Initializer&lt;*&gt;&gt;&gt; =
+        listOf(LoggerInitializer::class.java)
+}
+
+// ленивую инициализацию запускаем вручную, когда фича реально нужна:
+val analytics = AppInitializer.getInstance(context)
+    .initializeComponent(AnalyticsInitializer::class.java)</code></pre>
+          <h3>Baseline Profiles — главный «бесплатный» ускоритель</h3>
+          <p>Baseline Profile — это список «горячих» классов и методов (старт, навигация, скролл), который кладётся в APK/AAB. На установке ART делает по нему <strong>AOT-компиляцию (Profile Guided Optimization)</strong>, минуя интерпретацию и JIT для этих путей. По данным Google это даёт <strong>~30% к скорости выполнения с первого запуска</strong> (у Google Maps — ~30% к среднему времени старта). Профиль генерится Macrobenchmark-тестом (<code>BaselineProfileRule</code>) и работает с первого запуска и после каждого обновления.</p>
+          <div class="code-label">StartupBenchmark.kt</div>
+<pre><code class="language-kotlin">@RunWith(AndroidJUnit4::class)
+class StartupBenchmark {
+    @get:Rule val rule = MacrobenchmarkRule()
+
+    @Test fun coldStartup() = rule.measureRepeated(
+        packageName = "com.example.app",
+        metrics = listOf(StartupTimingMetric()),
+        iterations = 10,
+        startupMode = StartupMode.COLD          // COLD / WARM / HOT
+    ) {
+        pressHome()
+        startActivityAndWait()                   // ждём первый кадр
+    }
+}</code></pre>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Связка для собеса.</strong> Macrobenchmark <em>измеряет</em> старт, Baseline Profile <em>ускоряет</em> его, а App Startup + отложенная инициализация <em>убирают лишнюю работу</em> с критического пути. Назвав все три вместе, ты показываешь системное понимание.</div>
+          </div>
+        </section>
+
+        <section class="section" id="ui-jank">
+          <h2>Производительность UI: jank и бюджет кадра</h2>
+          <p>Чтобы анимация была плавной при 60 Гц, каждый кадр должен быть готов за <strong>≈16,6 мс</strong>; для 90 Гц — ~11 мс, для <strong>120 Гц — ~8 мс</strong>. Не уложился — <code>Choreographer</code> <strong>пропускает кадр</strong> (dropped frame), пользователь видит рывок. Это и есть <strong>jank</strong>. Кадр, опоздавший очень сильно (&gt; ~700 мс), — frozen frame, его отдельно ругает Android Vitals.</p>
+          <div class="diagram">
+          <div class="mermaid">
+sequenceDiagram
+    participant V as VSYNC
+    participant C as Choreographer
+    participant U as UI Thread
+    participant R as RenderThread
+    V->>C: сигнал кадра (каждые 16мс / 8мс)
+    C->>U: doFrame()
+    U->>U: input + animation + measure/layout/draw
+    U->>R: sync дерева отрисовки
+    R->>R: GPU rendering + buffer swap
+    Note over U,R: уложились в бюджет → плавно, опоздали → dropped frame
+          </div>
+          <div class="cap">Пайплайн кадра. Затык чаще всего на UI Thread (тяжёлый layout/recomposition) или из-за overdraw на GPU</div>
+          </div>
+          <h3>Частые причины jank и фиксы</h3>
+          <ul>
+            <li><strong>Overdraw</strong> — один пиксель красится несколько раз (вложенные фоны). Включи <em>Debug GPU Overdraw</em>: цель — минимум красного. Убирай лишние <code>background</code>, плоскую иерархию.</li>
+            <li><strong>Работа на main thread в момент кадра</strong> — парсинг, БД, аллокации в <code>onBindViewHolder</code>/composable. Выноси в фон, кэшируй.</li>
+            <li><strong>RecyclerView</strong> — стабильные <code>id</code>, <code>DiffUtil</code> вместо <code>notifyDataSetChanged()</code>, лёгкий <code>onBindViewHolder</code>, нет вложенных скроллов без prefetch.</li>
+            <li><strong>Compose</strong> — лишние перекомпозиции: стабильные типы и <code>key</code> в <code>LazyColumn</code>, чтение состояния как можно ниже по дереву, <code>derivedStateOf</code>, <code>remember</code> тяжёлых вычислений, <code>@Immutable/@Stable</code>.</li>
+          </ul>
+          <div class="code-label">DiffUtil.kt</div>
+<pre><code class="language-kotlin">// ✅ ListAdapter сам считает дельту в фоне — нет полной перерисовки списка
+class UserAdapter : ListAdapter&lt;User, UserVH&gt;(DIFF) {
+    companion object {
+        val DIFF = object : DiffUtil.ItemCallback&lt;User&gt;() {
+            override fun areItemsTheSame(a: User, b: User) = a.id == b.id      // та же сущность?
+            override fun areContentsTheSame(a: User, b: User) = a == b         // изменилось ли содержимое?
+        }
+    }
+}</code></pre>
+          <div class="code-label">Recomposition.kt</div>
+<pre><code class="language-kotlin">@Composable
+fun Feed(items: List&lt;User&gt;, onClick: (String) -&gt; Unit) {
+    LazyColumn {
+        items(items, key = { it.id }) { user ->     // key стабилизирует элементы
+            UserRow(user, onClick)
+        }
+    }
+}
+
+// дорогой расчёт не должен идти на каждой рекомпозиции
+val sorted = remember(items) { items.sortedBy { it.name } }</code></pre>
+          <p>В <strong>Layout Inspector</strong> два столбца — counts перекомпозиций и skip-ов: если у composable счётчик растёт при скролле, а данные не менялись — кандидат на стабилизацию. Подтверждай эффект на release Macrobenchmark с <code>FrameTimingMetric</code>.</p>
+        </section>
+
+        <section class="section" id="apk-size">
+          <h2>Размер APK/AAB: R8 и shrinking</h2>
+          <p><strong>R8</strong> — стандартный компилятор-оптимизатор Android (заменил ProGuard), работает за один проход прямо над DEX и делает четыре вещи: <strong>tree shaking</strong> (удаляет недостижимый код), <strong>optimization</strong> (инлайнинг, слияние классов, удаление мёртвых веток), <strong>obfuscation</strong> (короткие имена → меньше строковая таблица) и <strong>desugaring</strong>. Включается в release одной строкой.</p>
+          <div class="code-label">app/build.gradle.kts</div>
+<pre><code class="language-kotlin">android {
+    buildTypes {
+        release {
+            isMinifyEnabled = true          // R8: shrinking + obfuscation + optimization
+            isShrinkResources = true        // выкинуть неиспользуемые ресурсы (только с minify)
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"        // keep-правила для рефлексии/Gson/JNI
+            )
+        }
+    }
+}</code></pre>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Подводный камень R8.</strong> Код, к которому обращаются по имени (рефлексия, Gson/Moshi по полям, JNI, имена в манифесте), R8 может удалить или переименовать → краш только в release. Лекарство — точечные <code>-keep</code>-правила. Для деобфускации стектрейсов сохраняй <code>mapping.txt</code> и загружай его в Play Console.</div>
+          </div>
+          <h3>Resource shrinking, App Bundle и динамические модули</h3>
+          <p>После code shrinking R8/AGP удаляет неиспользуемые ресурсы (строки, drawable). <strong>Android App Bundle (.aab)</strong> — формат публикации: Play собирает <strong>оптимизированные split-APK под конкретное устройство</strong> (его плотность, ABI, язык), так что пользователь не качает чужие <code>xxxhdpi</code>-ассеты и нативные либы под другие ABI. <strong>Dynamic Feature Modules</strong> грузятся по требованию (Play Feature Delivery) — крупные редкие фичи не утяжеляют базовую установку.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Техника</th><th>Что уменьшает</th><th>Цена / нюанс</th></tr></thead>
+              <tbody>
+                <tr><td>R8 minify</td><td>DEX-код, имена</td><td>Нужны keep-правила, mapping для крашей</td></tr>
+                <tr><td>Resource shrinking</td><td>Неиспользуемые ресурсы</td><td>Работает только при <code>minifyEnabled</code></td></tr>
+                <tr><td>App Bundle (split APK)</td><td>Лишние плотности/ABI/языки у юзера</td><td>Подпись отдаёт Play (Play App Signing)</td></tr>
+                <tr><td>Dynamic features</td><td>Базовую установку</td><td>Сложнее код: модуль может отсутствовать</td></tr>
+                <tr><td>WebP / векторы</td><td>Картинки</td><td>Векторы дороже на отрисовку</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Найти, что именно раздувает сборку, помогает <strong>APK Analyzer</strong> (Build → Analyze APK): он показывает вклад DEX, ресурсов и нативных либ и умеет делать <em>diff</em> двух APK — удобно ловить рост размера между релизами.</p>
+        </section>
+
+        <section class="section" id="network-battery">
+          <h2>Сеть и батарея</h2>
+          <p>Радиомодуль — один из главных потребителей энергии: после передачи он ещё держится в высоком энергосостоянии («tail energy»). Поэтому дешевле <strong>пачка запросов раз в N минут</strong>, чем десять частых, и обязателен <strong>кэш</strong>, чтобы не ходить в сеть зря.</p>
+          <ul>
+            <li><strong>Батчинг и дедупликация</strong> запросов; HTTP-кэш OkHttp; не поллить, если есть push.</li>
+            <li><strong>WorkManager constraints</strong> — откладывать фоновую работу до Wi-Fi, зарядки, idle; система сама батчит по Doze-окнам.</li>
+            <li><strong>Doze / App Standby</strong> — в режиме ожидания система душит сеть, alarm и wakelock-и; рассчитывай на отложенное выполнение, а не на «прямо сейчас в фоне».</li>
+            <li><strong>Energy Profiler</strong> — ищет лишние wakelock-и, частые alarm и запросы геолокации.</li>
+          </ul>
+          <div class="code-label">SyncWork.kt</div>
+<pre><code class="language-kotlin">val constraints = Constraints.Builder()
+    .setRequiredNetworkType(NetworkType.UNMETERED)   // только Wi-Fi
+    .setRequiresCharging(true)                        // и на зарядке
+    .build()
+
+val sync = PeriodicWorkRequestBuilder&lt;SyncWorker&gt;(6, TimeUnit.HOURS)
+    .setConstraints(constraints)                      // система сама подберёт Doze-окно
+    .build()
+
+WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+    "sync", ExistingPeriodicWorkPolicy.KEEP, sync
+)</code></pre>
+        </section>
+
+        <section class="section" id="video">
+          <h2>Видео-разбор</h2>
+                    <a class="ytcard" href="https://youtu.be/WWdDzXgrkmg?t=0" target="_blank" rel="noopener">
+            <span class="yt-thumb" style="background-image:url('https://img.youtube.com/vi/WWdDzXgrkmg/hqdefault.jpg')">
+              <span class="yt-play"></span>
+              <span class="yt-time">▶ с начала</span>
+            </span>
+            <span class="yt-meta">
+              <strong>Improving Performance with Baseline Profiles</strong>
+              <span class="yt-by">Android Developers (MAD Skills) · EN</span>
+              <span class="yt-why">Официально: как Baseline Profiles ускоряют запуск и первую прокрутку.</span>
+            </span>
+          </a>
+        </section>
+
+        <section class="section" id="faq">
+          <h2>Частые вопросы интервьюера</h2>
+
+          <details class="qa">
+            <summary>Приложение долго стартует — твои действия по шагам? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>1) Замерить воспроизводимо: Macrobenchmark <code>StartupTimingMetric</code> в режиме COLD на release-сборке, плюс посмотреть Android Vitals. 2) Снять system trace в Profiler/Perfetto и разобрать критический путь: что тяжёлого в <code>Application.onCreate</code>, какие <code>ContentProvider</code>-ы инициализируются. 3) Фиксы: убрать с main thread синхронный I/O и прогрев SDK, перевести на ленивую инициализацию через App Startup, подключить Baseline Profile. 4) Перемерить тем же бенчмарком и сравнить TTID/TTFD. Ключевое — назвать cold/warm/hot и подтвердить эффект цифрой.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Что такое утечка памяти в Android и как её найти? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>Утечка — объект, который не нужен, но удерживается живой ссылкой от GC root, поэтому не собирается GC; на Android особенно дорого течёт <code>Activity</code>/<code>View</code>. Поиск: в debug — LeakCanary, который сам снимает heap dump и строит leak trace (кратчайший путь сильных ссылок от root к объекту); вручную — Memory Profiler, Capture heap dump, сортировка по Retained Size и поиск дублей Activity (счётчик &gt; 1 после ротаций). Дальше по trace находим удерживающую ссылку и рвём её.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Что такое Baseline Profiles и сколько они дают? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Это список горячих классов/методов критических сценариев (старт, навигация, скролл), упакованный в AAB. На установке ART делает по нему AOT-компиляцию (Profile Guided Optimization), пропуская интерпретацию и JIT для этих путей — выигрыш с первого запуска и после каждого апдейта, без изменения кода. По данным Google — порядка 30% к скорости выполнения горячего кода (у Maps ~30% к среднему старту). Генерируются Macrobenchmark-правилом <code>BaselineProfileRule</code>, эффект подтверждается тем же Macrobenchmark.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Чему равен бюджет на кадр и что такое jank? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>При 60 Гц — ~16,6 мс на кадр, при 120 Гц — ~8 мс. Если UI/Render не успели подготовить кадр к VSYNC, Choreographer его пропускает (dropped frame), пользователь видит рывок — это jank; очень опоздавший кадр (&gt; ~700 мс) — frozen frame. Чинят выносом тяжёлой работы с main thread, снижением overdraw, оптимизацией списков (DiffUtil) и перекомпозиций в Compose. Замеры — Perfetto FrameTimeline и Macrobenchmark <code>FrameTimingMetric</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>В чём разница между Macrobenchmark и Microbenchmark? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Microbenchmark меряет крошечный кусок кода (наносекунды): отдельный поток JVM, прогрев, отсев JIT, повторы — для сравнения двух реализаций алгоритма/парсера. Macrobenchmark меряет сквозные сценарии (старт, скролл) на реальном устройстве и обязательно на release/profileable-сборке, выдаёт StartupTiming/FrameTiming и трейсы. Правило: debug-замеры производительности бессмысленны, потому что debug отключает оптимизации и медленнее в разы.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Что делает R8 и какие у него подводные камни? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>R8 в одном проходе делает shrinking (удаление недостижимого кода), optimization (инлайнинг, слияние), obfuscation (короткие имена) и desugaring, плюс с ним работает resource shrinking. Подводный камень — код, доступный по имени (рефлексия, Gson/Moshi, JNI, классы из манифеста): R8 может его удалить/переименовать, и краш проявится только в release. Решение — точечные <code>-keep</code>-правила; для читаемых стектрейсов хранить и загружать <code>mapping.txt</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Почему bitmap так часто причина OOM и как с этим бороться? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Bitmap — это <code>width × height × байт_на_пиксель</code>: полноэкранная картинка ARGB_8888 — мегабайты. С Android 8 пиксели в нативной куче, но всё равно считаются памятью процесса, и пара несжатых картинок легко даёт OOM. Лечение: декодировать с <code>inSampleSize</code>/downscale под размер View, использовать загрузчики (Coil/Glide) с их кэшем и пулом, выбирать <code>RGB_565</code> где допустимо, не держать ссылки на bitmap уничтоженных экранов. В heap dump такие байтовые массивы видны по большому Retained Size.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Зачем WorkManager constraints и причём тут Doze? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Constraints (Wi-Fi, зарядка, idle, не-low-battery) позволяют отложить фоновую работу до выгодного момента и сэкономить батарею — система батчит такие задачи. Doze (когда экран выключен и устройство неподвижно) принудительно глушит сеть, alarm и wakelock-и, выпуская работу окнами обслуживания; App Standby душит редко используемые приложения. Вывод для архитектуры: фоновая синхронизация должна быть отложенной и идемпотентной, а не рассчитанной на «выполнить ровно сейчас». Для немедленной критичной работы — foreground service или expedited work.</p></div>
+          </details>
+
+        </section>
+
+        <div class="sources">
+          <h2>Источники</h2>
+          <ol>
+            <li><a href="https://developer.android.com/topic/performance/baselineprofiles/overview" target="_blank" rel="noopener">Baseline Profiles overview — Android Developers</a> — что это, как ART применяет AOT/PGO, какой выигрыш.</li>
+            <li><a href="https://developer.android.com/topic/performance/benchmarking/macrobenchmark-overview" target="_blank" rel="noopener">Write a Macrobenchmark — Android Developers</a> — режимы COLD/WARM/HOT и метрики старта/кадров.</li>
+            <li><a href="https://developer.android.com/topic/performance/vitals/launch-time" target="_blank" rel="noopener">App startup time — Android Developers</a> — cold/warm/hot, TTID/TTFD, что убирать с main thread.</li>
+            <li><a href="https://developer.android.com/topic/performance/vitals/render" target="_blank" rel="noopener">Slow rendering (jank) — Android Developers</a> — бюджет кадра, dropped/frozen frames, причины jank.</li>
+            <li><a href="https://developer.android.com/topic/performance/app-optimization/enable-app-optimization" target="_blank" rel="noopener">Enable app optimization with R8 — Android Developers</a> — shrinking/obfuscation/optimization, keep-правила.</li>
+            <li><a href="https://square.github.io/leakcanary/fundamentals-how-leakcanary-works/" target="_blank" rel="noopener">How LeakCanary works — Square</a> — ObjectWatcher, heap dump, Shark, построение leak trace.</li>
+            <li><a href="https://developer.android.com/develop/ui/compose/tooling/debug" target="_blank" rel="noopener">Debug your Compose UI — Android Developers</a> — recomposition и skip counts в Layout Inspector.</li>
+            <li><a href="https://www.youtube.com/watch?v=WWdDzXgrkmg" target="_blank" rel="noopener">Improving Performance with Baseline Profiles (MAD Skills)</a> — официальное видео-объяснение и демо.</li>
+          </ol>
+        </div>
+      </article>
+    </div>
+    <aside id="toc"></aside>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="../assets/app.js?v=20260620-2"></script>
+</body>
+</html>

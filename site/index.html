@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    (() => {
+      const key = "aip-theme";
+      let theme = null;
+      try { theme = localStorage.getItem(key); } catch(e) {}
+      if (theme !== "dark" && theme !== "light") {
+        theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <title>Подготовка к собеседованию Android-разработчика · Middle+ / Senior</title>
+  <meta name="description" content="Интерактивный гид подготовки к собеседованию Android-разработчика: 14 тем, mind-map, схемы, код, видео, источники.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-page="home">
+  <main class="home">
+    <section class="hero">
+      <span class="tag lvl-sen">Middle+ / Senior · Kotlin · Compose</span>
+      <h1>Подготовка к собеседованию<br><span class="grad">Android-разработчика</span></h1>
+      <p>Интерактивный гид по 14 темам + словарь терминов: объяснения «под капотом», схемы, таблицы, примеры кода на Kotlin, видео и источники. Отмечай пройденное — прогресс сохраняется.</p>
+      <div class="cta">
+        <a class="btn primary" href="pages/01-oop-solid.html">Начать подготовку →</a>
+        <a class="btn ghost" href="../ПЛАН_ПОДГОТОВКИ.md">📄 Открыть .md план</a>
+      </div>
+      <div class="stats">
+        <div class="stat"><b>15</b><span>разделов</span></div>
+        <div class="stat"><b>8</b><span>блоков</span></div>
+        <div class="stat"><b id="stat-progress">0/15</b><span>пройдено</span></div>
+        <div class="stat"><b>∞</b><span>повторений вслух</span></div>
+      </div>
+    </section>
+
+    <h2 class="block-title">🗺️ Mind-map подготовки</h2>
+    <p class="block-sub">Карта тем и ключевых подтем. Нажми на узел, чтобы перейти к разделу.</p>
+    <div class="mindmap-wrap">
+      <div id="mindmap"></div>
+      <div class="mm-legend" id="mm-legend"></div>
+    </div>
+
+    <h2 class="block-title">📚 Все темы</h2>
+    <p class="block-sub">Каждая страница: описание, объяснение, диаграммы, таблицы, код, видео и источники.</p>
+    <div class="topic-grid" id="topic-grid"></div>
+  </main>
+
+  <footer class="site-foot">
+    Учебный материал для подготовки к собеседованию · собран {год} · удачи на интервью 💚
+  </footer>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="assets/app.js?v=20260620-2"></script>
+  <script>document.querySelector('.site-foot').innerHTML = document.querySelector('.site-foot').innerHTML.replace('{год}', new Date().getFullYear());</script>
+</body>
+</html>
