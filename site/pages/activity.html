@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    (() => {
+      const key = "aip-theme";
+      let theme = null;
+      try { theme = localStorage.getItem(key); } catch(e) {}
+      if (theme !== "dark" && theme !== "light") {
+        theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <title>Activity · Android-собес</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+</head>
+<body data-page="activity">
+  <div class="layout">
+    <aside id="sidebar"></aside>
+    <div id="content">
+      <article class="page">
+        <div class="breadcrumb"></div>
+        <header class="page-head">
+          <span class="eyebrow">Платформа Android</span>
+          <h1>Activity: lifecycle, состояние и back stack</h1>
+          <p class="lead">Activity — точка входа в пользовательский сценарий: она держит окно, принимает Intent, участвует в task/back stack и переживает пересоздание при смене конфигурации. На собесе по ней быстро уходят от «назови callbacks» к состоянию, process death, <code>isFinishing</code> и ошибкам навигации.</p>
+          <div class="meta">
+            <span class="tag lvl-mid">Middle</span>
+            <span class="tag lvl-sen">Senior</span>
+            <span class="tag hot">Частый вопрос</span>
+          </div>
+        </header>
+
+        <section class="section" id="lifecycle">
+          <h2>Lifecycle: что означает каждый callback</h2>
+          <p>Жизненный цикл Activity читается парами: <code>onCreate/onDestroy</code> — всё время жизни экземпляра, <code>onStart/onStop</code> — видимость, <code>onResume/onPause</code> — интерактивность и фокус. На интервью важно не просто перечислить методы, а объяснить, куда привязывать ресурсы: камеру и сенсоры обычно поднимают рядом с видимостью, а короткие UI-подписки — рядом с интерактивным состоянием.</p>
+
+          <div class="diagram">
+          <div class="mermaid">
+stateDiagram-v2
+[*] --> Created: onCreate()
+Created --> Started: onStart()
+Started --> Resumed: onResume()
+Resumed --> Started: onPause()
+Started --> Stopped: onStop()
+Stopped --> Started: onRestart() + onStart()
+Stopped --> Destroyed: onDestroy()
+Destroyed --> [*]
+note right of Resumed
+RESUMED: видна и в фокусе
+end note
+note right of Started
+STARTED: видна, но не в фокусе
+end note
+          </div>
+          <div class="cap">Lifecycle Activity: <code>onPause</code> ещё не означает невидимость, а <code>onStop</code> уже означает, что пользователь экран не видит</div>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Пара callbacks</th><th>Смысл</th><th>Что обычно делать</th></tr></thead>
+              <tbody>
+                <tr><td><code>onCreate/onDestroy</code></td><td>Создание и уничтожение экземпляра Activity</td><td>Инициализировать DI, binding, Activity Result launchers; финально освобождать owned-ресурсы</td></tr>
+                <tr><td><code>onStart/onStop</code></td><td>Экран виден / больше не виден</td><td>Подписки, которые имеют смысл только на видимом экране; старт/стоп превью камеры</td></tr>
+                <tr><td><code>onResume/onPause</code></td><td>Экран в фокусе / теряет фокус</td><td>Эксклюзивные ресурсы, пауза анимаций или ввода, быстрый flush критичных данных</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <details class="qa">
+            <summary>Почему нельзя сохранять тяжёлое состояние в <code>onPause()</code>, если пользователь просто открыл permission dialog? <span class="q-badge">★</span></summary>
+            <div class="ans"><p><code>onPause()</code> вызывается не только при уходе со страницы: системный диалог, split-screen, прозрачная Activity поверх текущей — и ваш экран уже не RESUMED, хотя всё ещё виден. Тяжёлая синхронная запись в <code>onPause()</code> блокирует переход и может дать jank. Долгую работу выносят из callback в репозиторий/WorkManager, а в <code>onPause()</code> оставляют только короткую фиксацию критичного состояния.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="finishing">
+          <h2><code>isFinishing</code>, <code>isChangingConfigurations</code> и настоящее закрытие</h2>
+          <p><code>onDestroy()</code> сам по себе не отвечает на главный вопрос: Activity закрывается навсегда или пересоздаётся из-за конфигурации? Для этого нужны флаги. <code>isFinishing</code> становится <code>true</code>, когда Activity завершили через <code>finish()</code>, Back или системное завершение task. <code>isChangingConfigurations</code> показывает, что текущий экземпляр умирает из-за configuration change: поворот, смена языка, темы, размера окна.</p>
+
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Ситуация</th><th><code>isFinishing</code></th><th><code>isChangingConfigurations</code></th><th>Что это значит</th></tr></thead>
+              <tbody>
+                <tr><td>Back / <code>finish()</code></td><td><strong>true</strong></td><td>false</td><td>Сценарий завершён, временный state можно сбросить</td></tr>
+                <tr><td>Поворот / смена темы</td><td>false</td><td><strong>true</strong></td><td>Экран пересоздаётся, state должен пережить новый экземпляр</td></tr>
+                <tr><td>Система убила процесс в фоне</td><td>callback может не прийти</td><td>callback может не прийти</td><td>Нельзя полагаться на <code>onDestroy()</code>; нужно сохранённое состояние/хранилище</td></tr>
+                <tr><td>Короткий переход в фон</td><td>false</td><td>false</td><td>Activity остановлена, но может вернуться как есть</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="code-label">CheckoutActivity.kt</div>
+<pre><code class="language-kotlin">class CheckoutActivity : AppCompatActivity() {
+
+    override fun onStop() {
+        super.onStop()
+        // Видимый ресурс отпускаем всегда: пользователь экран уже не видит.
+        cameraPreview.stop()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+
+        if (isFinishing) {
+            // Пользователь реально вышел из флоу: черновик больше не нужен.
+            viewModel.discardTemporaryDraft()
+        }
+
+        if (!isChangingConfigurations) {
+            // Не поворот и не смена темы: текущий экземпляр не будет заменён новым.
+            analyticsSession.close()
+        }
+    }
+}</code></pre>
+
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Флаги — не замена сохранению состояния.</strong> При убийстве процесса Android не обязан вызвать <code>onDestroy()</code>. Всё, что должно пережить process death, кладём в <code>SavedStateHandle</code>/<code>onSaveInstanceState</code> или в постоянное хранилище. <code>isFinishing</code> нужен для развилки «пользователь ушёл навсегда или будет новый экземпляр», а не для гарантий финализации.</div>
+          </div>
+
+          <details class="qa">
+            <summary>Почему проверка <code>isFinishing</code> в <code>onPause()</code> иногда даёт другой ответ, чем ожидали, и почему это не lifecycle-оракул? <span class="q-badge">★</span></summary>
+            <div class="ans"><p><code>onPause()</code> вызывается раньше, чем Activity перестаёт быть видимой, и может приходить из-за временного перекрытия экраном поверх. В этот момент <code>isFinishing</code> отвечает только на вопрос «уже запрошено завершение этой Activity?», а не «экран точно исчезает навсегда». Для ресурсов видимости смотрите на <code>onStart/onStop</code>, для окончательного закрытия — на комбинацию <code>isFinishing</code>/<code>isChangingConfigurations</code> в callback уничтожения. И держите в голове process death: callback может вообще не случиться.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="saved-state">
+          <h2>Configuration change, process death и сохранение состояния</h2>
+          <p>Поворот экрана и смерть процесса часто смешивают, но это разные аварии. При configuration change процесс жив, Activity пересоздаётся, а <code>ViewModel</code> остаётся в <code>ViewModelStore</code>. При process death умирает весь процесс: <code>ViewModel</code> исчезает, и восстановить UI можно только из сериализованного состояния или постоянного хранилища.</p>
+
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Механизм</th><th>Поворот</th><th>Process death</th><th>Что туда класть</th></tr></thead>
+              <tbody>
+                <tr><td><code>ViewModel</code></td><td>переживает</td><td><strong>не переживает</strong></td><td>Текущее состояние экрана, загруженные данные в памяти</td></tr>
+                <tr><td><code>SavedStateHandle</code></td><td>переживает</td><td>переживает</td><td>Маленькие ключи: id, фильтр, tab, query</td></tr>
+                <tr><td><code>onSaveInstanceState</code></td><td>переживает</td><td>переживает</td><td>Минимальное UI-состояние, которое можно сериализовать в Bundle</td></tr>
+                <tr><td>Room / DataStore</td><td>переживает</td><td>переживает</td><td>Долгоживущие данные и большие объёмы</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="code-label">SearchViewModel.kt</div>
+<pre><code class="language-kotlin">class SearchViewModel(
+    private val savedStateHandle: SavedStateHandle
+) : ViewModel() {
+    val query: StateFlow&lt;String&gt; =
+        savedStateHandle.getStateFlow(KEY_QUERY, "")
+
+    fun onQueryChanged(value: String) {
+        savedStateHandle[KEY_QUERY] = value
+    }
+
+    companion object {
+        private const val KEY_QUERY = "query"
+    }
+}</code></pre>
+
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>Bundle не безразмерный.</strong> Сохранённое состояние маршалится через Binder. Буфер транзакций ограничен, поэтому большой список, bitmap или тяжёлый Parcelable может закончиться <code>TransactionTooLargeException</code>. Правило простое: в saved state — ключи, в Room/сеть — сами данные.</div>
+          </div>
+
+          <details class="qa">
+            <summary>Почему <code>ViewModel</code> переживает поворот, но не process death, хотя оба сценария приводят к новому <code>onCreate()</code>? <span class="q-badge">★</span></summary>
+            <div class="ans"><p>При повороте старый процесс жив. Framework переносит <code>ViewModelStore</code> через non-configuration state от старой Activity к новой, поэтому новый экземпляр Activity получает ту же ViewModel. При process death памяти процесса больше нет: вместе с ним исчезает и <code>ViewModelStore</code>. Новая Activity стартует в новом процессе и получает только то, что система смогла сохранить в Bundle, плюс данные из постоянного хранилища.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="activity-result">
+          <h2>Activity Result API вместо <code>onActivityResult</code></h2>
+          <p>Старый <code>startActivityForResult()/onActivityResult()</code> завязан на <code>requestCode</code>, плохо масштабируется и легко ломается при пересоздании. Activity Result API регистрирует контракт заранее, возвращает типизированный результат и привязывает callback к lifecycle owner. Важная деталь: launcher регистрируют как поле или до старта lifecycle, а запускают позже, когда действие реально нужно.</p>
+
+          <div class="code-label">ProfileActivity.kt</div>
+<pre><code class="language-kotlin">class ProfileActivity : AppCompatActivity() {
+
+    private val pickAvatar = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? -&gt;
+        uri?.let(viewModel::onAvatarPicked)
+    }
+
+    private val requestCamera = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted: Boolean -&gt;
+        if (granted) openCamera() else showCameraDenied()
+    }
+
+    fun onPickAvatarClick() {
+        pickAvatar.launch("image/*")
+    }
+
+    fun onCameraClick() {
+        requestCamera.launch(Manifest.permission.CAMERA)
+    }
+}</code></pre>
+
+          <p>Контракт описывает обе стороны: какой input принимает launcher и какой output придёт в callback. Для кастомного сценария пишут свой <code>ActivityResultContract&lt;I, O&gt;</code>, но в большинстве случаев хватает готовых контрактов: запрос permission, выбор контента, создание документа, съёмка фото, запуск Intent sender.</p>
+
+          <details class="qa">
+            <summary>Почему launcher нужно регистрировать стабильно и в одном порядке после пересоздания Activity? <span class="q-badge">★</span></summary>
+            <div class="ans"><p>Activity Result Registry должен сопоставить результат, который вернулся после пересоздания, с правильным callback. Если регистрировать launchers условно или менять порядок регистрации между запусками, результат может прийти не туда или потеряться. Поэтому launcher держат как поле, регистрируют при создании Activity/Fragment и не завязывают саму регистрацию на runtime-ветку. Условным остаётся только момент <code>launch()</code>.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="task-back-stack">
+          <h2>Task, back stack, launchMode и <code>onNewIntent</code></h2>
+          <p>Activity живёт не просто «в приложении», а в task — стеке экранов, который пользователь видит в Recents. Обычно каждый запуск создаёт новый экземпляр на вершине, но launch modes и Intent-флаги могут переиспользовать старый экземпляр, очистить часть стека или вынести Activity в отдельную задачу. Это сильная магия. Её лучше применять точечно.</p>
+
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Mode</th><th>Поведение</th><th>Типичный кейс</th></tr></thead>
+              <tbody>
+                <tr><td><code>standard</code></td><td>Всегда новый экземпляр</td><td>Обычные экраны</td></tr>
+                <tr><td><code>singleTop</code></td><td>Если экземпляр уже на вершине, приходит <code>onNewIntent()</code></td><td>Экран поиска, уведомление в уже открытый экран</td></tr>
+                <tr><td><code>singleTask</code></td><td>Один корневой экземпляр в task; всё выше него очищается</td><td>Главный экран, редкие deep link-флоу</td></tr>
+                <tr><td><code>singleInstance</code></td><td>Экземпляр один и живёт в отдельной task</td><td>Системные/launcher-подобные сценарии, почти не нужно в app-коде</td></tr>
+                <tr><td><code>singleInstancePerTask</code></td><td>Один экземпляр на task, может быть несколько task</td><td>Специальные multi-window/document-сценарии</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="code-label">SearchActivity.kt</div>
+<pre><code class="language-kotlin">class SearchActivity : AppCompatActivity() {
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        handleIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)      // иначе getIntent() останется старым
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent) {
+        val query = intent.getStringExtra(EXTRA_QUERY).orEmpty()
+        viewModel.search(query)
+    }
+
+    companion object {
+        private const val EXTRA_QUERY = "query"
+    }
+}</code></pre>
+
+          <div class="diagram">
+          <div class="mermaid">
+flowchart LR
+A["Push с query=B"] --> B{"Activity на вершине?"}
+B -->|"нет"| C["Новый экземпляр"]
+B -->|"да, singleTop"| D["onNewIntent()"]
+D --> E["setIntent(intent)"]
+E --> F["handleIntent(B)"]
+          </div>
+          <div class="cap"><code>singleTop</code>: повторный запуск открытого экрана не зовёт <code>onCreate()</code>, поэтому новый Intent нужно обработать в <code>onNewIntent()</code></div>
+          </div>
+
+          <details class="qa">
+            <summary>Почему <code>taskAffinity</code> в связке с <code>FLAG_ACTIVITY_NEW_TASK</code> может сломать ожидаемую кнопку Back? <span class="q-badge">★</span></summary>
+            <div class="ans"><p><code>FLAG_ACTIVITY_NEW_TASK</code> говорит системе искать task с подходящей affinity или создать новую. Если Activity имеет нестандартную <code>taskAffinity</code>, она может оказаться не в стеке вызывающего приложения, а в другой task. Пользователь нажимает Back и попадает не туда, куда вы мысленно положили экран. Поэтому custom affinity и launch modes меняют только под конкретный сценарий: document-mode, external entry point, launcher-подобная Activity. Для обычной внутренней навигации это почти всегда лишний риск.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="intents">
+          <h2>Intent, deep links и экспортированная поверхность</h2>
+          <p>Explicit Intent называет конкретный компонент; implicit Intent описывает действие, данные и категории, а систему просит найти получателя. Как только появляется intent-filter, Activity становится входной точкой. Внутренний экран с <code>exported=true</code> — это уже публичный API вашего приложения, даже если вы не планировали его документировать.</p>
+
+          <div class="code-label">IntentExamples.kt</div>
+<pre><code class="language-kotlin">// Explicit: внутри своего приложения
+startActivity(Intent(this, DetailActivity::class.java).apply {
+    putExtra("id", itemId)
+})
+
+// Implicit: другой компонент выбирает система
+val share = Intent(Intent.ACTION_SEND).apply {
+    type = "text/plain"
+    putExtra(Intent.EXTRA_TEXT, "Ссылка на заказ")
+}
+if (share.resolveActivity(packageManager) != null) {
+    startActivity(Intent.createChooser(share, "Поделиться"))
+}</code></pre>
+
+          <div class="code-label">AndroidManifest.xml</div>
+<pre><code class="language-xml">&lt;activity
+    android:name=".DeepLinkActivity"
+    android:exported="true"&gt;
+    &lt;intent-filter android:autoVerify="true"&gt;
+        &lt;action android:name="android.intent.action.VIEW" /&gt;
+        &lt;category android:name="android.intent.category.DEFAULT" /&gt;
+        &lt;category android:name="android.intent.category.BROWSABLE" /&gt;
+        &lt;data android:scheme="https" android:host="example.com" /&gt;
+    &lt;/intent-filter&gt;
+&lt;/activity&gt;</code></pre>
+
+          <p>С Android 12 для компонента с intent-filter нужно явно указать <code>android:exported</code>. Для публичной Activity проверяйте входящие extras и URI как недоверенные: другой процесс может передать неожиданный id, огромный Bundle или Intent redirection payload. Внутренние экраны держим <code>exported=false</code>.</p>
+
+          <details class="qa">
+            <summary>Почему перед запуском implicit Intent иногда нужен <code>resolveActivity()</code>, но для chooser это не серебряная пуля безопасности? <span class="q-badge">★</span></summary>
+            <div class="ans"><p><code>resolveActivity()</code> помогает не упасть с <code>ActivityNotFoundException</code>, если в системе нет обработчика. Но безопасность этим не заканчивается: chooser всё равно отдаёт данные другому приложению. Если вы передаёте файл, используйте <code>FileProvider</code> и временный <code>FLAG_GRANT_READ_URI_PERMISSION</code>, а не путь к файлу. Если принимаете implicit Intent сами, валидируйте <code>data</code>, размер extras и права вызывающего, потому что это вход снаружи процесса.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="failure-modes">
+          <h2>Типичные поломки Activity</h2>
+          <p>Activity падает не потому, что callback «сложный», а потому что ресурс живёт дольше или короче, чем его владелец. На собесе хорошо работает разбор симптома: что видит пользователь, какой stack trace, какой lifetime нарушен.</p>
+
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Симптом</th><th>Причина</th><th>Фикс</th></tr></thead>
+              <tbody>
+                <tr><td>Данные пропали после возврата из фона</td><td>Process death проверяли поворотом, а не убийством процесса</td><td>Ключи в <code>SavedStateHandle</code>, данные в Room/DataStore</td></tr>
+                <tr><td>Утечка Activity после поворотов</td><td>Ссылка на Activity в singleton, static, callback, долгой корутине</td><td><code>applicationContext</code>, отписка в lifecycle, scope по владельцу</td></tr>
+                <tr><td>Push открыл экран со старыми extras</td><td><code>singleTop</code> пришёл в <code>onNewIntent()</code>, но код читает только <code>onCreate()</code></td><td>Общий <code>handleIntent()</code> + <code>setIntent(intent)</code></td></tr>
+                <tr><td><code>TransactionTooLargeException</code></td><td>В Intent extras / saved state положили большой объект</td><td>Передавать id/URI, данные восстанавливать отдельно</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <details class="qa">
+            <summary>Почему «не хранить Activity Context в singleton» остаётся актуальным даже в приложении с одной Activity? <span class="q-badge">★</span></summary>
+            <div class="ans"><p>Single-Activity не означает single-instance. При повороте, смене темы, multi-window и process recreation Activity всё равно пересоздаётся. Singleton живёт всё время процесса; если он держит старый Activity Context, GC не может собрать старое окно, View-дерево и всё, что оно удерживает. В singleton кладут <code>applicationContext</code> или вообще не кладут Context. Activity Context нужен там, где важны тема и окно: inflate UI, диалог, WindowInsets.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="faq">
+          <h2>Частые вопросы интервьюера</h2>
+
+          <details class="qa">
+            <summary>Что вызывается при повороте экрана и где хранить состояние? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>Поворот — configuration change. Текущая Activity проходит остановку и уничтожение, затем создаётся новый экземпляр. <code>ViewModel</code> переживает этот сценарий, потому что <code>ViewModelStore</code> переносится в новый экземпляр Activity. <code>onSaveInstanceState</code>/<code>SavedStateHandle</code> тоже переживают поворот и ещё process death, но только для маленького сериализуемого состояния. Большие данные — Room/DataStore/сеть.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Чем <code>isFinishing</code> отличается от <code>isChangingConfigurations</code>? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p><code>isFinishing</code> говорит, что Activity завершается навсегда: Back, <code>finish()</code>, завершение task. <code>isChangingConfigurations</code> говорит, что текущий экземпляр уничтожается ради нового экземпляра под другую конфигурацию. При повороте обычно <code>isFinishing=false</code>, <code>isChangingConfigurations=true</code>. При Back — наоборот. Оба флага не спасают от process death: если систему убила процесс, callback уничтожения может не прийти.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Почему <code>onSaveInstanceState()</code> не зовётся при обычном Back? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Back означает, что пользователь завершил экран. Системе не нужно сохранять состояние для восстановления этой Activity, поэтому callback сохранения может не вызываться. Он нужен для сценариев, где система может уничтожить Activity, но позже восстановить её: configuration change или убийство процесса в фоне. Если данные должны сохраниться после Back, это уже не saved instance state, а доменное сохранение в репозиторий/БД.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Когда использовать Activity Result API, а когда обычный Intent? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>Обычный <code>startActivity()</code> — когда результат не нужен. Activity Result API — когда нужен ответ: permission, выбранный файл, фото, документ, результат внешней Activity. Он типизирует контракт и переживает пересоздание лучше, чем старый <code>onActivityResult()</code>. Launcher регистрируют заранее и стабильно, а <code>launch()</code> вызывают по событию пользователя.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Почему <code>singleTask</code> редко нужен для обычной навигации? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p><code>singleTask</code> переиспользует существующий экземпляр и очищает всё, что лежит над ним в task. Это легко ломает ожидаемый Back и теряет промежуточные экраны. Для внутренней навигации проще и предсказуемее обычный back stack или Navigation Component. <code>singleTask</code> оставляют под корневые entry point-сценарии, где очистка стека осознанна.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Что происходит, если передать большой объект через Intent extras? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Extras маршалятся в <code>Parcel</code> и идут через Binder. Буфер Binder-транзакций ограничен, поэтому большой список или bitmap может дать <code>TransactionTooLargeException</code>. Плюс вы тратите время на сериализацию на границе процесса/компонента. Правильнее передавать id, URI или ключ, а данные читать из общего источника: Room, файл, ContentProvider, репозиторий.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="tasks">
+          <h2>Задачи</h2>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 1.</strong> Activity с <code>launchMode="singleTop"</code> открыта с query=A. Из push приходит query=B. Напишите обработку Intent так, чтобы второй query не потерялся.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">class SearchActivity : AppCompatActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        handleIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent) {
+        val query = intent.getStringExtra("query").orEmpty()
+        viewModel.search(query)
+    }
+}</code></pre>
+                <p>При <code>singleTop</code> повторный запуск Activity на вершине стека не вызывает <code>onCreate()</code>. Новый Intent приходит в <code>onNewIntent()</code>; без <code>setIntent(intent)</code> последующий <code>getIntent()</code> вернёт старый Intent.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 2.</strong> В <code>onDestroy()</code> нужно отличить Back от поворота. Покажите код и объясните, почему он не годится для process death.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">override fun onDestroy() {
+    super.onDestroy()
+
+    when {
+        isFinishing -&gt; viewModel.onUserClosedScreen()
+        isChangingConfigurations -&gt; viewModel.onScreenRecreated()
+        else -&gt; viewModel.onSystemDestroyedInstance()
+    }
+}</code></pre>
+                <p><code>isFinishing</code> покрывает явное завершение, <code>isChangingConfigurations</code> — пересоздание из-за конфигурации. Но при убийстве процесса Android не обязан вызвать <code>onDestroy()</code>, поэтому критичное состояние нельзя сохранять только здесь. Для process death нужны <code>SavedStateHandle</code>, <code>onSaveInstanceState</code> или постоянное хранилище.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 3.</strong> Пользователь вводит текст в поиске, сворачивает приложение, процесс убивают, затем он возвращается. Какие данные хранить в <code>ViewModel</code>, какие — в <code>SavedStateHandle</code>, какие — в БД?</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <p>В <code>ViewModel</code> держим текущее состояние экрана в памяти: результаты поиска, loading/error, derived UI state. В <code>SavedStateHandle</code> — маленький ключ восстановления: строку query, выбранный tab, id выбранного фильтра. В Room/DataStore — долгоживущие данные и настройки. После process death ViewModel создаётся заново, берёт query из <code>SavedStateHandle</code> и по нему снова поднимает данные из репозитория.</p>
+              </div>
+            </details>
+          </div>
+        </section>
+
+        <div class="sources">
+          <h2>Источники</h2>
+          <ol>
+            <li><a href="https://developer.android.com/guide/components/activities/activity-lifecycle" target="_blank" rel="noopener">The activity lifecycle — Android Developers</a> — lifecycle callbacks, сохранение состояния, пересоздание.</li>
+            <li><a href="https://developer.android.com/reference/android/app/Activity#isFinishing()" target="_blank" rel="noopener">Activity.isFinishing() — Android Developers reference</a> — точная семантика флага завершения.</li>
+            <li><a href="https://developer.android.com/reference/android/app/Activity#isChangingConfigurations()" target="_blank" rel="noopener">Activity.isChangingConfigurations() — Android Developers reference</a> — пересоздание из-за configuration change.</li>
+            <li><a href="https://developer.android.com/training/basics/intents/result" target="_blank" rel="noopener">Get a result from an activity — Android Developers</a> — Activity Result API и регистрация launchers.</li>
+            <li><a href="https://developer.android.com/guide/components/activities/tasks-and-back-stack" target="_blank" rel="noopener">Tasks and the back stack — Android Developers</a> — task, back stack, launch modes и Intent-флаги.</li>
+            <li><a href="https://developer.android.com/topic/libraries/architecture/saving-states" target="_blank" rel="noopener">Save UI states — Android Developers</a> — ViewModel, saved instance state и process death.</li>
+            <li><a href="https://developer.android.com/reference/android/os/TransactionTooLargeException" target="_blank" rel="noopener">TransactionTooLargeException — Android Developers reference</a> — лимит Binder-транзакции для Bundle/Intent.</li>
+          </ol>
+        </div>
+      </article>
+    </div>
+    <aside id="toc"></aside>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="../assets/app.js?v=20260621-3"></script>
+</body>
+</html>

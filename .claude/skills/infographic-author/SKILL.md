@@ -1,17 +1,16 @@
 ---
 name: infographic-author
 description: >-
-  Проектируй и собирай понятные, аккуратные диаграммы и инфографику для учебных материалов —
-  прежде всего для страниц сайта-гида в этом проекте (схемы процессов, диаграммы
-  последовательности, состояния, архитектура, mind-map, сравнительные визуализации). Зона
-  ответственности — ВИЗУАЛЬНОЕ КАЧЕСТВО: выбор правильного типа схемы, сдержанность и читаемость,
-  семантика цвета, иерархия, корректная тёмная/светлая тема, доступность (role/aria/desc),
-  отсутствие ИИ-«слопа» (радужный цвет, тени, свечение, тотальный болд, налезающие блоки).
-  Триггеры: «сделай схему/диаграмму/инфографику по X», «визуализируй процесс», «нарисуй
-  flowchart/sequence/состояния», «оформи это как схему», «улучши/почини диаграмму», «mind-map».
-  Применяй даже если слово «скил» не звучит. Работает В ПАРЕ с двумя соседними скилами:
-  interview-prep-author задаёт РАЗМЕТКУ (куда и каким блоком вставить схему на странице),
-  tech-author — ТЕКСТ вокруг и подписи; этот скил отвечает за то, ХОРОША ли сама визуализация.
+  Use when a request creates, chooses, reviews, or fixes a diagram/infographic for the
+  interview-prep material: process flow, sequence, state machine, architecture sketch,
+  mind-map, comparison visualization, Mermaid block, or inline SVG. Trigger on requests
+  like "сделай схему/диаграмму", "визуализируй процесс", "нарисуй flowchart, sequence
+  или состояния", "оформи как схему", "улучши/почини диаграмму", or "mind-map". This skill
+  owns visual quality: correct diagram type, semantic color, hierarchy, restraint,
+  dark/light theme compatibility, accessibility (`role`/`aria`/`desc`), readable labels,
+  and no visual AI markers such as rainbow colors, shadows, glow, all-bold labels, or
+  overlapping blocks. Use interview-prep-author for page placement/markup and tech-author
+  for surrounding prose and captions.
 ---
 
 # Infographic Author — понятная инфографика без «слопа»

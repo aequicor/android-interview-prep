@@ -82,6 +82,7 @@ suspend fun profile(id: String): Profile {
             <div class="ic">💡</div>
             <div class="bd"><strong>Вывод для собеса.</strong> Корутина «не блокирует поток» именно потому, что приостановка — это <em>возврат из функции</em> с маркером, а не парковка потока. Освободившийся поток диспетчер отдаёт другим корутинам. Поэтому десятки тысяч корутин живут на пуле из нескольких потоков.</div>
           </div>
+          <details class="qa"><summary>Почему компилятор делает один объект-continuation на всю suspend-функцию, а не по одному на каждую точку приостановки? <span class="q-badge">★</span></summary><div class="ans"><p>На всю <code>suspend</code>-функцию компилятор создаёт ровно один объект continuation (наследник <code>ContinuationImpl</code>), а не по одному на каждую suspend-точку. Состояние кодируется целочисленным <code>label</code>, а локальные переменные, которые переживают приостановку, спиллятся в поля этого же объекта. Когда функция вызывает другую <code>suspend</code>-функцию, она передаёт ей этот же continuation как completion — так складывается связанный список continuation’ов, и он играет роль «стека вызовов» на куче.</p><p>Смысл переиспользования — экономия аллокаций: глубокая последовательная цепочка suspend-вызовов не плодит объект на каждом шаге. При возобновлении <code>resumeWith</code> поднимает результат вверх по этой цепочке, и каждый кадр прыгает в свою ветку <code>when(label)</code>.</p></div></details>
         </section>
 
         <section class="section" id="dispatchers">
@@ -109,6 +110,7 @@ suspend fun profile(id: String): Profile {
             <div class="ic">ℹ️</div>
             <div class="bd"><code>Dispatchers.Main</code> на Android реализован поверх <code>Handler</code> к главному <code>Looper</code> (см. раздел <a href="looper-handler.html">«Looper и Handler»</a>): возобновление корутины — это, по сути, <code>post</code> в очередь главного потока.</div>
           </div>
+          <details class="qa"><summary><code>IO</code> и <code>Default</code> используют один общий пул потоков. Что тогда значит лимит IO в 64 и зачем <code>limitedParallelism</code>? <span class="q-badge">★</span></summary><div class="ans"><p><code>IO</code> и <code>Default</code> делят общий пул потоков <code>CoroutineScheduler</code> — они отличаются не отдельными пулами, а лимитом параллелизма. У <code>Default</code> лимит — число ядер CPU, у <code>IO</code> — <code>max(64, число ядер)</code>. Поэтому переключение <code>withContext(IO)</code> с <code>Default</code> не обязательно меняет физический поток: оно меняет режим квоты на том же пуле, и такое переключение дёшево. Лимит IO в 64 страхует от исчерпания потоков при множестве блокирующих операций.</p><p><code>Dispatchers.IO.limitedParallelism(n)</code> создаёт «вид» поверх того же пула со своим лимитом <code>n</code> — например, чтобы запись в БД не заняла все 64 слота. Тонкость: <code>limitedParallelism</code> на IO не урезает общий лимит пула, а добавляет локальное ограничение поверх него.</p></div></details>
         </section>
 
         <section class="section" id="launch-async">
@@ -130,6 +132,7 @@ suspend fun dashboard(): Dashboard = coroutineScope {
     val feed = async { api.feed() }
     Dashboard(user.await(), feed.await())   // ждём оба результата
 }</code></pre>
+          <details class="qa"><summary>Корневой <code>async</code> бросает исключение сразу или только на <code>await()</code>? А дочерний внутри <code>coroutineScope</code>? <span class="q-badge">★</span></summary><div class="ans"><p>Зависит от того, корневая корутина или дочерняя. У корневого <code>async</code> (<code>GlobalScope.async</code> или <code>async</code> прямо на скоупе верхнего уровня) исключение инкапсулируется в <code>Deferred</code> и всплывает только при <code>await()</code> — до этого момента оно молчит и в <code>CoroutineExceptionHandler</code> не идёт.</p><p>У дочернего <code>async</code> внутри <code>coroutineScope</code>/<code>supervisorScope</code> исключение к тому же немедленно распространяется вверх по дереву <code>Job</code> и отменяет родителя и братьев — то есть проявится и без вызова <code>await()</code>. Поэтому ходовое «<code>async</code> откладывает ошибку до <code>await</code>» верно лишь для корневого случая; вложенный <code>async</code> с обычным <code>Job</code> рушит скоуп сразу. Любимый подвох: один и тот же код ведёт себя по-разному в зависимости от того, где запущен <code>async</code>.</p></div></details>
         </section>
 
         <section class="section" id="structured-concurrency">
@@ -167,6 +170,7 @@ supervisorScope {
     launch { loadFeed() }       // эта продолжит работать
     launch { loadAds() }
 }</code></pre>
+          <details class="qa"><summary>Что будет, если внутри дочернего скоупа передать в билдер новый <code>Job()</code> — <code>launch(Job()) { ... }</code>? <span class="q-badge">★</span></summary><div class="ans"><p>Передача нового <code>Job()</code> в билдер разрывает связь родитель-потомок: переданный <code>Job</code> становится родителем новой корутины вместо <code>Job</code> скоупа, и корутина выпадает из дерева structured concurrency. Отсюда последствия — отмена исходного скоупа больше не отменит эту корутину (утечка), скоуп не дождётся её завершения, а исключения не пойдут по нормальному дереву к родителю.</p><p>Это классическая ошибка «я хотел изолировать ошибку, добавив <code>Job()</code> в <code>launch</code>». Для изоляции без разрыва иерархии нужен <code>SupervisorJob</code> у самого скоупа или <code>supervisorScope</code>, а не подмена <code>Job</code> в дочернем билдере. Правило: в контексте дочерней корутины можно менять диспетчер или имя, но <code>Job</code> обычно должен наследоваться от родителя.</p></div></details>
         </section>
 
         <section class="section" id="cancellation">
@@ -192,6 +196,27 @@ job.cancel()                            // отмена сработает на 
 }
 val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main + handler)
 scope.launch { riskyWork() }            // если упадёт — попадёт в handler</code></pre>
+
+          <p class="subhead">Состояния Job</p>
+          <p>Отмена становится понятнее, если держать в голове машину состояний <code>Job</code>. Корутина рождается в <code>New</code> (или сразу <code>Active</code>), работает в <code>Active</code>, после тела ждёт детей в <code>Completing</code> и заканчивает в <code>Completed</code>. Ветка отмены ведёт из <code>Active</code>/<code>Completing</code> в <code>Cancelling</code>, а затем в <code>Cancelled</code>. Именно в <code>Cancelling</code> любой обычный suspend-вызов бросает <code>CancellationException</code> — поэтому очистку с приостановкой и заворачивают в <code>NonCancellable</code>.</p>
+          <div class="diagram">
+          <div class="mermaid">
+stateDiagram-v2
+[*] --> New
+New --> Active: start
+Active --> Completing: тело завершилось
+Completing --> Completed: дети завершились
+Active --> Cancelling: "cancel() / ошибка"
+Completing --> Cancelling: "cancel() / ошибка"
+Cancelling --> Cancelled: дети завершились
+Completed --> [*]
+Cancelled --> [*]
+note right of Cancelling : suspend-вызовы кидают CancellationException
+          </div>
+          <div class="cap">Жизненный цикл Job: в Cancelling приостановка уже невозможна без NonCancellable</div>
+          </div>
+
+          <details class="qa"><summary>Почему отменённая корутина всё ещё «активна» внутри <code>finally</code>, и как закрыть ресурс через сеть при отмене? <span class="q-badge">★</span></summary><div class="ans"><p>После отмены <code>Job</code> переходит в <code>Cancelling</code>, и любой suspend-вызов в этом состоянии немедленно бросает <code>CancellationException</code> — обычный <code>delay</code> или сетевой вызов в <code>finally</code> сразу упадёт, и очистка не выполнится. Чтобы провести suspend-работу при отмене, блок оборачивают в <code>withContext(NonCancellable)</code>: он даёт <code>Job</code>, который не в состоянии отмены, и suspend-вызовы внутри проходят.</p><p>Несуспендящая очистка — закрыть файл, освободить лок — в <code>finally</code> работает и без этого. И нюанс: <code>NonCancellable</code> — анти-паттерн для долгой работы; его место — короткая обязательная финализация, иначе отмена перестаёт быть отзывчивой.</p></div></details>
         </section>
 
         <section class="section" id="custom-delay">
@@ -228,8 +253,9 @@ suspend fun demo() = coroutineScope {
 }</code></pre>
           <div class="callout tip">
             <div class="ic">💡</div>
-            <div class="bd"><strong>Что проверяет интервьюер.</strong> (1) Понимаешь, что приостановка — это сохранённый <code>Continuation</code>, который кто-то должен возобновить. (2) Не блокируешь поток (<code>Thread.sleep</code> — провал). (3) Чистишь ресурсы при отмене (<code>invokeOnCancellation</code>) — иначе таймер «выстрелит» в отменённую корутину или утечёт. Обратите внимание: планировщик здесь — это <code>ScheduledExecutorService</code> из раздела <a href="executors.html">«Executor и пулы потоков»</a>.</div>
+            <div class="bd"><strong>Что проверяет интервьюер.</strong> (1) Вы понимаете, что приостановка — это сохранённый <code>Continuation</code>, который кто-то должен возобновить. (2) Не блокируете поток (<code>Thread.sleep</code> — провал). (3) Чистите ресурсы при отмене (<code>invokeOnCancellation</code>) — иначе таймер «выстрелит» в отменённую корутину или утечёт. Обратите внимание: планировщик здесь — это <code>ScheduledExecutorService</code> из раздела <a href="executors.html">«Executor и пулы потоков»</a>.</div>
           </div>
+          <details class="qa"><summary>Чем <code>suspendCancellableCoroutine</code> отличается от <code>suspendCoroutine</code> и что будет, если в обёртке коллбэка взять второй? <span class="q-badge">★</span></summary><div class="ans"><p><code>suspendCoroutine</code> даёт обычный <code>Continuation</code>, который нельзя отменить: даже если окружающую корутину отменят, приостановленный <code>suspendCoroutine</code> продолжит ждать <code>resume</code> и не отреагирует на отмену — корутина становится неотменяемой в этой точке, а запланированная задача утекает.</p><p><code>suspendCancellableCoroutine</code> даёт <code>CancellableContinuation</code>: он проверяет отмену при возобновлении, бросит <code>CancellationException</code>, если корутину отменили во время ожидания, и даёт <code>invokeOnCancellation</code> для снятия слушателя или таймера. Практическое правило: любой мост из коллбэков строят на <code>suspendCancellableCoroutine</code>, чтобы сохранить кооперативную отмену; <code>suspendCoroutine</code> уместен лишь когда операция гарантированно мгновенна и неотменяема.</p></div></details>
         </section>
 
         <section class="section" id="flow">
@@ -287,6 +313,129 @@ scope.launch { ticks().collect { value -> render(value) } }</code></pre>
     client.register(listener)
     awaitClose { client.unregister(listener) }   // обязательно снять при отмене
 }</code></pre>
+          <details class="qa"><summary>Почему <code>flowOn</code> меняет контекст только upstream, и что нарушает context preservation при <code>withContext</code> внутри <code>flow { }</code>? <span class="q-badge">★</span></summary><div class="ans"><p><code>Flow</code> гарантирует context preservation: <code>emit</code> обязан вызываться из того же контекста корутины, в котором запущен сам блок <code>flow { }</code>. Поэтому менять контекст продюсера руками через <code>withContext(...) { emit(...) }</code> нельзя — на исполнении <code>Flow</code> кинет <code>IllegalStateException</code> про «Flow invariant is violated».</p><p>Легальный способ сменить контекст продюсера — оператор <code>flowOn(dispatcher)</code>: он меняет контекст всей upstream-части (источник плюс операторы выше него), а downstream-операторы и <code>collect</code> остаются в контексте коллектора. Внутри <code>flowOn</code> вставляет канал-буфер между upstream и downstream и запускает upstream в отдельной корутине с заданным диспетчером. Отсюда идиома «продюсер на IO через <code>flowOn</code>, <code>collect</code> на Main».</p></div></details>
+        </section>
+
+        <section class="section" id="flow-compose">
+          <h2>Композиция потоков: flatMap, combine, zip</h2>
+          <p>Один из самых ходовых блоков Flow-собеса. Как только источников становится несколько — type-ahead поиск, объединение нескольких <code>StateFlow</code> в один UI-state — встаёт вопрос: как развернуть <code>Flow&lt;Flow&lt;T&gt;&gt;</code> и как слить несколько потоков. Глава выше дала <code>map</code>/<code>filter</code>/<code>debounce</code>; здесь — операторы, которые любят спрашивать.</p>
+
+          <p class="subhead">flatMap-семейство: три стратегии разворачивания</p>
+          <p>Когда на каждый элемент upstream нужно подписаться на новый внутренний <code>Flow</code>, получается <code>Flow&lt;Flow&lt;T&gt;&gt;</code>. Разворачивают его три оператора, и различаются они конкурентностью.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Оператор</th><th>Порядок</th><th>Конкурентность</th><th>Отмена предыдущего</th><th>Типичный кейс</th></tr></thead>
+              <tbody>
+                <tr><td><code>flatMapConcat</code></td><td>Сохранён</td><td>Один за другим</td><td>Нет, ждёт завершения</td><td>Последовательные шаги</td></tr>
+                <tr><td><code>flatMapMerge</code></td><td>Не гарантирован</td><td>До <code>concurrency</code> (по умолчанию 16)</td><td>Нет, сливает все</td><td>Параллельные запросы</td></tr>
+                <tr><td><code>flatMapLatest</code></td><td>—</td><td>Один активный</td><td>Да, отменяет старый</td><td>Поиск-по-вводу</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Дефолт <code>flatMapMerge</code> — 16.</strong> Параметр <code>concurrency</code> по умолчанию равен <code>DEFAULT_CONCURRENCY</code> = 16. На потоке с тысячами элементов это и узкое место, и риск исчерпания ресурсов — задавайте лимит осознанно.</div>
+          </div>
+
+          <p class="subhead">combine vs zip vs merge</p>
+          <p><code>zip</code> — попарное соединение: ждёт по одному значению от каждого из двух потоков, эмитит пару и завершается, когда завершился любой из потоков; темп задаёт более медленный. <code>combine</code> эмитит при изменении любого из потоков, комбинируя новое значение с последними известными значениями остальных — поэтому <code>combine</code> молчит, пока каждый вход не выдал хотя бы по одному значению (первая эмиссия ждёт всех). <code>merge</code> же просто сливает эмиссии нескольких потоков в один без комбинирования.</p>
+<pre><code class="language-kotlin">// несколько источников состояния → один UI-state
+val uiState: Flow&lt;UiState&gt; = combine(user, cart, promo) { u, c, p -&gt;
+    UiState(u, c, p)               // эмитит на изменение любого; ждёт первую от всех трёх
+}
+
+// строгие пары «один к одному» из двух параллельных запросов
+val pairs: Flow&lt;Pair&lt;A, B&gt;&gt; = flowA.zip(flowB) { a, b -&gt; a to b }</code></pre>
+
+          <p class="subhead">Сквозной пример: type-ahead поиск</p>
+          <p>Собирается из стандартных операторов в нужном порядке: погасить дребезг ввода, отсечь повтор запроса, отменить предыдущий сетевой вызов на новом вводе.</p>
+<pre><code class="language-kotlin">fun search(queries: Flow&lt;String&gt;): Flow&lt;List&lt;Result&gt;&gt; = queries
+    .filter { it.isNotBlank() }       // пустые игнорируем
+    .debounce(300)                    // выждать паузу ввода
+    .distinctUntilChanged()           // не повторять тот же запрос
+    .flatMapLatest { q -&gt;             // отменить старый запрос при новом
+        flow { emit(api.search(q)) }
+    }</code></pre>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Почему именно <code>flatMapLatest</code>.</strong> Только он отменяет предыдущий внутренний поток (текущий запрос к API) при новом вводе. <code>flatMapMerge</code> оставил бы гонку устаревших ответов, <code>flatMapConcat</code> заставил бы ждать завершения каждого. Порядок операторов важен: <code>filter</code>/<code>debounce</code>/<code>distinctUntilChanged</code> до <code>flatMapLatest</code>.</div>
+          </div>
+          <details class="qa"><summary>В чём подвох первой эмиссии у <code>combine</code> по сравнению с <code>zip</code>? <span class="q-badge">★</span></summary><div class="ans"><p><code>combine</code> комбинирует новое значение одного потока с <em>последними известными</em> значениями остальных. Пока хотя бы один из входов не выдал ни одного значения, «последнего известного» у него нет — и <code>combine</code> не эмитит вообще ничего. Если один из источников долго молчит (например, <code>StateFlow</code> без значения, собранный из cold-потока без initial), весь комбинированный поток будет молчать, даже когда остальные активно эмитят. Частая ловушка: UI «не обновляется», потому что один из входных потоков ещё не дал первое значение.</p><p><code>zip</code> ведёт себя иначе — он буферизует по парам и ждёт ровно по одному новому значению от каждого, поэтому пропуск первой эмиссии у него невозможен по определению, но и реактивного «обновись на любой источник» он не даёт.</p></div></details>
+        </section>
+
+        <section class="section" id="state-share-in">
+          <h2>stateIn / shareIn: холодный Flow в горячий</h2>
+          <p>Топовый практический вопрос Senior-собеса по Android: как отдать поток из репозитория в UI, не перезапуская дорогой upstream на каждый <code>collect</code> и на каждый поворот экрана. Ответ — превратить cold <code>Flow</code> в hot.</p>
+          <p>Cold <code>Flow</code> перезапускает продюсера на каждого подписчика. Если на один и тот же поток подпишутся два места UI, запрос уйдёт дважды. <code>stateIn</code> и <code>shareIn</code> запускают одну общую upstream-корутину в переданном скоупе и шарят её результат между всеми подписчиками. Разница: <code>stateIn</code> отдаёт <code>StateFlow</code> и требует <code>initialValue</code>, <code>shareIn</code> отдаёт <code>SharedFlow</code> и настраивается через <code>replay</code>.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Политика <code>started</code></th><th>Когда стартует upstream</th><th>Когда останавливается</th></tr></thead>
+              <tbody>
+                <tr><td><code>Eagerly</code></td><td>Сразу при вызове</td><td>Только с концом скоупа</td></tr>
+                <tr><td><code>Lazily</code></td><td>На первом подписчике</td><td>Только с концом скоупа</td></tr>
+                <tr><td><code>WhileSubscribed(t)</code></td><td>На первом подписчике</td><td>Через <code>t</code> мс после ухода последнего</td></tr>
+              </tbody>
+            </table>
+          </div>
+<pre><code class="language-kotlin">// стандартная отдача состояния из ViewModel
+val state: StateFlow&lt;UiState&gt; = repository.dataFlow
+    .map { it.toUiState() }
+    .stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000), // переживает поворот
+        initialValue = UiState.Empty
+    )</code></pre>
+          <p><code>WhileSubscribed(5000)</code> держит upstream активным ещё 5 секунд после ухода последнего подписчика. Это переживает смену конфигурации: при повороте экрана подписчик на миг отписывается и тут же переподписывается — за 5-секундное окно upstream не успевает остановиться, дорогой поток не перезапускается и кэш не теряется. При этом в фоне, когда подписчиков надолго нет, upstream всё же остановится и не будет жечь батарею.</p>
+          <div class="diagram">
+          <div class="mermaid">
+stateDiagram-v2
+[*] --> Stopped
+Stopped --> Active: первый подписчик
+Active --> GracePeriod: последний отписался
+GracePeriod --> Active: новый подписчик за 5с
+GracePeriod --> Stopped: таймаут 5000мс
+note right of GracePeriod : поворот экрана попадает в это окно
+          </div>
+          <div class="cap">WhileSubscribed: 5-секундное окно гасит перезапуск upstream при повороте</div>
+          </div>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><code>WhileSubscribed</code> работает только если сам сбор на UI тоже останавливается в фоне — через <code>repeatOnLifecycle(STARTED)</code>. Иначе подписчик никогда не «уходит», окно не запускается, и поведение сводится к <code>Lazily</code>.</div>
+          </div>
+          <details class="qa"><summary>Почему именно 5000 мс, а не 0 или, скажем, 60_000? <span class="q-badge">★</span></summary><div class="ans"><p>Число выбирают как компромисс между двумя крайностями. Слишком маленький timeout (0) означает, что upstream остановится в момент отписки — а при повороте экрана отписка и переподписка идут с зазором, и поток перезапустится, потеряв смысл шаринга. Слишком большой (минута) держит дорогой upstream активным, когда экран давно ушёл в фон: лишний трафик и расход батареи, ровно то, от чего уходили.</p><p>5 секунд с запасом перекрывают типичную смену конфигурации (она занимает доли секунды) и при этом достаточно малы, чтобы реальный уход с экрана быстро останавливал поток. Это не магическая константа из SDK, а сложившаяся в гайдах Android практика — её можно подстроить под конкретный источник.</p></div></details>
+        </section>
+
+        <section class="section" id="testing">
+          <h2>Тестирование корутин и Flow</h2>
+          <p>Senior-тема, которую почти всегда трогают: как протестировать код с <code>delay</code>, не ожидая реального времени, и как подменить <code>Dispatchers.Main</code> в тестах ViewModel.</p>
+          <p><code>runTest</code> из <code>kotlinx-coroutines-test</code> запускает тело теста в <code>TestScope</code> с <em>виртуальным временем</em>: <code>delay</code> не ждёт реально, а двигает виртуальные часы. Тест с <code>delay(10_000)</code> проходит мгновенно.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Диспетчер</th><th>Запуск корутин</th><th>Как продвинуть</th></tr></thead>
+              <tbody>
+                <tr><td><code>StandardTestDispatcher</code> (по умолчанию)</td><td>Отложенный, в очередь планировщика</td><td><code>advanceUntilIdle()</code>, <code>advanceTimeBy()</code>, <code>runCurrent()</code></td></tr>
+                <tr><td><code>UnconfinedTestDispatcher</code></td><td>Жадный, до первой реальной приостановки</td><td>Часто не нужно</td></tr>
+              </tbody>
+            </table>
+          </div>
+<pre><code class="language-kotlin">@Test
+fun loadsUser() = runTest {                       // виртуальное время
+    val vm = UserViewModel(repo)
+    vm.load()                                      // корутина в очереди (Standard)
+    advanceUntilIdle()                             // выполнить всё до простоя
+    assertEquals(UiState.Loaded(user), vm.state.value)
+}
+
+// подмена главного диспетчера в @Before/@After:
+Dispatchers.setMain(StandardTestDispatcher())
+// ...
+Dispatchers.resetMain()</code></pre>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Самый частый подвох.</strong> С <code>StandardTestDispatcher</code> запущенные корутины не стартуют сами — забыли <code>advanceUntilIdle()</code>, и проверка читает состояние до того, как корутина что-то сделала. С <code>UnconfinedTestDispatcher</code> корутины стартуют жадно, и продвигать время обычно не надо — но и точный порядок шагов вы уже не контролируете.</div>
+          </div>
+          <p>Для Flow результат собирают в список (<code>flow.toList()</code> на конечном потоке) или используют библиотеку <strong>Turbine</strong> (<code>flow.test { ... awaitItem() }</code>) — она удобна для горячих и бесконечных потоков, где <code>toList()</code> не завершится.</p>
+          <details class="qa"><summary>Почему <code>runTest</code> с <code>StandardTestDispatcher</code> может «зависнуть» или упасть по таймауту, хотя реального ожидания нет? <span class="q-badge">★</span></summary><div class="ans"><p>Виртуальное время продвигается, только пока есть запланированные на него задачи. Если корутина ждёт чего-то, что в виртуальном времени не запланировано — например, реальный <code>Channel</code>, внешний коллбэк или поток на другом, не-тестовом диспетчере, — планировщик доходит до простоя, а ожидаемое событие так и не наступает. <code>runTest</code> в этом случае срабатывает по собственному таймауту (по умолчанию около 60 секунд реального времени) и падает.</p><p>Лечится тем, чтобы весь тестируемый код шёл через тестовый <code>TestDispatcher</code> (включая <code>Dispatchers.setMain</code> и инъекцию диспетчеров в классы), а не уходил на реальные <code>Default</code>/<code>IO</code>. Тогда всё, что должно произойти, оказывается в одном виртуальном расписании, и <code>advanceUntilIdle()</code> его честно прогоняет.</p></div></details>
         </section>
 
         <section class="section" id="threads-vs-coroutines">
@@ -310,6 +459,7 @@ scope.launch { ticks().collect { value -> render(value) } }</code></pre>
             <div class="ic">ℹ️</div>
             <div class="bd"><strong>Точная формулировка для собеса.</strong> Корутина — не поток, а абстракция исполнения <em>поверх</em> потоков. Множество корутин мультиплексируются на пул потоков диспетчера; «лёгкость» — следствие того, что приостановка не держит поток. Поэтому IO-bound нагрузка (много ждущих запросов) выигрывает особенно сильно.</div>
           </div>
+          <details class="qa"><summary>Если корутины мультиплексируются на пул потоков, почему блокирующий вызов на <code>Dispatchers.Default</code> опаснее, чем кажется? <span class="q-badge">★</span></summary><div class="ans"><p>Корутины кооперативно делят небольшой пул: у <code>Default</code> это всего ~число ядер потоков. Блокирующий вызов — <code>Thread.sleep</code>, синхронный сетевой или JDBC-вызов, тяжёлый цикл без suspend — занимает физический поток целиком и не возвращает его диспетчеру, потому что блокировка это не приостановка. Достаточно нескольких таких корутин, чтобы исчерпать все потоки <code>Default</code> и застопорить весь CPU-bound пул: остальные корутины просто не получат поток (thread starvation).</p><p>Блокирующий I/O уводят на <code>Dispatchers.IO</code> (лимит до 64 и эластичность под блокировки), а CPU-цикл делают кооперативно отменяемым и при нужде периодически зовут <code>yield()</code>. Корутина не превращает блокирующий код в неблокирующий — она лишь даёт дешёвую приостановку там, где код действительно <code>suspend</code>.</p></div></details>
         </section>
 
         <section class="section" id="video">
@@ -363,6 +513,41 @@ scope.launch { ticks().collect { value -> render(value) } }</code></pre>
           <details class="qa">
             <summary>Как написать свой <code>delay</code>, не блокируя поток? <span class="q-badge">Senior</span></summary>
             <div class="ans"><p>Через <code>suspendCancellableCoroutine</code>: получаем <code>CancellableContinuation</code>, планируем его возобновление через <code>ScheduledExecutorService</code> (а не <code>Thread.sleep</code> — это бы заблокировало поток), и в <code>invokeOnCancellation</code> отменяем запланированную задачу таймера. Так корутина приостанавливается, поток свободен, а при отмене скоупа таймер корректно снимается без утечки. Это демонстрирует понимание, что приостановка — это сохранённый Continuation, который кто-то обязан возобновить.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Что такое <code>stateIn</code>/<code>shareIn</code> и зачем <code>SharingStarted.WhileSubscribed(5000)</code>? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p><code>stateIn</code> превращает холодный <code>Flow</code> в горячий <code>StateFlow</code>, <code>shareIn</code> — в <code>SharedFlow</code>; оба запускают одну общую upstream-корутину в переданном скоупе и шарят её результат между подписчиками, вместо перезапуска cold-потока на каждый <code>collect</code>. Параметр <code>started</code> задаёт политику запуска: <code>Eagerly</code> (стартует сразу и живёт весь скоуп), <code>Lazily</code> (стартует на первом подписчике и не останавливается), <code>WhileSubscribed</code> (живёт, пока есть подписчики). <code>WhileSubscribed(5000)</code> держит upstream активным ещё 5 секунд после ухода последнего подписчика — это переживает поворот экрана, когда подписчик на миг отписывается и тут же переподписывается, не перезапуская дорогой upstream и не теряя кэш. <code>stateIn</code> к тому же требует <code>initialValue</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Чем различаются <code>flatMapConcat</code>, <code>flatMapMerge</code> и <code>flatMapLatest</code>? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Все три разворачивают <code>Flow&lt;Flow&lt;T&gt;&gt;</code>, но по-разному обращаются с конкурентностью. <code>flatMapConcat</code> последователен: ждёт полного завершения внутреннего потока, прежде чем взять следующий элемент upstream — порядок сохранён. <code>flatMapMerge</code> запускает внутренние потоки конкурентно и сливает их эмиссии, порядок не гарантирован; <code>concurrency</code> ограничивает число одновременных внутренних потоков, по умолчанию 16 (<code>DEFAULT_CONCURRENCY</code>). <code>flatMapLatest</code> при новом значении upstream отменяет предыдущий внутренний поток и стартует новый — основа поиска-по-вводу. Аналогично есть <code>mapLatest</code>/<code>collectLatest</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Чем <code>combine</code> отличается от <code>zip</code>, и где у <code>combine</code> подвох с первой эмиссией? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p><code>zip</code> — попарное соединение: ждёт по одному значению от каждого из двух потоков, эмитит пару и завершается, когда завершился любой из потоков; темп задаёт более медленный. <code>combine</code> эмитит при изменении любого из потоков, комбинируя его новое значение с последними известными значениями остальных — поэтому <code>combine</code> ничего не эмитит, пока каждый из входных потоков не выдал хотя бы по одному значению. <code>zip</code> — когда нужны строго пары «один к одному» (объединить два параллельных запроса), <code>combine</code> — когда нужно реактивное состояние из нескольких источников (несколько <code>StateFlow</code> в один UI-state).</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как тестировать корутины: <code>runTest</code>, виртуальное время, Standard vs Unconfined? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p><code>runTest</code> запускает тело теста в <code>TestScope</code> с виртуальным временем: <code>delay</code> не ждёт реально, а двигает виртуальные часы — тест с <code>delay(10_000)</code> проходит мгновенно. По умолчанию используется <code>StandardTestDispatcher</code>: запущенные корутины не стартуют сразу, а кладутся в очередь планировщика; их прогоняют <code>advanceUntilIdle()</code>, <code>advanceTimeBy(ms)</code> или <code>runCurrent()</code>. <code>UnconfinedTestDispatcher</code>, наоборот, запускает корутины жадно до первой реальной приостановки. Для подмены <code>Dispatchers.Main</code> в ViewModel-тестах ставят <code>Dispatchers.setMain(testDispatcher)</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как настроить буфер <code>SharedFlow</code>: <code>replay</code>, <code>extraBufferCapacity</code>, <code>onBufferOverflow</code>? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p><code>MutableSharedFlow</code> настраивается тремя параметрами. <code>replay</code> — сколько последних значений переотдаётся новому подписчику (по умолчанию 0). <code>extraBufferCapacity</code> — дополнительный буфер сверх <code>replay</code> для развязки эмиттера и медленных подписчиков. <code>onBufferOverflow</code> — что делать, когда буфер (<code>replay</code>+<code>extra</code>) полон: <code>SUSPEND</code> (по умолчанию, <code>emit</code> приостанавливается — backpressure), <code>DROP_OLDEST</code> или <code>DROP_LATEST</code>. При <code>SUSPEND</code> и нулевых буферах <code>emit</code> приостанавливается, пока все текущие подписчики не примут значение, а <code>tryEmit</code> вернёт <code>false</code>. <code>StateFlow</code> — частный случай <code>SharedFlow</code> с <code>replay=1</code>, конфляцией по <code>equals</code> и стратегией, эквивалентной <code>DROP_OLDEST</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Почему <code>GlobalScope</code> — антипаттерн и чем его заменить? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p><code>GlobalScope</code> не привязан ни к какому жизненному циклу: запущенные в нём корутины живут, пока жив процесс, и никем не отменяются — прямой путь к утечкам (корутина переживает экран/ViewModel) и работе вне structured concurrency (ошибки и отмена не каскадируются). В Android вместо него берут lifecycle-aware скоупы: <code>viewModelScope</code> (отменяется в <code>onCleared</code>), <code>lifecycleScope</code>, а для слоя данных — собственный <code>CoroutineScope</code> с <code>SupervisorJob</code>, хранящийся в классе и отменяемый явно. <code>GlobalScope</code> оправдан лишь для редких задач уровня всего приложения, осознанно живущих весь процесс.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Почему <code>StateFlow</code> «теряет» промежуточные значения и пропускает повторы? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p><code>StateFlow</code> хранит ровно одно последнее значение и конфлирует обновления: если значения меняются быстрее, чем подписчик их собирает, промежуточные теряются — подписчик увидит только актуальное (как <code>conflate</code>). Вдобавок <code>StateFlow</code> сравнивает новое значение со старым через <code>Any.equals</code> (как <code>distinctUntilChanged</code>) и не эмитит, если они равны — повтор того же значения «проглатывается». Следствие: <code>StateFlow</code> не годится для одноразовых событий (два одинаковых клика, повторная навигация потеряются) — для событий берут <code>SharedFlow</code> без конфляции. И из-за <code>equals</code> важно, чтобы UI-state был корректным <code>data</code>-классом, иначе обновления могут не доходить.</p></div>
           </details>
 
         </section>
@@ -419,7 +604,7 @@ scope.launch { ticks().collect { value -> render(value) } }</code></pre>
     b.cancel()
     result
 }</code></pre>
-                <p>Объяснение: <code>select</code> снимает подписку со второго <code>Deferred</code>, но не отменяет корутину — та продолжает выполняться в фоне. После получения результата нужно явно вызвать <code>cancel()</code> на обоих. Вызов на уже завершённом <code>Deferred</code> — no-op, поэтому безопасно отменять оба без проверки. Альтернатива — <code>raceOf</code> из библиотеки Arrow или использование <code>channelFlow</code> с <code>first()</code>.</p>
+                <p>Объяснение: <code>select</code> снимает подписку со второго <code>Deferred</code>, но не отменяет корутину — та продолжает выполняться в фоне. После получения результата нужно явно вызвать <code>cancel()</code> на обоих. Вызов на уже завершённом <code>Deferred</code> — no-op, поэтому безопасно отменять оба без проверки. Альтернатива — <code>raceN</code> из библиотеки Arrow или использование <code>channelFlow</code> с <code>first()</code>.</p>
               </div>
             </details>
           </div>
@@ -462,6 +647,134 @@ scope.launch { ticks().collect { value -> render(value) } }</code></pre>
             </details>
           </div>
 
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 4.</strong> Во ViewModel написано <code>val state = repository.dataFlow.stateIn(viewModelScope, SharingStarted.Eagerly, Data.EMPTY)</code>. При повороте экрана виден лишний сетевой запрос upstream, а в фоне поток жжёт батарею. Объясните причину и исправьте.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">val state = repository.dataFlow.stateIn(
+    scope = viewModelScope,
+    started = SharingStarted.WhileSubscribed(5_000),
+    initialValue = Data.EMPTY
+)
+// плюс на UI собирать через repeatOnLifecycle(STARTED)</code></pre>
+                <p>Объяснение: <code>Eagerly</code> запускает upstream сразу и держит его весь жизненный цикл скоупа, включая фон, когда подписчиков нет. <code>WhileSubscribed(5000)</code> держит upstream активным только при наличии подписчиков плюс 5-секундный grace-период — он переживает пересоздание подписчика при повороте, не перезапуская поток, но в фоне поток останавливается. Без сбора через <code>repeatOnLifecycle(STARTED)</code> подписчик не «уходит» в фоне, и <code>WhileSubscribed</code> не сработает.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 5.</strong> Реализуйте <code>retryWithBackoff</code> для <code>Flow&lt;T&gt;</code>: повторять подписку до <code>maxAttempts</code> раз с экспоненциальной задержкой (<code>initialDelayMs</code>, фактор 2.0) и случайным jitter, но <em>не</em> повторять при <code>CancellationException</code> и при неисправимых ошибках (предикат <code>retryOn</code>, например HTTP 401). Почему <code>.retry(3)</code> — анти-паттерн?</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">fun &lt;T&gt; Flow&lt;T&gt;.retryWithBackoff(
+    maxAttempts: Long,
+    initialDelayMs: Long,
+    factor: Double = 2.0,
+    maxDelayMs: Long = 30_000,
+    retryOn: (Throwable) -&gt; Boolean = { true },
+): Flow&lt;T&gt; = retryWhen { cause, attempt -&gt;
+    if (cause is CancellationException) throw cause   // отмену не ретраим
+    if (attempt &gt;= maxAttempts || !retryOn(cause)) return@retryWhen false
+    val base = (initialDelayMs * factor.pow(attempt.toInt())).toLong()
+        .coerceAtMost(maxDelayMs)
+    val jitter = Random.nextLong(base / 2 + 1)       // разводим всплески ретраев
+    delay(base + jitter)
+    true
+}</code></pre>
+                <p>Объяснение: <code>retryWhen</code> даёт и причину, и номер попытки, а <code>delay</code> в его предикате легален (это suspend). <code>CancellationException</code> ретраить нельзя — она часть механизма отмены, проброс обязателен. <code>retryOn</code> отсекает неисправимое (401, 404): повторять их бессмысленно. Jitter разносит ретраи множества клиентов во времени, иначе после сбоя сервера все ломанутся одновременно (thundering herd). Голый <code>.retry(3)</code> — анти-паттерн ровно потому, что повторяет всё подряд (включая отмену и неисправимые ошибки) без задержки, мгновенными залпами добивая упавший бэкенд.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 6.</strong> Реализуйте <code>debounce(timeoutMs)</code> для <code>Flow&lt;T&gt;</code> с нуля (без стандартного оператора): эмитить значение, только если после него <code>timeoutMs</code> не пришло нового; на каждой новой эмиссии таймер сбрасывается. В разборе сравните debounce, <code>throttleFirst</code> и <code>sample</code>.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">fun &lt;T&gt; Flow&lt;T&gt;.debounce(timeoutMs: Long): Flow&lt;T&gt; = channelFlow {
+    var timer: Job? = null
+    collect { value -&gt;
+        timer?.cancel()                  // сброс таймера на новой эмиссии
+        timer = launch {
+            delay(timeoutMs)
+            send(value)                  // прошло timeoutMs тишины — эмитим
+        }
+    }
+    timer?.join()                        // не потерять последнее значение
+}</code></pre>
+                <p>Объяснение: ключ — отменять предыдущий таймер на каждой новой эмиссии, поэтому быстрая серия значений «съедается» и наружу выходит лишь последнее после паузы. Разница трёх операторов: <strong>debounce</strong> ждёт паузу <em>после</em> значения — для поля ввода (печатает пользователь — реагируем, когда остановился); <strong>throttleFirst</strong> пропускает первое значение окна, остальные в окне гасит — для тапа по кнопке (защита от дабл-клика, реагируем сразу на первый); <strong>sample</strong> с периодом T берёт самое свежее значение раз в T — для частого источника, который надо «прореживать» по таймеру (координаты, сенсор).</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 7.</strong> Напишите <code>search(queries: Flow&lt;String&gt;): Flow&lt;List&lt;Result&gt;&gt;</code> для type-ahead поиска: игнорировать пустые строки, выждать паузу ввода 300 мс, не повторять одинаковые запросы подряд и отменять предыдущий сетевой вызов при новом вводе. <code>api.search</code> — suspend-функция.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">fun search(queries: Flow&lt;String&gt;): Flow&lt;List&lt;Result&gt;&gt; = queries
+    .filter { it.isNotBlank() }
+    .debounce(300)
+    .distinctUntilChanged()
+    .flatMapLatest { q -&gt; flow { emit(api.search(q)) } }</code></pre>
+                <p>Объяснение: <code>debounce(300)</code> гасит дребезг ввода; <code>distinctUntilChanged</code> отсекает повтор того же запроса (например, после стирания и возврата буквы); <code>flatMapLatest</code> отменяет предыдущий внутренний поток (текущий запрос к <code>api</code>) при новом вводе — именно он, а не <code>flatMapMerge</code>/<code>Concat</code>, нужен для поиска. Подвох: порядок операторов важен — <code>filter</code>/<code>debounce</code> до <code>flatMapLatest</code>.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 8.</strong> Напишите свой промежуточный оператор <code>pairwise()</code> для <code>Flow&lt;T&gt;</code> через <code>flow { upstream.collect { ... } }</code>: он эмитит пары соседних значений (предыдущее, текущее). Для потока <code>1,2,3</code> результат — <code>(1,2),(2,3)</code>.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">fun &lt;T&gt; Flow&lt;T&gt;.pairwise(): Flow&lt;Pair&lt;T, T&gt;&gt; = flow {
+    var prev: T? = null
+    var has = false
+    collect { value -&gt;
+        if (has) emit(prev as T to value)   // есть предыдущее — эмитим пару
+        prev = value
+        has = true
+    }
+}</code></pre>
+                <p>Объяснение: канонический способ написать оператор — обернуть всё в <code>flow { }</code> и внутри собрать upstream через <code>collect</code>, эмитя в downstream нужное. Состояние (предыдущее значение) живёт в локальной переменной билдера, поэтому оно изолировано на каждого подписчика — оператор остаётся холодным и переиспользуемым. Первое значение пары не образует, флаг <code>has</code> отсекает фальстарт с <code>null</code>. Так же строятся <code>scan</code>, <code>throttleLatest</code> и прочие кастомные операторы — context preservation соблюдается автоматически, потому что <code>emit</code> идёт из того же контекста, что и тело <code>flow</code>.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 9.</strong> Реализуйте token-bucket rate limiter: ёмкость <code>capacity</code> токенов, пополнение <code>refillPerSec</code> токенов в секунду. Метод <code>suspend fun acquire()</code> должен пропускать всплески до ёмкости, а при пустом ведре — приостанавливаться до появления токена (не блокируя поток).</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">class TokenBucket(
+    private val capacity: Double,
+    private val refillPerSec: Double,
+) {
+    private val mutex = Mutex()
+    private var tokens = capacity
+    private var lastNanos = System.nanoTime()
+
+    suspend fun acquire() {
+        while (true) {
+            val waitMs = mutex.withLock {
+                val now = System.nanoTime()
+                val elapsedSec = (now - lastNanos) / 1_000_000_000.0
+                tokens = (tokens + elapsedSec * refillPerSec).coerceAtMost(capacity)
+                lastNanos = now
+                if (tokens &gt;= 1.0) { tokens -= 1.0; return }    // токен есть — пропускаем
+                ((1.0 - tokens) / refillPerSec * 1000).toLong()  // сколько ждать
+            }
+            delay(waitMs.coerceAtLeast(1))                       // suspend, не блокировка
+        }
+    }
+}</code></pre>
+                <p>Объяснение: ведро пополняется не таймером, а лениво — при каждом <code>acquire</code> мы доливаем токены пропорционально прошедшему времени (<code>elapsed * refillPerSec</code>), ограничив сверху ёмкостью. Накопленные до <code>capacity</code> токены и дают всплеск: если запросов давно не было, первые <code>capacity</code> вызовов проходят сразу. Пустое ведро — не <code>reject</code>, а расчёт времени до следующего токена и <code>delay</code> на него, поэтому поток свободен. <code>Mutex</code> сериализует доступ к состоянию без блокировки потока (в отличие от <code>synchronized</code>). Для варианта с отказом вместо ожидания достаточно вернуть <code>false</code>, когда токенов нет.</p>
+              </div>
+            </details>
+          </div>
+
         </section>
 
         <div class="sources">
@@ -483,6 +796,6 @@ scope.launch { ticks().collect { value -> render(value) } }</code></pre>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/app.js?v=20260620-4"></script>
+  <script src="../assets/app.js?v=20260621-3"></script>
 </body>
 </html>

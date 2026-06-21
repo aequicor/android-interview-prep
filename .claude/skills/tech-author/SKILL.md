@@ -1,16 +1,15 @@
 ---
 name: tech-author
 description: >-
-  Пиши и вычитывай техническую книгу / методичку / конспект так, чтобы текст был
-  фактически точным (без выдуманных API, сигнатур, версий, чисел) и читался как
-  написанный человеком в живом стиле технического разбора (как сильный тех-блог), а не ИИ. Два режима: (A) автор — написать главу/раздел
-  технически полно и без ИИ-маркеров; (B) вычитка — почистить готовый или вставленный
-  черновик от ИИ-маркеров и непроверенных утверждений. Триггеры: «напиши главу/конспект
-  по X», «разверни раздел Y», «собери методичку», «сделай текст человечнее», «убери
-  ИИ-маркеры / воду», «почисти от штампов», «проверь факты», «отредактируй черновик».
-  Применяй даже если слово «скил» не звучит. Зона ответственности — КАЧЕСТВО ТЕКСТА
-  (факты + живой язык), не HTML-разметка и верстка страниц: за разметку отвечает соседний
-  скил interview-prep-author, и они работают в паре.
+  Use when a request writes, expands, fact-checks, or edits technical prose for a
+  chapter, методичка, конспект, caption, or interview-prep explanation. Trigger on
+  requests like "напиши главу/конспект", "разверни параграф", "собери методичку",
+  "проверь факты", "отредактируй черновик", "убери ИИ-маркеры/воду", or "сделай текст
+  человечнее" when the text is technical. This skill owns factual accuracy and voice:
+  verify APIs, signatures, versions, numbers, defaults, deprecated status, and write
+  Middle+/Senior material with mechanisms, edge cases, trade-offs, failure modes, and
+  follow-up questions. It does not own HTML/page markup; use interview-prep-author for
+  that and ru-humanizer for the final Russian style pass.
 ---
 
 # Tech Author — точность фактов + живой текст

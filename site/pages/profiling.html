@@ -39,7 +39,7 @@
 
         <section class="section" id="tools">
           <h2>Инструменты: что чем смотреть</h2>
-          <p>Ключ к ответу — соответствие «симптом → инструмент». Держи эту таблицу в голове.</p>
+          <p>Ключ к ответу — соответствие «симптом → инструмент». Эту таблицу стоит держать в голове.</p>
           <div class="table-wrap">
             <table>
               <thead><tr><th>Инструмент</th><th>Что показывает</th><th>Когда применять</th></tr></thead>
@@ -85,6 +85,14 @@
         }
     }
 }</code></pre>
+          <details class="qa">
+            <summary>Чем системный трейс (Perfetto / system trace) принципиально отличается от method tracing в CPU Profiler, и почему jank разбирают именно им? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>Method tracing (Trace Java Methods / Sample Java Methods) инструментирует каждый вход и выход метода в вашем процессе. Это само по себе добавляет немалый overhead и искажает тайминги: найти hot-метод им можно, а понять, чем в этот момент занята система, — нет.</p>
+              <p>System trace через Perfetto пишет события ядра и всех процессов с очень низким overhead: потоки и их состояния (Running / Runnable / Sleeping / Uninterruptible), VSYNC и <code>Choreographer</code>, FrameTimeline с пометкой janky-кадров, биндер-транзакции, GC-паузы, работу RenderThread. Для jank это решающе: важно увидеть не только свой код, но и <em>почему</em> поток не выполнялся — ждал блокировку, вытеснен планировщиком, упёрся в биндер или в GC.</p>
+              <p>Поэтому jank и frozen frames разбирают по system trace, а method/sample tracing берут точечно — когда уже ясно, что время горит в коде вашего процесса. Свои участки подсвечивают через <code>androidx.tracing</code>: <code>trace("label") { ... }</code>.</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="memory">
@@ -142,6 +150,49 @@ flowchart LR
           </div>
           <p class="subhead">Память bitmap и heap dump вручную</p>
           <p>С Android 8.0 пиксели bitmap живут в <strong>нативной</strong> куче (вне Java-heap), но всё равно учитываются как память процесса — большие незакрытые/непереиспользуемые bitmap быстро приводят к OOM. В Profiler делаем <strong>Capture heap dump</strong>: смотрим вкладку <em>Apps Heap</em>, сортируем по <em>Retained Size</em>, ищем дубли Activity (счётчик &gt; 1 после ротаций — почти всегда утечка) и крупные массивы байт.</p>
+          <details class="qa">
+            <summary>Как устроен GC в ART и почему «много мелких аллокаций» вредит плавности UI сильнее, чем одна большая утечка? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>С Android 8 ART по умолчанию использует <strong>Concurrent Copying (CC) GC</strong>, а с Android 10 он стал ещё и поколенческим: большинство объектов умирает молодыми, поэтому частые молодые сборки обходят только недавно созданные объекты, не трогая старшее поколение. Сборка идёт конкурентно с приложением, так что Stop-The-World пауз почти нет — обычно две короткие паузы порядка единиц миллисекунд.</p>
+              <p>Из-за этого настоящая проблема плавности — не длина STW, а <strong>GC pressure</strong>. Чем больше аллокаций в горячем пути (в <code>onBindViewHolder</code>, на каждой рекомпозиции, автобоксинг, временные строки и коллекции), тем чаще запускается GC и тем больше он суммарно отъедает у кадра, дробя его и вызывая jank. Поэтому в горячих участках избегают лишних аллокаций: пулинг объектов, переиспользование буферов, отказ от автобоксинга.</p>
+              <p>Одна крупная утечка опасна иначе: она растит RSS и в пределе даёт <code>OutOfMemoryError</code>, но сама по себе не дёргает кадры.</p>
+            </div>
+          </details>
+        </section>
+
+        <section class="section" id="art-gc-lifecycle">
+          <h2>Жизненный путь объекта в ART GC</h2>
+          <p>Эта схема объясняет связку из вопроса выше наглядно: молодые объекты собираются часто и дёшево, до старшего поколения доживают единицы, а паузы — конкурентные и короткие. Отсюда вывод: бьёт по кадру не длина одной паузы, а <em>частота</em> молодых сборок под потоком аллокаций.</p>
+          <div class="diagram">
+          <div class="mermaid">
+stateDiagram-v2
+    [*] --> Young: new
+    Young --> Dead: умер молодым (большинство)
+    Young --> Old: пережил несколько young-сборок
+    Old --> Dead: full GC (редко)
+    Dead --> [*]
+    note right of Young
+      Young GC: часто, дёшево
+      пауза ~единицы мс
+    end note
+    note right of Old
+      Full GC: редко
+      конкурентно с UI
+    end note
+          </div>
+          <div class="cap">Поколения в ART: дешёвые частые young-сборки против редких full. Поток мелких аллокаций учащает young GC — это и есть GC pressure</div>
+          </div>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Где смотреть GC.</strong> Частоту и длительность сборок видно в Memory Profiler (всплески на графике) и в Perfetto отдельными GC-слайсами на потоке <code>HeapTaskDaemon</code>. Резкий рост частоты young GC при скролле — прямой сигнал лишних аллокаций в горячем пути.</div>
+          </div>
+          <details class="qa">
+            <summary>Когда ART выбирает не CC GC, и что меняет режим low-memory? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>Concurrent Copying — дефолт, но ART не один на все случаи. На устройствах с малой памятью система может перейти на более компактный, но менее «плавный» сборщик и агрессивнее уплотнять кучу: цель смещается с минимальных пауз на минимальный footprint. Копирующий сборщик платит за скорость удвоением полупространства, поэтому там, где памяти в обрез, выгоднее экономия места ценой более заметных пауз.</p>
+              <p>Практический вывод для собеса: нельзя считать «паузы всегда по паре миллисекунд». На бюджетных устройствах под давлением памяти GC дороже и заметнее — поэтому перформанс-проверки гоняют не только на флагмане, но и на слабом железе, где GC pressure проявляется раньше.</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="startup">
@@ -209,8 +260,16 @@ class StartupBenchmark {
 }</code></pre>
           <div class="callout tip">
             <div class="ic">💡</div>
-            <div class="bd"><strong>Связка для собеса.</strong> Macrobenchmark <em>измеряет</em> старт, Baseline Profile <em>ускоряет</em> его, а App Startup + отложенная инициализация <em>убирают лишнюю работу</em> с критического пути. Назвав все три вместе, ты показываешь системное понимание.</div>
+            <div class="bd"><strong>Связка для собеса.</strong> Macrobenchmark <em>измеряет</em> старт, Baseline Profile <em>ускоряет</em> его, а App Startup + отложенная инициализация <em>убирают лишнюю работу</em> с критического пути. Назвав все три вместе, вы показываете системное понимание.</div>
           </div>
+          <details class="qa">
+            <summary>Почему Baseline Profile ускоряет старт уже с первого запуска, а без него первые запуски медленные? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>Без Baseline Profile свежеустановленное приложение исполняется в интерпретаторе. ART накапливает собственный профиль горячих методов локально и компилирует их AOT только в фоне — обычно когда устройство на зарядке и в idle. То есть первые запуски остаются медленными, пока JIT и фоновая компиляция не прогреются.</p>
+              <p>Baseline Profile кладёт список горячих классов и методов прямо в AAB, и при установке (а также после каждого обновления) ART делает по нему AOT-компиляцию заранее — Profile Guided Optimization. Поэтому ускорение есть уже на первом холодном старте; Google называет порядка 30% к скорости выполнения горячего кода.</p>
+              <p>Дополнительно Play может раздавать агрегированный <strong>Cloud Profile</strong>, собранный с других пользователей, но он применяется не мгновенно. Профиль в артефакте даёт эффект сразу и детерминированно. Проверять выигрыш нужно Macrobenchmark с <code>CompilationMode.None()</code> против <code>CompilationMode.Partial(BaselineProfileMode.Require)</code>.</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="ui-jank">
@@ -234,7 +293,7 @@ sequenceDiagram
           </div>
           <p class="subhead">Частые причины jank и фиксы</p>
           <ul>
-            <li><strong>Overdraw</strong> — один пиксель красится несколько раз (вложенные фоны). Включи <em>Debug GPU Overdraw</em>: цель — минимум красного. Убирай лишние <code>background</code>, плоскую иерархию.</li>
+            <li><strong>Overdraw</strong> — один пиксель красится несколько раз (вложенные фоны). Включите <em>Debug GPU Overdraw</em>: цель — минимум красного. Уберите лишние <code>background</code> и держите иерархию плоской.</li>
             <li><strong>Работа на main thread в момент кадра</strong> — парсинг, БД, аллокации в <code>onBindViewHolder</code>/composable. Выноси в фон, кэшируй.</li>
             <li><strong>RecyclerView</strong> — стабильные <code>id</code>, <code>DiffUtil</code> вместо <code>notifyDataSetChanged()</code>, лёгкий <code>onBindViewHolder</code>, нет вложенных скроллов без prefetch.</li>
             <li><strong>Compose</strong> — лишние перекомпозиции: стабильные типы и <code>key</code> в <code>LazyColumn</code>, чтение состояния как можно ниже по дереву, <code>derivedStateOf</code>, <code>remember</code> тяжёлых вычислений, <code>@Immutable/@Stable</code>.</li>
@@ -262,6 +321,54 @@ fun Feed(items: List&lt;User&gt;, onClick: (String) -&gt; Unit) {
 // дорогой расчёт не должен идти на каждой рекомпозиции
 val sorted = remember(items) { items.sortedBy { it.name } }</code></pre>
           <p>В <strong>Layout Inspector</strong> два столбца — counts перекомпозиций и skip-ов: если у composable счётчик растёт при скролле, а данные не менялись — кандидат на стабилизацию. Подтверждай эффект на release Macrobenchmark с <code>FrameTimingMetric</code>.</p>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><strong>Механика кадра — отдельно.</strong> Как именно VSYNC, <code>Choreographer</code> и RenderThread складываются в конвейер кадра, подробно разобрано в главе <a href="rendering.html">Рендеринг и кадры</a>. Здесь нас интересует профилирование: где конвейер встаёт и как это измерить.</div>
+          </div>
+          <details class="qa">
+            <summary>Что именно делает Choreographer при пропуске кадра, и почему высокий средний FPS не противоречит ощутимому jank? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p><code>Choreographer</code> подписан на сигнал VSYNC от дисплея и на каждый вызывает <code>doFrame()</code>. Внутри по порядку обрабатываются input → animation (включая колбэки) → measure/layout/draw, после чего дерево отрисовки синхронизируется в RenderThread. Если <code>doFrame()</code> не уложился в бюджет (≈16,6 мс при 60 Гц), кадр к ближайшему VSYNC не готов — на экране остаётся прежний, и в logcat появляется «Skipped N frames! The application may be doing too much work on its main thread».</p>
+              <p>FPS как среднее за секунду это прячет: можно держать 58 кадров в среднем, но один кадр длиной 120 мс даёт заметный рывок. Пользователь чувствует именно худшие кадры, а не среднее. Поэтому метрика — не средний FPS, а <strong>перцентили длительности кадров (P90/P99)</strong> и доля janky/frozen frames; их и отдают <code>FrameTimingMetric</code> в Macrobenchmark и FrameTimeline в Perfetto.</p>
+            </div>
+          </details>
+        </section>
+
+        <section class="section" id="anr">
+          <h2>ANR: типы, пороги и разбор трейса</h2>
+          <p>ANR (Application Not Responding) система рисует, когда главный поток слишком долго не реагирует — за этим следит watchdog в <code>ActivityManager</code>. Это не отдельный баг, а симптом: main thread заблокирован, и ОС предлагает пользователю закрыть приложение. На собесе по перформансу ANR спрашивают почти всегда, причём конкретику: пороги и как читать трейс.</p>
+          <p class="subhead">Типы ANR и пороги</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Тип</th><th>Что меряется</th><th>Порог</th><th>Частая причина</th></tr></thead>
+              <tbody>
+                <tr><td>Input dispatching</td><td>Обработка тапа/свайпа</td><td>5 с</td><td>Тяжёлая работа в обработчике / на main thread</td></tr>
+                <tr><td>BroadcastReceiver</td><td><code>onReceive</code></td><td>10 с (foreground) / 60 с (фон)</td><td>Синхронный I/O в <code>onReceive</code> на main thread</td></tr>
+                <tr><td>Service</td><td><code>onCreate</code>/<code>onStartCommand</code>/<code>onBind</code></td><td>~20 с (foreground) / ~200 с (background)</td><td>Долгий запуск/инициализация на main thread</td></tr>
+                <tr><td>ContentProvider</td><td>publish / запрос</td><td>см. таймаут процесса</td><td>Тяжёлая инициализация провайдера на старте</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Broadcast и Service крутятся на main thread.</strong> И <code>onReceive</code>, и колбэки <code>Service</code> по умолчанию исполняются на главном потоке. Поэтому «тяжёлый» <code>onReceive</code> не только сам рискует ANR, но и блокирует обработку ввода — выноси работу в <code>goAsync()</code>, корутину или WorkManager.</div>
+          </div>
+          <p class="subhead">Как читать ANR-trace</p>
+          <p>В трейсе главное — состояние <strong>main thread</strong> в момент зависания:</p>
+          <ul>
+            <li><strong>В своём коде</strong> (стек в ваших методах, состояние RUNNABLE) — ищем тяжёлую операцию: парсинг, БД, цикл, регэксп.</li>
+            <li><strong>В <code>Object.wait</code> / <code>park</code> или держит-ждёт монитор</strong> — дедлок или contention на блокировке: два потока ждут друг друга.</li>
+            <li><strong>В биндер-транзакции</strong> — синхронный IPC: ждём ответа другого процесса (часто system_server под нагрузкой).</li>
+          </ul>
+          <p class="subhead">Диагностика в проде</p>
+          <p>ANR редко ловится локально, поэтому стартуют с <strong>Android Vitals</strong> в Play Console: там агрегированы ANR-rate и сами трейсы со стеком всех потоков. Прямо из приложения пост-фактум причину даёт <code>ApplicationExitInfo</code> (<code>getHistoricalProcessExitReasons</code>, <code>REASON_ANR</code>); на устройстве есть <code>/data/anr/traces.txt</code>; сторонние APM (Crashlytics, Sentry) умеют захватывать ANR. Локально воспроизводят нагрузкой, медленным хранилищем и <code>StrictMode</code> с <code>penaltyLog()</code>, а корень ищут в Perfetto.</p>
+          <details class="qa">
+            <summary>Чем frozen frame отличается от ANR, и почему длинный кадр — это не всегда ANR? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>Frozen frame — это кадр, который рисовался дольше ~700 мс: метрика плавности из Android Vitals. Он портит ощущение, но приложение продолжает реагировать. ANR — это другой порог и другой watchdog: главный поток не обработал ввод за 5 секунд (или компонент не уложился в свой таймаут). Frozen frame может случиться без единого ANR, и наоборот — ANR бывает без рендера вообще (например, зависший <code>onReceive</code>).</p>
+              <p>Связь между ними причинная: и то, и другое — следствие занятого main thread. Длинная работа на UI-потоке сперва даёт цепочку janky/frozen кадров, а если затягивается за 5 секунд и в это время прилетает тап — превращается в ANR. Поэтому чинят их одинаково (вынос работы с main thread), но измеряют разными метриками: FrameTimeline для кадров, ANR-rate для зависаний.</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="apk-size">
@@ -299,6 +406,14 @@ val sorted = remember(items) { items.sortedBy { it.name } }</code></pre>
             </table>
           </div>
           <p>Найти, что именно раздувает сборку, помогает <strong>APK Analyzer</strong> (Build → Analyze APK): он показывает вклад DEX, ресурсов и нативных либ и умеет делать <em>diff</em> двух APK — удобно ловить рост размера между релизами.</p>
+          <details class="qa">
+            <summary>Чем full mode R8 отличается от ProGuard-совместимого режима, и какой класс багов он добавляет в release? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>R8 по умолчанию работает в <strong>full mode</strong> (<code>android.enableR8.fullMode=true</code>) и оптимизирует агрессивнее ProGuard: например, может предполагать, что у класса нет конструктора по умолчанию, удалять и переименовывать классы без видимых обращений, вольнее обращаться с реализациями интерфейсов и дженериками. ProGuard-совместимый режим делает более консервативные допущения.</p>
+              <p>Плата за агрессивность — краши <strong>только в release</strong> у кода, к которому обращаются по имени: рефлексия, сериализация (Gson/Moshi через <code>TypeToken</code> и поля, kotlinx.serialization), DI по рефлексии, классы из манифеста, JNI. Без точечных <code>-keep</code>/<code>-keepclassmembers</code>/<code>-keepattributes</code> (<code>Signature</code>, <code>RuntimeVisibleAnnotations</code>) такой код выпиливается или переименовывается — и падает <code>NoSuchMethodException</code>, NPE или невалидный JSON.</p>
+              <p>Поэтому release-сборку обязательно прогоняют end-to-end, а стектрейсы деобфусцируют через <code>mapping.txt</code> в Play Console. Современные библиотеки поставляют consumer-keep-правила прямо в AAR, чтобы это не приходилось писать руками.</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="network-battery">
@@ -323,6 +438,50 @@ val sync = PeriodicWorkRequestBuilder&lt;SyncWorker&gt;(6, TimeUnit.HOURS)
 WorkManager.getInstance(context).enqueueUniquePeriodicWork(
     "sync", ExistingPeriodicWorkPolicy.KEEP, sync
 )</code></pre>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><strong>Подробнее о фоне.</strong> Doze, App Standby, expedited work и выбор между WorkManager и foreground service разобраны в главе <a href="background-work.html">Фоновая работа</a>. Здесь это в фокусе профилирования: лишние wakelock-и и сетевые «будильники» как источник разряда.</div>
+          </div>
+          <details class="qa">
+            <summary>Что происходит с фоновой работой и сетью в Doze, и почему «просто запустить WorkManager» не гарантирует немедленного выполнения? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>В <strong>Doze</strong> (экран выключен, устройство неподвижно и не на зарядке достаточно долго) система откладывает сетевой доступ, jobs/syncs и обычные alarm-ы, а wakelock-и игнорируются. Накопленную работу она выпускает периодическими maintenance-окнами, интервал между которыми по мере углубления Doze растёт. App Standby по тому же принципу душит редко используемые приложения.</p>
+              <p>Поэтому WorkManager с обычным <code>OneTime</code>/<code>PeriodicWorkRequest</code> гарантирует выполнение, но не «прямо сейчас»: задача запустится в ближайшее подходящее окно с учётом constraints. Для несрочной синхронизации это и есть правильное поведение — она должна быть отложенной и идемпотентной.</p>
+              <p>Если работа действительно срочная и инициирована пользователем — нужен <strong>expedited work</strong> (<code>setExpedited</code>, под капотом foreground-исполнение с квотой) или полноценный foreground service. Для гарантированного времени — <code>setAndAllowWhileIdle</code>/<code>setExactAndAllowWhileIdle</code> у AlarmManager, но злоупотребление ими бьёт по батарее и ограничено системой.</p>
+            </div>
+          </details>
+        </section>
+
+        <section class="section" id="perfetto">
+          <h2>Системный трейс на практике: читаем Perfetto</h2>
+          <p>Назвать Perfetto в списке инструментов — половина дела. Senior-вопрос звучит иначе: «снял трейс — что дальше?». System trace берут вместо method tracing, когда нужен низкий overhead и видна вся система, а не только ваш процесс. Снимают его из Profiler (System Trace) или через <code>perfetto</code> CLI, открывают в ui.perfetto.dev.</p>
+          <p class="subhead">Что искать в трейсе</p>
+          <ul>
+            <li><strong>Состояния потоков</strong> — Running (на CPU), Runnable (готов, но не на CPU), Sleeping, Uninterruptible (D, обычно блокирующий I/O). Главный сигнал — почему поток <em>не</em> Running.</li>
+            <li><strong>VSYNC и <code>Choreographer.doFrame</code></strong> — рамки кадров; рядом FrameTimeline помечает кадры как Janky/Frozen с причиной.</li>
+            <li><strong>RenderThread</strong> — если затык там, дело в GPU/отрисовке (overdraw, тяжёлые шейдеры), а не в вашем коде.</li>
+            <li><strong>GC-слайсы и binder-транзакции</strong> — паузы GC дробят кадр; долгая binder-транзакция = синхронный IPC, ждём другой процесс.</li>
+          </ul>
+          <p class="subhead">Типовые паттерны разбора одного janky-кадра</p>
+          <p>Нашли красный (janky) кадр на FrameTimeline — кликаем, смотрим, на чём стоял main thread в его границах. Дальше три частых исхода: поток <strong>Runnable, но не Running</strong> — его вытеснил планировщик (CPU занят другим, частый случай на слабом железе); один <strong>долгий слайс в вашем коде</strong> — несём работу в фон; <strong>ожидание биндера</strong> — синхронный вызов в другой процесс, кэшируем результат или делаем асинхронно.</p>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Свои метки в трейсе.</strong> Чтобы видеть собственные участки рядом с системными, оборачивай их в <code>androidx.tracing</code>: метка появится отдельным слайсом ровно на том потоке, где выполнялась.</div>
+          </div>
+          <div class="code-label">Repo.kt</div>
+<pre><code class="language-kotlin">import androidx.tracing.trace
+
+fun loadFeed(): List&lt;Item&gt; = trace("loadFeed") {
+    val raw = trace("db.query") { dao.queryAll() }      // отдельный слайс в Perfetto
+    trace("map.toUi") { raw.map { it.toUi() } }          // видно, что дороже
+}</code></pre>
+          <details class="qa">
+            <summary>Почему method tracing нельзя доверять для замера абсолютного времени, а system trace — можно? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>Trace Java Methods инструментирует каждый вход и выход метода, добавляя в hot-путь столько накладных расходов, что абсолютные тайминги раздуваются, а соотношение между методами искажается тем сильнее, чем чаще метод вызывается (мелкие частые методы «толстеют» непропорционально). Им хорошо находить <em>относительно</em> горячее место, но не утверждать «это заняло 12 мс».</p>
+              <p>System trace пишет уже существующие события ядра и заранее расставленные точки (ATrace) с минимальным overhead — он не оборачивает каждый вызов, а слушает планировщик и явные слайсы. Поэтому его длительности близки к реальным, и именно по нему меряют, уложился ли кадр в бюджет. Отсюда практика: jank и бюджет кадра — system trace; «какой из двух методов горячее в моём процессе» — sample/method tracing точечно.</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="video">
@@ -344,7 +503,7 @@ WorkManager.getInstance(context).enqueueUniquePeriodicWork(
           <h2>Частые вопросы интервьюера</h2>
 
           <details class="qa">
-            <summary>Приложение долго стартует — твои действия по шагам? <span class="q-badge">Middle+</span></summary>
+            <summary>Приложение долго стартует — как вы будете разбирать проблему по шагам? <span class="q-badge">Middle+</span></summary>
             <div class="ans"><p>1) Замерить воспроизводимо: Macrobenchmark <code>StartupTimingMetric</code> в режиме COLD на release-сборке, плюс посмотреть Android Vitals. 2) Снять system trace в Profiler/Perfetto и разобрать критический путь: что тяжёлого в <code>Application.onCreate</code>, какие <code>ContentProvider</code>-ы инициализируются. 3) Фиксы: убрать с main thread синхронный I/O и прогрев SDK, перевести на ленивую инициализацию через App Startup, подключить Baseline Profile. 4) Перемерить тем же бенчмарком и сравнить TTID/TTFD. Ключевое — назвать cold/warm/hot и подтвердить эффект цифрой.</p></div>
           </details>
 
@@ -383,13 +542,43 @@ WorkManager.getInstance(context).enqueueUniquePeriodicWork(
             <div class="ans"><p>Constraints (Wi-Fi, зарядка, idle, не-low-battery) позволяют отложить фоновую работу до выгодного момента и сэкономить батарею — система батчит такие задачи. Doze (когда экран выключен и устройство неподвижно) принудительно глушит сеть, alarm и wakelock-и, выпуская работу окнами обслуживания; App Standby душит редко используемые приложения. Вывод для архитектуры: фоновая синхронизация должна быть отложенной и идемпотентной, а не рассчитанной на «выполнить ровно сейчас». Для немедленной критичной работы — foreground service или expedited work.</p></div>
           </details>
 
+          <details class="qa">
+            <summary>Как диагностировать ANR в проде, если он не воспроизводится локально? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Старт — <strong>Android Vitals</strong> в Play Console: там агрегированы ANR-rate и сами трейсы со стеком всех потоков в момент зависания. По трейсу смотрят состояние main thread: в своём коде — ищем тяжёлую операцию; в <code>Object.wait</code>/<code>park</code> или держит-ждёт монитор — дедлок или contention; в биндер-транзакции — синхронный IPC. Прямо из приложения причину пост-фактум даёт <code>ApplicationExitInfo</code> (<code>getHistoricalProcessExitReasons</code>, <code>REASON_ANR</code>); на устройстве — <code>/data/anr/traces.txt</code>; сторонние APM (Crashlytics, Sentry) умеют захватывать ANR. Локально воспроизводят нагрузкой и медленным хранилищем, ловят <code>StrictMode</code> с <code>penaltyLog()</code>, корень ищут в Perfetto.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>В чём разница между TTID и TTFD и зачем нужен reportFullyDrawn()? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p><strong>TTID</strong> (Time To Initial Display) — время до первого полностью отрисованного кадра, его система определяет сама. <strong>TTFD</strong> (Time To Full Display) — время до момента, когда контент реально готов к взаимодействию (данные загружены, плейсхолдеры заменены реальными элементами). Этот момент знает только приложение, поэтому его явно сообщают вызовом <code>Activity.reportFullyDrawn()</code>. Это важно, потому что можно показать пустой каркас за 200 мс (отличный TTID), но подтянуть данные за 2 секунды (плохой TTFD) — пользователь видит именно второе. Macrobenchmark-метрики ориентируются на оба значения; <code>reportFullyDrawn</code> ещё и помогает ART точнее собрать профиль горячего кода старта.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Счётчик Activity &gt; 1 в heap dump — всегда ли это утечка? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>После поворота старая Activity уничтожается и должна быть собрана GC, поэтому устойчивый счётчик экземпляров одной Activity больше 1 (особенно растущий с числом ротаций) — почти всегда утечка. Но бывают ложные срабатывания: объект ещё не собран просто потому, что GC не запускался — перед снятием heap dump нужно <strong>форсировать сборку</strong> (LeakCanary делает это сам, вручную — кнопка GC в Profiler) и только потом смотреть Retained Size. Короткоживущее дублирование в момент самого перехода — норма. Достоверный признак течи — объект жив <em>после</em> принудительного GC и держится сильной ссылкой от GC root; именно эту цепочку показывает leak trace.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Можно ли держать LeakCanary в release-сборке? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Смысла нет: <code>leakcanary-android</code> по дизайну debug-only. Снятие heap dump через <code>Debug.dumpHprofData</code> замораживает приложение на сотни миллисекунд–секунды (Stop-The-World для всего процесса), парсинг hprof тяжёлый, а сам дамп содержит данные пользователя — в проде это и UX-фриз, и нарушение приватности. Для продакшен-детектирования у Square есть отдельный путь (ручной триггеринг или сбор только статистики), но классический автоматический режим оставляют в debug/QA. В release утечки и рост памяти ловят иначе: Android Vitals по памяти/OOM, APM, выборочные heap-метрики, нагрузочное тестирование на QA-сборке с включённым LeakCanary.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Что такое overdraw, как его измерить и какой уровень приемлем? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>Overdraw — когда один пиксель за кадр закрашивается несколько раз (вложенные непрозрачные фоны, перекрывающиеся View): GPU делает лишнюю работу, кадр дорожает. Меряют через Developer Options → <strong>Debug GPU Overdraw</strong>: экран раскрашивается по слоям — без цвета (0x, идеально), синий (1x), зелёный (2x), светло-красный (3x), тёмно-красный (4x+). Цель — преобладание синего, минимум красного. Чинят удалением лишних <code>background</code> у контейнеров, плоской иерархией, <code>clipRect</code>/<code>clipToPadding</code>, отказом от полноэкранных непрозрачных фонов поверх друг друга. В Compose аналог — лишние <code>Box</code> с фоном и многократные <code>Modifier.background</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Чем профилирование debug-сборки опасно как источник выводов? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Debug-сборка отключает оптимизации и даёт заведомо неверные цифры: код не прошёл R8 (нет инлайнинга и shrinking), нет Baseline Profile, ART чаще в интерпретаторе/JIT, включён <code>debuggable</code>-флаг (он сам по себе замедляет ART), могут быть активны StrictMode и логирование. В итоге старт, скролл и аллокации в debug в разы хуже, чем у пользователя в release — оптимизировать «по debug» значит гонять призраков. Поэтому Macrobenchmark требует release или profileable-сборку (<code>android:profileable</code>), а Microbenchmark прогревает JIT и отсекает выбросы. Правило для собеса: любые перформанс-замеры — только на release/profileable, debug годится лишь для функциональной отладки и LeakCanary.</p></div>
+          </details>
+
         </section>
 
         <section class="section" id="tasks">
           <h2>Задачи</h2>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 1.</strong> Найди утечку памяти. Ниже — фрагмент кода, в котором Activity гарантированно течёт после поворота экрана. Назови причину и перепиши фрагмент так, чтобы утечки не было.</p>
+            <p class="task-problem"><strong>Задача 1.</strong> Найдите утечку памяти. Ниже — фрагмент кода, в котором Activity гарантированно течёт после поворота экрана. Назовите причину и перепишите фрагмент так, чтобы утечки не было.</p>
 <pre><code class="language-kotlin">class MapActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -435,7 +624,7 @@ object LocationManager {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 2.</strong> Напиши реализацию <code>DiffUtil.ItemCallback</code> для класса <code>Product(id: Long, name: String, priceRub: Int)</code> и объясни, почему <code>notifyDataSetChanged()</code> вызывает jank, а <code>DiffUtil</code> — нет. Также объясни, что будет, если <code>areItemsTheSame</code> возвращает <code>true</code>, а <code>areContentsTheSame</code> — <code>false</code>.</p>
+            <p class="task-problem"><strong>Задача 2.</strong> Напишите реализацию <code>DiffUtil.ItemCallback</code> для класса <code>Product(id: Long, name: String, priceRub: Int)</code> и объясните, почему <code>notifyDataSetChanged()</code> вызывает jank, а <code>DiffUtil</code> — нет. Также объясните, что будет, если <code>areItemsTheSame</code> возвращает <code>true</code>, а <code>areContentsTheSame</code> — <code>false</code>.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -464,7 +653,7 @@ class ProductAdapter : ListAdapter&lt;Product, ProductAdapter.VH&gt;(PRODUCT_DIF
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 3.</strong> Напиши настройку <code>StrictMode</code> для debug-сборки, которая ловит чтение с диска и сетевые вызовы на main thread, а также утечки незакрытых <code>Closeable</code>-объектов. Объясни, какую политику наказания нельзя ставить в production и почему.</p>
+            <p class="task-problem"><strong>Задача 3.</strong> Напишите настройку <code>StrictMode</code> для debug-сборки, которая ловит чтение с диска и сетевые вызовы на main thread, а также утечки незакрытых <code>Closeable</code>-объектов. Объясните, какую политику наказания нельзя ставить в production и почему.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -491,7 +680,74 @@ class ProductAdapter : ListAdapter&lt;Product, ProductAdapter.VH&gt;(PRODUCT_DIF
         // в release — ничего из StrictMode
     }
 }</code></pre>
-                <p>Объяснение: <code>penaltyDeath()</code> и <code>penaltyDeathOnNetwork()</code> в production крашат приложение у пользователя при любом нарушении, в том числе во внешних библиотеках, которые ты не контролируешь, — это неприемлемо. <code>penaltyLog()</code> безопасен: только пишет в logcat, не трогает пользователя. <code>StrictMode</code> — инструмент раннего детектирования «грехов» в процессе разработки; в release его вообще не включают. Обнаруженные им нарушения на main thread — прямой путь к ANR при медленном хранилище или сети.</p>
+                <p>Объяснение: <code>penaltyDeath()</code> и <code>penaltyDeathOnNetwork()</code> в production крашат приложение у пользователя при любом нарушении, в том числе во внешних библиотеках, которые вы не контролируете, — это неприемлемо. <code>penaltyLog()</code> безопасен: только пишет в logcat, не трогает пользователя. <code>StrictMode</code> — инструмент раннего детектирования «грехов» в процессе разработки; в release его вообще не включают. Обнаруженные им нарушения на main thread — прямой путь к ANR при медленном хранилище или сети.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 4.</strong> В горячем участке RecyclerView на каждом <code>onBindViewHolder</code> создаётся новый <code>SimpleDateFormat</code> и форматируется дата, а число форматируется через <code>String.format</code>. На длинном списке при скролле виден jank. Объясните, почему этот код создаёт GC pressure, и перепишите так, чтобы в <code>onBindViewHolder</code> не было лишних аллокаций.</p>
+<pre><code class="language-kotlin">// ❌ десятки временных объектов на каждый бинд
+class EventAdapter(private val items: List&lt;Event&gt;) :
+    RecyclerView.Adapter&lt;EventAdapter.VH&gt;() {
+    override fun onBindViewHolder(holder: VH, pos: Int) {
+        val e = items[pos]
+        val fmt = SimpleDateFormat("dd.MM.yyyy", Locale.getDefault())  // новый объект!
+        holder.date.text = fmt.format(e.date)
+        holder.price.text = String.format("%,d ₽", e.priceRub)         // ещё аллокации
+    }
+}</code></pre>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">// ✅ дорогое посчитано заранее, в onBind — только выставление готовой строки
+data class EventUi(val formattedDate: String, val formattedPrice: String)
+
+// маппинг на фоне (в репозитории/ViewModel), один раз на элемент
+fun Event.toUi(fmt: SimpleDateFormat, dec: DecimalFormat) =
+    EventUi(fmt.format(date), dec.format(priceRub.toLong()) + " ₽")
+
+class EventAdapter(private val items: List&lt;EventUi&gt;) :
+    RecyclerView.Adapter&lt;EventAdapter.VH&gt;() {
+    override fun onBindViewHolder(holder: VH, pos: Int) {
+        val e = items[pos]
+        holder.date.text = e.formattedDate          // ноль аллокаций в горячем пути
+        holder.price.text = e.formattedPrice
+    }
+}</code></pre>
+                <p>Объяснение: <code>new SimpleDateFormat(...)</code> и <code>String.format</code> на <em>каждый</em> бинд — это десятки временных объектов на кадр при скролле, а <code>SimpleDateFormat</code> ещё и дорог в создании и не потокобезопасен. Поток мелких аллокаций учащает молодой GC, тот дробит бюджет кадра — отсюда jank. Фикс: форматировать данные один раз при подготовке списка (в маппере на фоне), а в <code>onBindViewHolder</code> только выставлять готовую строку. Если форматировать всё же в адаптере — держать <code>SimpleDateFormat</code>/<code>DecimalFormat</code> переиспользуемым полем, а не создавать заново. Главная мысль: <code>onBind</code> и composable — горячий путь, в нём не место аллокациям и тяжёлым вычислениям; эффект подтверждаем Macrobenchmark <code>FrameTimingMetric</code> на release.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 5.</strong> Напишите Macrobenchmark-тест, который сравнивает холодный старт <em>без</em> Baseline Profile и <em>с</em> ним, чтобы доказать выигрыш цифрой. Укажите, какие <code>CompilationMode</code> используются и почему нельзя сравнивать на debug-сборке.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">@RunWith(AndroidJUnit4::class)
+class StartupCompilationBenchmark {
+    @get:Rule val rule = MacrobenchmarkRule()
+
+    // 1) чистый интерпретатор — как первый запуск без профиля
+    @Test fun startupNoProfile() = measure(CompilationMode.None())
+
+    // 2) применён Baseline Profile (требуем, иначе тест упадёт)
+    @Test fun startupBaselineProfile() =
+        measure(CompilationMode.Partial(BaselineProfileMode.Require))
+
+    private fun measure(mode: CompilationMode) = rule.measureRepeated(
+        packageName = "com.example.app",
+        metrics = listOf(StartupTimingMetric()),     // timeToInitialDisplayMs
+        compilationMode = mode,
+        startupMode = StartupMode.COLD,
+        iterations = 10                               // ≥10 для устойчивой медианы
+    ) {
+        pressHome()
+        startActivityAndWait()
+    }
+}</code></pre>
+                <p>Объяснение: два прогона одного <code>StartupTimingMetric</code> с разным <code>CompilationMode</code> — <code>None()</code> (как первый запуск без профиля) против <code>Partial(BaselineProfileMode.Require)</code> (профиль применён). Сравниваем <code>timeToInitialDisplayMs</code> по медиане и P90. Почему не debug: Macrobenchmark требует release или profileable non-debuggable APK — на debuggable ART работает в разы медленнее, а Baseline Profile и R8 не применяются, так что цифры нерепрезентативны (тест на debuggable выдаст ошибку). Меряем на реальном стабильном устройстве, <code>iterations</code> ≥ 10.</p>
               </div>
             </details>
           </div>
@@ -509,6 +765,8 @@ class ProductAdapter : ListAdapter&lt;Product, ProductAdapter.VH&gt;(PRODUCT_DIF
             <li><a href="https://square.github.io/leakcanary/fundamentals-how-leakcanary-works/" target="_blank" rel="noopener">How LeakCanary works — Square</a> — ObjectWatcher, heap dump, Shark, построение leak trace.</li>
             <li><a href="https://developer.android.com/develop/ui/compose/tooling/debug" target="_blank" rel="noopener">Debug your Compose UI — Android Developers</a> — recomposition и skip counts в Layout Inspector.</li>
             <li><a href="https://www.youtube.com/watch?v=WWdDzXgrkmg" target="_blank" rel="noopener">Improving Performance with Baseline Profiles (MAD Skills)</a> — официальное видео-объяснение и демо.</li>
+            <li><a href="https://developer.android.com/topic/performance/vitals/anr" target="_blank" rel="noopener">ANRs — Android Developers</a> — типы и пороги ANR, чтение трейса, диагностика через Vitals.</li>
+            <li><a href="https://developer.android.com/topic/performance/tracing" target="_blank" rel="noopener">Overview of system tracing — Android Developers</a> — Perfetto, что искать в трейсе, кастомные слайсы androidx.tracing.</li>
           </ol>
         </div>
       </article>
@@ -519,6 +777,6 @@ class ProductAdapter : ListAdapter&lt;Product, ProductAdapter.VH&gt;(PRODUCT_DIF
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/app.js?v=20260620-4"></script>
+  <script src="../assets/app.js?v=20260621-3"></script>
 </body>
 </html>

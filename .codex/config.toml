@@ -1,0 +1,32 @@
+# Project-scoped Codex configuration for the Android interview-prep guide.
+# Keep model, provider, auth, notifications, and telemetry in user config.
+
+sandbox_mode = "workspace-write"
+approval_policy = "on-request"
+web_search = "cached"
+
+# AGENTS.md is intentionally large in this repo: it bootstraps project terms,
+# authoring workflow, and skill-loading rules.
+project_doc_max_bytes = 65536
+
+[sandbox_workspace_write]
+network_access = false
+writable_roots = []
+exclude_tmpdir_env_var = false
+exclude_slash_tmp = false
+
+[[skills.config]]
+path = "../.agents/skills/interview-prep-author/SKILL.md"
+enabled = true
+
+[[skills.config]]
+path = "../.agents/skills/tech-author/SKILL.md"
+enabled = true
+
+[[skills.config]]
+path = "../.agents/skills/infographic-author/SKILL.md"
+enabled = true
+
+[[skills.config]]
+path = "../.agents/skills/ru-humanizer/SKILL.md"
+enabled = true

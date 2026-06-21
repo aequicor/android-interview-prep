@@ -74,6 +74,13 @@ prefs.edit().putBoolean("dark", true).apply()</code></pre>
             <li><strong>Нет транзакционности.</strong> Несколько <code>put</code> в одном <code>edit()</code> не образуют атомарной транзакции с гарантиями консистентности на уровне типобезопасности — легко получить рассогласованное состояние.</li>
             <li><strong>Нет реактивности из коробки.</strong> Есть только <code>OnSharedPreferenceChangeListener</code> с ручной отпиской; нет <code>Flow</code>, нет типобезопасности, нет работы с корутинами.</li>
           </ul>
+
+          <details class="qa"><summary>Потокобезопасен ли <code>SharedPreferences</code> и почему <code>getSharedPreferences</code> с одним именем всегда возвращает тот же объект? Хватает ли этого для read-modify-write из разных потоков? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>На уровне отдельной операции — да. Внутри хранится карта значений под собственной блокировкой, а <code>getSharedPreferences</code> кэширует один экземпляр на имя файла в статической карте <code>ContextImpl</code>. Поэтому два вызова с одним именем дают <em>тот же объект</em> и одну общую блокировку: параллельные <code>getString</code>/<code>putString</code> по отдельности друг друга не покорёжат.</p>
+              <p>А вот транзакционности это не даёт. Между <code>getString</code> и последующим <code>putString</code> другой поток успеет вклиниться — классическая гонка read-modify-write с потерянным обновлением. <code>apply()</code> из разных потоков сериализует записи на диск через <code>QueuedWork</code>, но порядок относительно других <code>edit()</code> не гарантирует. Между процессами всё ещё хуже: <code>MODE_MULTI_PROCESS</code> объявлен deprecated и работает ненадёжно. Нужно согласованное составное состояние — берите DataStore с атомарным <code>edit{}</code>.</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="datastore">
@@ -129,7 +136,7 @@ val Context.userPrefs: DataStore&lt;UserPrefs&gt; by dataStore(
 )</code></pre>
           <div class="callout tip">
             <div class="ic">💡</div>
-            <div class="bd"><strong>Транзакционность на деле.</strong> Блок <code>edit { }</code> (или <code>updateData { }</code> у Proto) выполняется атомарно: DataStore читает текущее значение, применяет твою трансформацию и сериализует результат под единой блокировкой. Параллельные записи сериализуются, что исключает гонки и «потерянные обновления», которых не избежать в SharedPreferences.</div>
+            <div class="bd"><strong>Транзакционность на деле.</strong> Блок <code>edit { }</code> (или <code>updateData { }</code> у Proto) выполняется атомарно: DataStore читает текущее значение, применяет переданную трансформацию и сериализует результат под единой блокировкой. Параллельные записи сериализуются, что исключает гонки и «потерянные обновления», которых не избежать в SharedPreferences.</div>
           </div>
 
           <p class="subhead">Миграция со SharedPreferences</p>
@@ -143,6 +150,13 @@ val Context.userPrefs: DataStore&lt;UserPrefs&gt; by dataStore(
 )
 // Первое чтение/запись DataStore выполнит миграцию ключей из old_settings_prefs
 // и пометит её завершённой, удалив исходный XML.</code></pre>
+
+          <details class="qa"><summary>Что будет, если создать два экземпляра DataStore на один файл в процессе, или открыть файл из двух процессов? Как DataStore держит консистентность? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>DataStore требует ровно один экземпляр на файл в пределах процесса — именно поэтому его заводят через property-делегат на уровне приложения, а не создают на каждый экран. Второй экземпляр на тот же файл получит <code>IllegalStateException</code> с текстом «There are multiple DataStores active for the same file»: внутренняя in-memory-блокировка и кэш перестают защищать от гонок, и DataStore честно об этом сообщает, а не молча портит данные.</p>
+              <p>Между процессами консистентности нет вовсе — DataStore спроектирован как single-process и для IPC не годится (в отличие от <code>ContentProvider</code>). Атомарность одного процесса держится на <code>Mutex</code>: <code>updateData</code>/<code>edit</code> читают текущее значение, применяют трансформацию, сериализуют результат во временный файл и атомарно подменяют основной через rename. Параллельные записи выстраиваются в очередь — ровно то, чего не хватало SharedPreferences.</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="encrypted">
@@ -164,7 +178,7 @@ val securePrefs = EncryptedSharedPreferences.create(
 securePrefs.edit().putString("auth_token", token).apply()</code></pre>
           <div class="callout danger">
             <div class="ic">🛑</div>
-            <div class="bd"><strong>Jetpack Security в maintenance, EncryptedSharedPreferences deprecated.</strong> Последний стабильный релиз библиотеки — апрель 2021; <code>EncryptedSharedPreferences</code> помечен deprecated начиная с <code>security-crypto:1.1.0-alpha07</code>. Известные проблемы: StrictMode-violations на main-потоке (синхронный init) и «keyset corruption» на некоторых OEM. Для новых проектов используй альтернативы — см. ниже.</div>
+            <div class="bd"><strong>Jetpack Security в maintenance, EncryptedSharedPreferences deprecated.</strong> <code>EncryptedSharedPreferences</code> (и весь <code>androidx.security:security-crypto</code>) помечен deprecated начиная с <code>1.1.0-alpha07</code> (апрель 2025) — статус закреплён и в стабильной <code>1.1.0</code>. Известные проблемы: StrictMode-violations на main-потоке (синхронный init) и «keyset corruption» на некоторых OEM. Для новых проектов лучше выбирать альтернативы — см. ниже.</div>
           </div>
 
           <p class="subhead">Чем заменить: шифрованный DataStore (Tink) и Keystore напрямую</p>
@@ -198,8 +212,35 @@ val db = Room.databaseBuilder(context, AppDatabase::class.java, "encrypted.db")
     .build()</code></pre>
           <div class="callout warn">
             <div class="ic">⚠️</div>
-            <div class="bd"><strong>Ключ — слабое звено.</strong> Шифрование бесполезно, если passphrase зашит в коде или лежит в обычных prefs. Храни его как ключ в Android Keystore (или производи из биометрии/PIN). И помни: шифрование защищает <em>от извлечения файла</em>, но не от рантайм-доступа на скомпрометированном (rooted) устройстве, где процесс держит ключ в памяти.</div>
+            <div class="bd"><strong>Ключ — слабое звено.</strong> Шифрование бесполезно, если passphrase зашит в коде или лежит в обычных prefs. Его хранят как ключ в Android Keystore или производят из биометрии/PIN. Важно помнить: шифрование защищает <em>от извлечения файла</em>, но не от рантайм-доступа на скомпрометированном (rooted) устройстве, где процесс держит ключ в памяти.</div>
           </div>
+
+          <p class="subhead">Когда ключ Keystore внезапно «протухает»</p>
+          <p>Ключ, созданный с <code>setUserAuthenticationRequired(true)</code>, привязан к экрану блокировки. Снимет пользователь блокировку — ключ инвалидируется навсегда, и при следующем использовании прилетает <code>KeyPermanentlyInvalidatedException</code>. По умолчанию такой ключ ещё и инвалидируется при добавлении нового отпечатка или лица — это <code>setInvalidatedByBiometricEnrollment(true)</code> (значение по умолчанию). Логика защитная: если злоумышленник дописал свою биометрию, он не должен получить доступ к старым данным. Передадите <code>false</code> — ключ переживёт ре-энролл ценой ослабления модели угроз.</p>
+          <div class="diagram">
+          <div class="mermaid">
+stateDiagram-v2
+  [*] --> Создан: generateKey()
+  Создан --> Используется: Cipher init / encrypt / decrypt
+  Используется --> Используется: обычная работа
+  Используется --> Инвалидирован: снят lock screen
+  Используется --> Инвалидирован: добавлена биометрия
+  Инвалидирован --> Создан: deleteEntry + пересоздать
+  Инвалидирован --> [*]: данные считаем потерянными
+</div>
+          <div class="cap">Жизненный цикл ключа Keystore: переход в «Инвалидирован» бросает KeyPermanentlyInvalidatedException — приложение обязано его ловить</div>
+          </div>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Ловите <code>KeyPermanentlyInvalidatedException</code>.</strong> При init <code>Cipher</code> или использовании ключа поймайте это исключение, удалите старый алиас (<code>keyStore.deleteEntry</code>), сгенерируйте новый ключ и считайте ранее зашифрованные им данные безвозвратно потерянными — пользователя придётся пере-аутентифицировать. Для аппаратной изоляции есть <code>setIsStrongBoxBacked(true)</code>: ключ живёт в отдельном Secure Element (API 28+), наличие StrongBox проверяют через <code>FEATURE_STRONGBOX_KEYSTORE</code> с фолбэком.</div>
+          </div>
+
+          <details class="qa"><summary>Почему ключ Android Keystore вдруг становится невалидным и как это связано с биометрией? Что делают <code>setUserAuthenticationRequired</code> и <code>setInvalidatedByBiometricEnrollment</code>? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>Ключ с <code>setUserAuthenticationRequired(true)</code> завязан на secure lock screen. Снимет пользователь блокировку экрана — ключ инвалидируется навсегда, и попытка его использовать кинет <code>KeyPermanentlyInvalidatedException</code>. По умолчанию такой ключ инвалидируется и при добавлении новой биометрии — это поведение <code>setInvalidatedByBiometricEnrollment(true)</code> (дефолт). Смысл защиты: тот, кто дописал свой отпечаток, не должен открыть данные, зашифрованные до этого.</p>
+              <p>Передав <code>false</code>, можно оставить ключ валидным при ре-энролле — но это сознательное ослабление. Поэтому приложение обязано ловить исключение, пересоздавать ключ и помечать зашифрованные им данные потерянными. Отдельно: <code>setIsStrongBoxBacked(true)</code> переносит ключ в выделенный Secure Element (API 28+), а не только в TEE; наличие StrongBox проверяют через <code>FEATURE_STRONGBOX_KEYSTORE</code>, потому что он есть не на всех устройствах.</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="room">
@@ -209,7 +250,7 @@ val db = Room.databaseBuilder(context, AppDatabase::class.java, "encrypted.db")
             <table>
               <thead><tr><th>Аспект</th><th>Голый SQLite</th><th>Room</th></tr></thead>
               <tbody>
-                <tr><td>Проверка SQL</td><td>В рантайме (упадёт у пользователя)</td><td>Compile-time (упадёт у тебя)</td></tr>
+                <tr><td>Проверка SQL</td><td>В рантайме (упадёт у пользователя)</td><td>Compile-time (упадёт у разработчика)</td></tr>
                 <tr><td>Маппинг строк</td><td>Вручную через <code>Cursor</code></td><td>Автоматически в объекты</td></tr>
                 <tr><td>Реактивность</td><td>Нет</td><td><code>Flow</code>/<code>LiveData</code>-запросы</td></tr>
                 <tr><td>Корутины</td><td>Нет</td><td><code>suspend</code>-функции в DAO</td></tr>
@@ -296,7 +337,7 @@ Room.databaseBuilder(context, AppDatabase::class.java, "app.db")
           </div>
 
           <p class="subhead">FTS, отношения и тестирование</p>
-          <p>Для полнотекстового поиска — <code>@Fts4</code>-сущности (виртуальная таблица FTS, поиск по <code>MATCH</code> вместо <code>LIKE %...%</code>). Связи описывают через <code>@Relation</code>/<code>@Embedded</code> и читают в <code>@Transaction</code>-методах. Миграции тестируют через <code>MigrationTestHelper</code>: создаёшь БД на старой версии, вставляешь данные сырым SQL, открываешь с новой версией и валидируешь, что данные на месте и схема совпала.</p>
+          <p>Для полнотекстового поиска — <code>@Fts4</code>-сущности (виртуальная таблица FTS, поиск по <code>MATCH</code> вместо <code>LIKE %...%</code>). Связи описывают через <code>@Relation</code>/<code>@Embedded</code> и читают в <code>@Transaction</code>-методах. Миграции тестируют через <code>MigrationTestHelper</code>: создают БД на старой версии, вставляют данные сырым SQL, открывают с новой версией и валидируют, что данные на месте и схема совпала.</p>
           <div class="code-label">MigrationTest.kt</div>
 <pre><code class="language-kotlin">@get:Rule val helper = MigrationTestHelper(
     InstrumentationRegistry.getInstrumentation(),
@@ -311,6 +352,163 @@ Room.databaseBuilder(context, AppDatabase::class.java, "app.db")
     // runMigrationsAndValidate проверит схему по экспортированному JSON
     helper.runMigrationsAndValidate(TEST_DB, 2, true, MIGRATION_1_2)
 }</code></pre>
+
+          <p class="subhead">Как Flow-запрос узнаёт об изменении: InvalidationTracker</p>
+          <p>Реактивность Room держится на <code>InvalidationTracker</code>. При сборке БД Room создаёт служебную таблицу <code>room_table_modification_log</code> и вешает на каждую наблюдаемую таблицу SQL-триггеры на INSERT/UPDATE/DELETE, помечающие <code>tableId</code> изменённым. Flow- или LiveData-запрос регистрирует наблюдателя на нужные таблицы; после коммита транзакции трекер через <code>refreshVersionsAsync</code> опрашивает лог, находит затронутые таблицы и перезапускает привязанные запросы на query-executor — оттуда и приходит новый эмит.</p>
+          <div class="diagram">
+          <div class="mermaid">
+sequenceDiagram
+  participant W as "Writer (INSERT)"
+  participant T as "SQL-триггер"
+  participant I as "InvalidationTracker"
+  participant Q as "QueryExecutor"
+  participant F as "Flow-collector"
+  W->>T: commit транзакции
+  T->>I: пометить tableId в логе
+  I->>I: refreshVersionsAsync (опрос лога)
+  I->>Q: перезапустить подписанный запрос
+  Q->>F: новый эмит результата
+</div>
+          <div class="cap">Путь от записи в таблицу до нового значения во Flow: инвалидация идёт на уровне таблицы, не строки</div>
+          </div>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><strong>Инвалидация на уровне таблицы.</strong> Триггер срабатывает на <em>любое</em> изменение в таблице, а не на ваш конкретный <code>WHERE</code>. Поэтому Flow переэмитит даже когда правка не затронула выбранные строки — отсюда «лишние» перерисовки. Гасят их <code>distinctUntilChanged()</code> (требует <code>data class</code> с корректным <code>equals</code>) или более узкими наблюдаемыми сущностями/<code>@DatabaseView</code>.</div>
+          </div>
+
+          <details class="qa"><summary>Как Flow-запрос Room узнаёт, что таблицу изменили, и переэмитит результат? Почему он может сработать «лишний раз»? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>За реактивность отвечает <code>InvalidationTracker</code>. При сборке БД Room создаёт таблицу <code>room_table_modification_log</code> и вешает на каждую наблюдаемую таблицу триггеры на INSERT/UPDATE/DELETE — они помечают <code>tableId</code> изменённым. Flow-запрос регистрирует наблюдателя; после коммита транзакции трекер периодически (<code>refreshVersionsAsync</code>) опрашивает лог, находит затронутые таблицы и перезапускает привязанные запросы на query-executor, эмитя новое значение.</p>
+              <p>Нюанс под капотом: инвалидация идёт на уровне <em>таблицы</em>, а не строки и не <code>WHERE</code>-условия. Любое изменение в таблице переэмитит ваш Flow, даже если выбранные строки не тронуты. Отсюда лишние переэмиты — глушат их через <code>distinctUntilChanged()</code> или сужением наблюдаемой сущности.</p>
+            </div>
+          </details>
+        </section>
+
+        <section class="section" id="room-concurrency">
+          <h2>Потокобезопасность Room: WAL, single-writer, main-thread</h2>
+          <p>Один из самых частых senior-вопросов про Room — про конкурентность: можно ли читать во время записи, сколько писателей одновременно, почему запрос нельзя дёргать с главного потока. Всё это вытекает из модели SQLite, поверх которой Room лишь добавляет эргономику.</p>
+
+          <p class="subhead">Журнальный режим: rollback journal vs WAL</p>
+          <p>SQLite по умолчанию использует rollback journal: перед записью старые страницы копируются в <code>-journal</code>-файл, и на время записи писатель блокирует читателей. Room на устройствах с API 16+ включает <strong>WAL (Write-Ahead Logging)</strong>: изменения сначала пишутся в отдельный <code>-wal</code>-файл, а в основную БД вливаются позже отдельной операцией checkpoint. Выигрыш — читатели больше не блокируют писателя и наоборот: несколько потоков читают согласованный снимок, пока один пишет.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Аспект</th><th>Rollback journal</th><th>WAL</th></tr></thead>
+              <tbody>
+                <tr><td>Читатель блокирует писателя</td><td>Да</td><td>Нет</td></tr>
+                <tr><td>Одновременных писателей</td><td>Один</td><td>Один</td></tr>
+                <tr><td>Одновременных читателей при записи</td><td>Нет</td><td>Да (видят старый снимок)</td></tr>
+                <tr><td>Доп. файлы рядом с БД</td><td><code>-journal</code></td><td><code>-wal</code> + <code>-shm</code></td></tr>
+                <tr><td>Цена</td><td>Проще</td><td>Нужен периодический checkpoint</td></tr>
+                <tr><td>Дефолт в Room</td><td>—</td><td>Да (API 16+)</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><strong>Single-writer остаётся.</strong> WAL снимает блокировку чтение↔запись, но писатель по-прежнему <em>один</em> в каждый момент. Две параллельные записи сериализуются — и долгая транзакция-писатель не вешает читателей, но вешает других писателей. Это объясняет, почему «база тормозит на запись», а чтение при этом летает.</div>
+          </div>
+
+          <p class="subhead">Запросы и главный поток</p>
+          <p>По умолчанию Room запрещает синхронные запросы на главном потоке и бросает <code>IllegalStateException</code> («Cannot access database on the main thread»): дисковый I/O на UI-потоке — это подлагивания и риск ANR. <code>allowMainThreadQueries()</code> снимает защиту, но это анти-паттерн — держат его разве что в тестах. Правильный путь: <code>suspend</code>-функции DAO и <code>Flow</code>/<code>LiveData</code>-запросы выполняются вне главного потока на внутренних executor'ах Room.</p>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>withContext не управляет потоком suspend-DAO.</strong> Частый источник недопонимания: <code>suspend</code>-метод DAO использует собственные <code>TransactionExecutor</code>/<code>QueryExecutor</code> Room, поэтому обернуть его в <code>withContext(Dispatchers.IO)</code> бессмысленно — диспетчер не определяет, на каком потоке реально пойдёт запрос. Room сам уводит работу в свой пул.</div>
+          </div>
+
+          <details class="qa"><summary>Что такое режим WAL в SQLite, использует ли его Room по умолчанию и как он влияет на конкурентность чтения и записи? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>WAL — журнальный режим, при котором изменения сперва пишутся в отдельный <code>-wal</code>-файл, а не перезаписывают страницы основной БД, и периодически вливаются туда операцией checkpoint. Room включает WAL по умолчанию на API 16+. Главный выигрыш: читатели больше не блокируют писателя и наоборот — несколько потоков читают параллельно согласованный снимок (до начала текущей записи), пока один пишет.</p>
+              <p>Ограничение никуда не делось: писатель в каждый момент <em>один</em>, две параллельные записи сериализуются. Цена WAL — дополнительные файлы <code>-wal</code> и <code>-shm</code> рядом с БД и необходимость checkpoint. Отсюда практический вывод: долгая транзакция-писатель не вешает запросы на чтение, но вешает другие записи.</p>
+            </div>
+          </details>
+        </section>
+
+        <section class="section" id="room-relations">
+          <h2>Связи и сложные типы: TypeConverter, @Relation, @Upsert</h2>
+          <p>Room — это SQLite, а SQLite знает только <code>NULL</code>, <code>INTEGER</code>, <code>REAL</code>, <code>TEXT</code>, <code>BLOB</code>. Всё остальное (<code>Date</code>, enum, список) надо превращать в эти типы — и тут начинаются нюансы, которые любят на собесе.</p>
+
+          <p class="subhead">TypeConverter: как хранить Date, enum, List</p>
+          <p>Для нестандартного типа пишут <code>@TypeConverter</code> — пару функций «объект ↔ примитив», зарегистрированных через <code>@TypeConverters</code> на БД, DAO или поле.</p>
+          <div class="code-label">Converters.kt</div>
+<pre><code class="language-kotlin">class Converters {
+    @TypeConverter fun dateToLong(d: Date?): Long? = d?.time
+    @TypeConverter fun longToDate(v: Long?): Date? = v?.let { Date(it) }
+
+    // enum по ИМЕНИ, а не по ordinal — устойчиво к перестановке констант
+    @TypeConverter fun statusToString(s: Status): String = s.name
+    @TypeConverter fun stringToStatus(v: String): Status = Status.valueOf(v)
+}</code></pre>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Три грабли TypeConverter.</strong> (1) Список как JSON в одной колонке убивает возможность фильтровать/индексировать по элементам — это анти-нормализация, чаще нужна отдельная таблица со связью. (2) enum по <code>ordinal</code> ломается при изменении порядка констант — храните по <code>name</code>. (3) Конвертер вызывается на <em>каждой</em> строке: тяжёлая сериализация бьёт по производительности больших выборок.</div>
+          </div>
+
+          <p class="subhead">@Relation и обязательность @Transaction при чтении</p>
+          <p>Связи описывают через <code>@Embedded</code> (вложить поля) и <code>@Relation</code> (подтянуть дочерние сущности). Под капотом Room делает для этого <em>несколько</em> запросов — родитель, затем дети — поэтому метод обязан быть <code>@Transaction</code>, иначе между запросами таблицу изменят и снимок окажется рассогласованным.</p>
+          <div class="code-label">OrderDao.kt</div>
+<pre><code class="language-kotlin">data class OrderWithItems(
+    @Embedded val order: Order,
+    @Relation(parentColumn = "id", entityColumn = "orderId")
+    val items: List&lt;OrderItem&gt;
+)
+
+@Dao interface OrderDao {
+    // @Transaction нужен даже на ЧТЕНИИ: Room делает 2 запроса (заказ + позиции)
+    @Transaction
+    @Query("SELECT * FROM orders WHERE id = :id")
+    suspend fun getOrderWithItems(id: Long): OrderWithItems
+}</code></pre>
+
+          <p class="subhead">OnConflictStrategy и @Upsert</p>
+          <p><code>OnConflictStrategy</code> задаёт поведение при нарушении ограничения (обычно UNIQUE/PRIMARY KEY): <code>ABORT</code> (дефолт — откат и исключение), <code>REPLACE</code>, <code>IGNORE</code>. Коварен именно <code>REPLACE</code> для <code>@Insert</code>: он реализован как DELETE старой строки + INSERT новой, а не UPDATE.</p>
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>REPLACE при внешних ключах теряет данные.</strong> Если на таблице стоит <code>ON DELETE CASCADE</code>, удаление старой строки каскадно сносит связанные дочерние записи — и они не вернутся при вставке новой. Плюс <code>REPLACE</code> меняет <code>rowid</code>, ломая наблюдателей по конкретному id. С Room 2.4 есть <code>@Upsert</code>: настоящий UPDATE при конфликте по первичному ключу и INSERT иначе, без удаления строки. Для обновления существующих записей <code>@Upsert</code> обычно правильнее, чем <code>@Insert(REPLACE)</code>.</div>
+          </div>
+
+          <details class="qa"><summary>Чем опасен <code>OnConflictStrategy.REPLACE</code> при внешних ключах и почему <code>@Upsert</code> часто корректнее? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p><code>REPLACE</code> для <code>@Insert</code> — это не UPDATE, а DELETE старой строки + INSERT новой. При <code>ON DELETE CASCADE</code> по внешним ключам удаление старой строки каскадно сносит связанные дочерние записи, и они не восстановятся при вставке новой — частая скрытая потеря данных. Вдобавок меняется <code>rowid</code>, что ломает наблюдателей, завязанных на конкретный id.</p>
+              <p><code>@Upsert</code> (Room 2.4+) делает настоящий UPDATE при конфликте по первичному ключу и INSERT иначе, не удаляя строку — каскад не срабатывает, <code>rowid</code> сохраняется. Поэтому для «вставить или обновить» по существующему ключу берут <code>@Upsert</code>, а не <code>@Insert(onConflict = REPLACE)</code>.</p>
+            </div>
+          </details>
+        </section>
+
+        <section class="section" id="room-indexes">
+          <h2>Индексы под капотом: когда помогают, когда вредят</h2>
+          <p>В главе индекс пока показан только как «ускоряет поиск + уникальность». На senior-уровне ждут понимания обратной стороны: индекс — это отдельная B-tree-структура, которую SQLite обязан обновлять при каждом INSERT/UPDATE/DELETE затронутой колонки, и которая занимает место.</p>
+
+          <p class="subhead">Когда индекс вредит</p>
+          <ul>
+            <li><strong>Тяжёлая запись, редкие выборки.</strong> На такой таблице лишние индексы замедляют запись и раздувают БД, окупаясь редко.</li>
+            <li><strong>Низкая кардинальность.</strong> Индекс по колонке вроде <code>done BOOLEAN</code> почти бесполезен — оптимизатор всё равно предпочтёт full scan.</li>
+          </ul>
+
+          <p class="subhead">Составной и covering индекс</p>
+          <p>Составной индекс полезен, когда запросы фильтруют/сортируют по <em>префиксу</em> его колонок именно в этом порядке — leftmost-prefix rule. Covering index содержит все колонки запроса, чтобы SQLite ответил, не заглядывая в саму таблицу.</p>
+          <div class="code-label">Feed.kt</div>
+<pre><code class="language-kotlin">@Entity(
+    tableName = "posts",
+    // помогает запросам WHERE user_id = ? ORDER BY created_at
+    indices = [Index(value = ["user_id", "created_at"])]
+)
+data class Post(
+    @PrimaryKey val id: Long,
+    val user_id: Long,
+    val created_at: Long,
+    val body: String
+)</code></pre>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Проверяй планом, а не на глаз.</strong> Реальный план запроса смотрят командой <code>EXPLAIN QUERY PLAN</code> — она покажет, использован ли индекс или идёт <code>SCAN TABLE</code>. Room на этапе компиляции предупреждает о потенциально неэффективных запросах (full table scan) через <code>RoomWarnings</code>. Баланс простой: больше индексов — быстрее чтение, медленнее запись и больше места.</div>
+          </div>
+
+          <details class="qa"><summary>Когда индекс в SQLite/Room вредит, а не помогает? Что такое covering index и зачем составной индекс? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>Индекс — отдельная B-tree, которую SQLite обновляет при каждом изменении затронутой колонки и которая занимает место. Поэтому на таблице с интенсивной записью и редкими выборками лишние индексы замедляют запись и раздувают БД. Индекс по колонке низкой кардинальности (boolean <code>done</code>) почти бесполезен — оптимизатор всё равно выберет full scan.</p>
+              <p>Составной индекс <code>Index(value=["user_id","created_at"])</code> полезен, когда запросы фильтруют/сортируют по этому префиксу колонок именно в таком порядке (leftmost-prefix rule). Covering index содержит все колонки запроса, чтобы ответить, не заглядывая в таблицу. План проверяют через <code>EXPLAIN QUERY PLAN</code>, а Room на компиляции предупреждает о full table scan через <code>RoomWarnings</code>.</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="files">
@@ -364,6 +562,13 @@ flowchart LR
           </div>
           <div class="cap">FileProvider заменяет небезопасный file:// на content:// с временным разрешением</div>
           </div>
+
+          <details class="qa"><summary>Почему запись в MediaStore на Android 10 идёт через <code>IS_PENDING</code>, и зачем приложению с targetSdk 30+ может всё-таки понадобиться <code>MANAGE_EXTERNAL_STORAGE</code>? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>На Android 10+ новое медиа через MediaStore рекомендуется сначала вставить с <code>MediaStore.MediaColumns.IS_PENDING = 1</code>: пока флаг выставлен, файл виден только создавшему его приложению. После записи флаг сбрасывают в 0, и файл появляется у остальных. Это даёт атомарность публикации — недозаписанный файл не мелькнёт в галерее. Для редактирования или удаления <em>чужих</em> медиа на Android 11+ система возвращает <code>RecoverableSecurityException</code>, и приложение показывает системный диалог через <code>MediaStore.createWriteRequest</code>/<code>createDeleteRequest</code>, чтобы получить согласие пользователя.</p>
+              <p><code>MANAGE_EXTERNAL_STORAGE</code> (All files access) даёт широкий доступ ко всему общему разделу в обход scoped storage. Но Google Play разрешает его лишь узкому классу приложений — файловые менеджеры, бэкап-утилиты, антивирусы. Для обычного приложения это не путь: заявку на такое разрешение отклонят.</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="choose">
@@ -388,8 +593,32 @@ flowchart LR
           <p>Android <strong>Auto Backup</strong> по умолчанию (для targetSdk ≥ 23) сохраняет до 25 МБ данных приложения (включая SharedPreferences, файлы, БД) в облако пользователя и восстанавливает при переустановке. На собесе важно знать: бэкап может «утащить» чувствительные данные — управляй этим через <code>android:fullBackupContent</code>/<code>android:dataExtractionRules</code> (Android 12+), исключая токены и шифрованные хранилища, либо отключай <code>android:allowBackup="false"</code> для секретов.</p>
           <div class="callout tip">
             <div class="ic">💡</div>
-            <div class="bd"><strong>Принцип «защита в покое».</strong> Любые секреты — только в шифрованном виде с ключом из Keystore; индексы и БД с PII — через SQLCipher; в правилах бэкапа явно исключай чувствительные файлы. Шифрование защищает извлечённый файл, но не рантайм на rooted-устройстве — поэтому не храни больше, чем нужно (data minimization).</div>
+            <div class="bd"><strong>Принцип «защита в покое».</strong> Любые секреты — только в шифрованном виде с ключом из Keystore; индексы и БД с PII — через SQLCipher; в правилах бэкапа явно исключают чувствительные файлы. Шифрование защищает извлечённый файл, но не рантайм на rooted-устройстве — поэтому не стоит хранить больше, чем нужно (data minimization).</div>
           </div>
+
+          <p class="subhead">Auto Backup vs Key/Value Backup и перенос между устройствами</p>
+          <p>Видов бэкапа два. <strong>Auto Backup</strong> (для targetSdk ≥ 23) сам копирует файлы, БД и SharedPreferences целиком — до квоты (по умолчанию около 25 МБ на приложение) в Google Drive пользователя, без единой строки кода. <strong>Key/Value Backup</strong> (старый <code>BackupAgent</code> / Backup API) требует ручной реализации агента и копирует только явно зарегистрированные данные. С Android 12 (API 31) правила разделили: <code>android:dataExtractionRules</code> задаёт <em>разные</em> наборы исключений для облачного бэкапа (<code>cloud-backup</code>) и для прямого переноса между устройствами (<code>device-transfer</code>) — D2D локален и менее рискован, чем облако.</p>
+          <div class="code-label">data_extraction_rules.xml</div>
+<pre><code class="language-xml">&lt;data-extraction-rules&gt;
+    &lt;cloud-backup&gt;
+        &lt;exclude domain="sharedpref" path="auth_secure.xml"/&gt;
+        &lt;exclude domain="file" path="tokens/"/&gt;
+    &lt;/cloud-backup&gt;
+    &lt;device-transfer&gt;
+        &lt;!-- при D2D токены можно переносить: канал локальный --&gt;
+    &lt;/device-transfer&gt;
+&lt;/data-extraction-rules&gt;</code></pre>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Ключи Keystore не переносятся.</strong> Аппаратные ключи привязаны к железу и при переносе на новое устройство теряются — а значит, зашифрованные ими данные на новом устройстве не расшифровать. Вывод: чувствительные файлы исключают из <code>cloud-backup</code>, а зашифрованные данные проектируют так, чтобы их можно было регенерировать (повторный логин, повторная синхронизация). <code>android:allowBackup="false"</code> — грубый выключатель сразу для всего.</div>
+          </div>
+
+          <details class="qa"><summary>Чем Auto Backup отличается от Key/Value Backup и почему важно различать D2D-перенос и облачный бэкап при обращении с секретами? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>Auto Backup (для targetSdk ≥ 23) автоматически копирует файлы, БД и SharedPreferences целиком (до квоты ~25 МБ на приложение) в Google Drive пользователя без участия кода. Key/Value Backup (<code>BackupAgent</code> / старый Backup API) требует ручной реализации агента и копирует только явно зарегистрированные данные.</p>
+              <p>С Android 12 (API 31) <code>android:dataExtractionRules</code> позволяет задать разные наборы исключений для <code>cloud-backup</code> и <code>device-transfer</code>, потому что D2D-перенос локален и менее рискован, чем облако. Практический вывод: чувствительные файлы (токены, ключи) исключают из cloud-backup явными <code>exclude</code>, а ключи Keystore в принципе невосстановимы на новом устройстве — они привязаны к железу и при переносе теряются, поэтому зашифрованные ими данные надо уметь регенерировать.</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="video">
@@ -427,12 +656,12 @@ flowchart LR
 
           <details class="qa">
             <summary>Как зашифровать данные? Что с EncryptedSharedPreferences? <span class="q-badge">Senior</span></summary>
-            <div class="ans"><p>Корень доверия — Android Keystore: ключи генерируются в TEE/StrongBox и неэкспортируемы. Раньше для key-value использовали <code>EncryptedSharedPreferences</code> из Jetpack Security (поверх Tink). Сейчас важно знать: <strong>библиотека в maintenance, последний стабильный релиз — 2021, а <code>EncryptedSharedPreferences</code> deprecated</strong> (StrictMode-violations, keyset corruption на части OEM). Современный подход — Proto DataStore + актуальный Tink (отделяем хранение от шифрования) либо обёртки-преемники / прямое использование Keystore + <code>Cipher</code>. Для шифрования всей БД — SQLCipher.</p></div>
+            <div class="ans"><p>Корень доверия — Android Keystore: ключи генерируются в TEE/StrongBox и неэкспортируемы. Раньше для key-value использовали <code>EncryptedSharedPreferences</code> из Jetpack Security (поверх Tink). Сейчас важно знать: <strong>библиотека в maintenance, а <code>EncryptedSharedPreferences</code> deprecated</strong> (с <code>security-crypto:1.1.0-alpha07</code>, апрель 2025; причины — StrictMode-violations, keyset corruption на части OEM). Современный подход — Proto DataStore + актуальный Tink (отделяем хранение от шифрования) либо обёртки-преемники / прямое использование Keystore + <code>Cipher</code>. Для шифрования всей БД — SQLCipher.</p></div>
           </details>
 
           <details class="qa">
             <summary>Как зашифровать SQLite/Room без переписывания запросов? <span class="q-badge">Senior</span></summary>
-            <div class="ans"><p>Через <strong>SQLCipher</strong> — он прозрачно шифрует весь файл БД (AES-256) по парольной фразе. В Room подключается одной строкой: создаёшь <code>SupportFactory(passphrase)</code> и передаёшь в <code>openHelperFactory()</code>. DAO, сущности и запросы не меняются. Критично: passphrase нельзя зашивать в коде или класть в обычные prefs — храни его как ключ в Keystore (или производи из биометрии/PIN). Шифрование защищает от извлечения файла, но не от рантайм-доступа на rooted-устройстве.</p></div>
+            <div class="ans"><p>Через <strong>SQLCipher</strong> — он прозрачно шифрует весь файл БД (AES-256) по парольной фразе. В Room подключается одной строкой: создаётся <code>SupportFactory(passphrase)</code> и передаётся в <code>openHelperFactory()</code>. DAO, сущности и запросы не меняются. Критично: passphrase нельзя зашивать в коде или класть в обычные prefs — его хранят как ключ в Keystore или производят из биометрии/PIN. Шифрование защищает от извлечения файла, но не от рантайм-доступа на rooted-устройстве.</p></div>
           </details>
 
           <details class="qa">
@@ -447,12 +676,32 @@ flowchart LR
 
           <details class="qa">
             <summary>Зачем FileProvider и почему нельзя отдать file:// напрямую? <span class="q-badge">Middle</span></summary>
-            <div class="ans"><p>С Android 7 (API 24) передача <code>file://</code>-URI другому приложению кидает <code>FileUriExposedException</code>: чужой процесс не имеет прав на твою песочницу, а голый путь — это утечка деталей файловой системы. <code>FileProvider</code> (наследник <code>ContentProvider</code>) выдаёт <code>content://</code>-URI и через флаг <code>FLAG_GRANT_READ_URI_PERMISSION</code> даёт получателю временный доступ ровно к этому файлу. Безопасный способ делиться файлами с камерой, «Поделиться» и т.п.</p></div>
+            <div class="ans"><p>С Android 7 (API 24) передача <code>file://</code>-URI другому приложению кидает <code>FileUriExposedException</code>: чужой процесс не имеет прав на песочницу приложения, а голый путь — это утечка деталей файловой системы. <code>FileProvider</code> (наследник <code>ContentProvider</code>) выдаёт <code>content://</code>-URI и через флаг <code>FLAG_GRANT_READ_URI_PERMISSION</code> даёт получателю временный доступ ровно к этому файлу. Безопасный способ делиться файлами с камерой, «Поделиться» и т.п.</p></div>
           </details>
 
           <details class="qa">
             <summary>Почему Room, а не голый SQLite? <span class="q-badge">Middle</span></summary>
             <div class="ans"><p>Room проверяет SQL на этапе <strong>компиляции</strong> (ошибка у разработчика, а не у пользователя), автоматически маппит строки в объекты, генерирует boilerplate, даёт <code>suspend</code>-DAO и реактивные <code>Flow</code>-запросы (эмитят при изменении таблицы), а также инструменты миграций с экспортом схемы и тест-хелпером. Голый SQLite — строковый SQL без проверок, ручной <code>Cursor</code>-маппинг, никакой реактивности и полностью ручные миграции. Room — это тот же SQLite, но с безопасностью и эргономикой.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Чем транзакция SQLite отличается от аннотации <code>@Transaction</code> в Room? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p><code>@Transaction</code> оборачивает тело DAO-метода в одну транзакцию SQLite (BEGIN/COMMIT, при исключении — ROLLBACK), давая атомарность составных операций. Но аннотация нужна и там, где записи нет: при чтении <code>@Relation</code>/<code>@Embedded</code> Room делает несколько отдельных запросов (родитель + дети), и без <code>@Transaction</code> между ними таблицу могут изменить — снимок окажется рассогласованным. То есть это и про consistency на чтении, а не только про откат на записи. На голом SQLite то же делают через <code>beginTransaction()</code>/<code>setTransactionSuccessful()</code>/<code>endTransaction()</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как Room хранит типы, которых нет в SQLite (Date, enum, List)? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>SQLite знает только <code>NULL</code>, <code>INTEGER</code>, <code>REAL</code>, <code>TEXT</code>, <code>BLOB</code>. Для остального пишут <code>@TypeConverter</code> — пару функций объект↔примитив, зарегистрированных через <code>@TypeConverters</code>. Типичные кейсы: <code>Date</code>↔<code>Long</code> (epoch millis), enum↔<code>String</code>, <code>List</code>↔JSON-строка. Грабли: хранение списка как JSON в одной колонке убивает фильтрацию/индексацию по элементам (часто лучше отдельная таблица); enum по <code>name</code> устойчивее, чем по <code>ordinal</code> (тот ломается при перестановке констант); конвертер вызывается на каждой строке — тяжёлая сериализация бьёт по большим выборкам.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Можно ли выполнять Room-запросы на главном потоке и что делает <code>allowMainThreadQueries()</code>? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>По умолчанию Room запрещает синхронные запросы на главном потоке и бросает <code>IllegalStateException</code> («Cannot access database on the main thread») — дисковый I/O на UI грозит подлагиваниями и ANR. <code>allowMainThreadQueries()</code> снимает защиту, но это анти-паттерн (разве что для тестов). Правильно: <code>suspend</code>-функции DAO идут на внутреннем Executor Room, <code>Flow</code>/<code>LiveData</code>-запросы тоже считываются вне главного потока. Важно: <code>suspend</code>-DAO использует собственный executor Room, поэтому <code>withContext</code> не определяет, на каком потоке реально пойдёт запрос.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Зачем DataStore возвращает Flow при чтении, если значение по сути одно? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p><code>data</code> — холодный Flow: при подписке отдаёт текущее значение и переэмитит при каждой успешной записи, чтобы UI обновлялся без ручных listener'ов. Получить значение разово можно через <code>.first()</code>, но делать это через <code>runBlocking</code> на главном потоке плохо — первое чтение читает и десериализует файл с диска, блокируя поток. <code>updateData{}</code> (низкоуровневый API под <code>edit{}</code>) выполняет read-modify-write атомарно под <code>Mutex</code> и сам <code>suspend</code>. Ключевое отличие от <code>SharedPreferences.getString</code>: у DataStore нет «дешёвого синхронного геттера» — это сознательное решение, чтобы исключить блокирующий I/O на UI.</p></div>
           </details>
 
         </section>
@@ -461,7 +710,7 @@ flowchart LR
           <h2>Задачи</h2>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 1.</strong> У тебя есть Room-база v1 с таблицей <code>notes(id INTEGER, text TEXT)</code>. В v2 нужно добавить колонку <code>created_at INTEGER NOT NULL</code> с дефолтом 0 и создать индекс по ней. Напиши объект <code>Migration(1, 2)</code> и подключи его в базу. После этого в тесте через <code>MigrationTestHelper</code> проверь, что строка, вставленная в v1, не потерялась.</p>
+            <p class="task-problem"><strong>Задача 1.</strong> У вас есть Room-база v1 с таблицей <code>notes(id INTEGER, text TEXT)</code>. В v2 нужно добавить колонку <code>created_at INTEGER NOT NULL</code> с дефолтом 0 и создать индекс по ней. Напишите объект <code>Migration(1, 2)</code> и подключите его в базу. После этого в тесте через <code>MigrationTestHelper</code> проверьте, что строка, вставленная в v1, не потерялась.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -513,7 +762,7 @@ val helper = MigrationTestHelper(
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 2.</strong> В коде ниже есть три ошибки, из-за которых либо текут данные, либо возникает ANR, либо приложение падает на Android 7+. Найди и исправь каждую.</p>
+            <p class="task-problem"><strong>Задача 2.</strong> В коде ниже есть три ошибки, из-за которых либо текут данные, либо возникает ANR, либо приложение падает на Android 7+. Найдите и исправьте каждую.</p>
 <pre><code class="language-kotlin">// AuthManager.kt
 class AuthManager(private val context: Context) {
 
@@ -582,7 +831,7 @@ class AuthManager(private val context: Context) {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 3.</strong> Реализуй DAO-метод, который <strong>атомарно</strong> заменяет весь список задач в таблице <code>todos</code>: удаляет старые и вставляет новые так, чтобы при сбое посередине база не осталась в промежуточном состоянии (ни пустой, ни с половиной строк). Также добавь реактивный запрос, который отдаёт список незавершённых задач как <code>Flow</code>.</p>
+            <p class="task-problem"><strong>Задача 3.</strong> Реализуйте DAO-метод, который <strong>атомарно</strong> заменяет весь список задач в таблице <code>todos</code>: удаляет старые и вставляет новые так, чтобы при сбое посередине база не осталась в промежуточном состоянии (ни пустой, ни с половиной строк). Также добавьте реактивный запрос, который отдаёт список незавершённых задач как <code>Flow</code>.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -619,6 +868,82 @@ interface TodoDao {
             </details>
           </div>
 
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 4.</strong> Есть реактивный запрос <code>val items: Flow&lt;List&lt;Item&gt;&gt; = dao.observeAll()</code>, и UI дёргается лишний раз: список перерисовывается даже при изменении поля, которое не относится к выбранным строкам. Объясните причину и приведите минимальную правку, чтобы лишних перерисовок не было.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">// Причина: InvalidationTracker инвалидирует на уровне ТАБЛИЦЫ, а не строки/WHERE.
+// Любой INSERT/UPDATE/DELETE в таблице items переэмитит Flow.
+
+// Правка 1: distinctUntilChanged() в репозитории — одинаковый список дальше не пройдёт.
+// Требует data class Item с корректным equals (сравнение по содержимому).
+val items: Flow&lt;List&lt;Item&gt;&gt; = dao.observeAll().distinctUntilChanged()
+
+// Правка 2 (если в таблице много нерелевантных изменений):
+// сузить наблюдаемую сущность через @DatabaseView или вынести
+// наблюдаемые поля в отдельную таблицу — триггеры лягут на меньший набор.
+@DatabaseView("SELECT id, title FROM items")
+data class ItemSummary(val id: Long, val title: String)</code></pre>
+                <p>Объяснение: триггеры Room висят на таблице целиком, поэтому Flow переэмитит на любое её изменение, даже не затронувшее выбранные строки. <code>distinctUntilChanged()</code> отсекает повторяющиеся значения по <code>equals</code> — поэтому <code>Item</code> должен быть <code>data class</code>. Если переэмиты идут от множества нерелевантных колонок, эффективнее сузить наблюдаемую сущность через <code>@DatabaseView</code>.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 5.</strong> Опишите <code>@Entity Order</code> со связью один-ко-многим к <code>OrderItem</code> и DAO-метод, который атомарно и согласованно читает заказ вместе со всеми его позициями. Объясните, почему здесь нужен <code>@Transaction</code> даже без записи.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">@Entity(tableName = "orders")
+data class Order(@PrimaryKey val id: Long, val total: Long)
+
+@Entity(tableName = "order_items")
+data class OrderItem(@PrimaryKey val id: Long, val orderId: Long, val name: String)
+
+data class OrderWithItems(
+    @Embedded val order: Order,
+    @Relation(parentColumn = "id", entityColumn = "orderId")
+    val items: List&lt;OrderItem&gt;
+)
+
+@Dao interface OrderDao {
+    @Transaction
+    @Query("SELECT * FROM orders WHERE id = :id")
+    suspend fun getOrderWithItems(id: Long): OrderWithItems
+}</code></pre>
+                <p>Объяснение: для <code>@Relation</code> Room выполняет ДВА отдельных запроса — сперва заказ, затем его позиции. Без <code>@Transaction</code> между этими запросами другой поток успеет вставить или удалить <code>OrderItem</code>, и вернётся рассогласованный снимок (заказ без только что добавленной позиции либо наоборот). <code>@Transaction</code> даёт обоим запросам единый согласованный снимок.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 6.</strong> Ключ Android Keystore с <code>setUserAuthenticationRequired(true)</code> используется для шифрования токена. После того как пользователь добавил новый отпечаток пальца, расшифровка падает с <code>KeyPermanentlyInvalidatedException</code>. Объясните причину и напишите корректную обработку.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">// Причина: ключ по умолчанию создан с setInvalidatedByBiometricEnrollment(true) —
+// при добавлении новой биометрии он инвалидируется навсегда.
+
+fun decryptToken(alias: String, data: ByteArray, iv: ByteArray): ByteArray? {
+    return try {
+        val key = getKey(alias) ?: return null
+        Cipher.getInstance("AES/GCM/NoPadding").run {
+            init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
+            doFinal(data)
+        }
+    } catch (e: KeyPermanentlyInvalidatedException) {
+        // ключ мёртв: удаляем алиас, данные считаем потерянными
+        KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(alias)
+        getOrCreateKey(alias)          // новый ключ для будущих записей
+        null                           // вызывающий код заставит пере-логиниться
+    }
+}</code></pre>
+                <p>Объяснение: ключ с <code>setUserAuthenticationRequired(true)</code> по умолчанию инвалидируется при ре-энролле биометрии (защита от того, что чужая добавленная биометрия откроет старые данные). Ловим <code>KeyPermanentlyInvalidatedException</code> при использовании <code>Cipher</code>, удаляем старый алиас, генерируем новый ключ и помечаем зашифрованные старым ключом данные безвозвратно потерянными — пользователя надо пере-аутентифицировать. Альтернатива по требованиям продукта: при генерации передать <code>setInvalidatedByBiometricEnrollment(false)</code>, чтобы ключ переживал ре-энролл ценой ослабления модели угроз.</p>
+              </div>
+            </details>
+          </div>
+
         </section>
 
         <div class="sources">
@@ -642,6 +967,6 @@ interface TodoDao {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/app.js?v=20260620-4"></script>
+  <script src="../assets/app.js?v=20260621-3"></script>
 </body>
 </html>

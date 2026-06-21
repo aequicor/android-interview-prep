@@ -85,6 +85,7 @@ class ProfileViewModel(
 class BadViewModel : ViewModel() {
     private val repo = ProfileRepositoryImpl(RetrofitClient.create())
 }</code></pre>
+          <details class="qa"><summary>Google в гайдах давно отошёл от слова «пирамида» и рисует тестовую матрицу. Что не так с пирамидой как метафорой? <span class="q-badge">★</span></summary><div class="ans"><p>Пирамида по уровням (unit / integration / UI) сваливает в одну ось две независимые вещи: <strong>scope</strong> теста — сколько кода он трогает (одна функция, модуль, всё приложение) — и его <strong>fidelity</strong>, то есть где он бежит (мок на JVM против реального девайса). Из-за этого слипания «integration» превращается в размытую категорию, и команда бесконечно спорит, куда положить конкретный тест.</p><p>Свежий гайд (testing fundamentals, Now in Android) описывает тесты по <em>двум</em> осям сразу — subject under test от мелкого к крупному и среда исполнения от local JVM к instrumented — и советует брать самый дешёвый уровень, который ещё даёт нужную уверенность. Сама идея «много дешёвого внизу» жива, но проценты 70/20/10 — ориентир под конкретный проект, а не догма.</p></div></details>
         </section>
 
         <section class="section" id="unit">
@@ -168,6 +169,19 @@ class BadViewModel : ViewModel() {
             <div class="ic">⚠️</div>
             <div class="bd"><strong>Не наблюдайте без жизненного цикла.</strong> В тестах LiveData используют <code>observeForever</code> (или helper <code>getOrAwaitValue()</code> из гайдов Google), потому что нет <code>LifecycleOwner</code>. Не забывайте <code>removeObserver</code>, чтобы не текли коллбеки между тестами.</div>
           </div>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TB
+  Q{"Что проверяем?"}
+  Q -->|"возвращаемое значение / состояние"| FAKE["Fake или stub<br/>проверяем результат"]
+  Q -->|"побочный эффект без результата"| MOCK["Mock + verify<br/>аналитика, лог, кэш"]
+  Q -->|"реальный объект,<br/>подменить 1-2 метода"| SPY["spy — запах<br/>лучше разбить класс"]
+  style FAKE fill:#1f6f43,stroke:#2ecc71,color:#fff
+  style SPY fill:#7a2e2e,stroke:#e74c3c,color:#fff
+          </div>
+          <div class="cap">Дерево выбора тест-дублёра: чаще всего ответ — fake, не mock</div>
+          </div>
+          <details class="qa"><summary>Почему <code>suspend</code>-функцию нельзя застабить обычным <code>every { } returns</code>, и что MockK делает под капотом для <code>coEvery</code>? <span class="q-badge">★</span></summary><div class="ans"><p>После компиляции <code>suspend</code>-функция получает скрытый последний параметр <code>Continuation</code> и возвращает не объявленный тип, а <code>Any?</code> — либо реальное значение, либо маркер <code>COROUTINE_SUSPENDED</code>. Лямбда обычного <code>every { }</code> не помечена <code>suspend</code>, поэтому внутри неё <code>suspend</code>-функцию просто не вызвать — код не скомпилируется.</p><p><code>coEvery</code>/<code>coVerify</code> — это suspend-обёртки над тем же механизмом записи вызовов. Их блок объявлен <code>suspend</code>, и MockK исполняет его в собственном корутинном контексте (через <code>runBlocking</code>), перехватывает вызов с учётом <code>Continuation</code> и подставляет результат. То есть запись вызова одна и та же — co-версии лишь умеют дёрнуть <code>suspend</code>-функцию внутри блока.</p></div></details>
         </section>
 
         <section class="section" id="coroutines">
@@ -213,7 +227,7 @@ sequenceDiagram
     participant S as TestScheduler (вирт. время)
     participant VM as ViewModel
     T->>VM: вызов load()
-    VM->>S: launch { delay(1000); fetch() }
+    VM->>S: launch delay(1000) затем fetch()
     Note over S: корутина в очереди,<br/>часы стоят
     T->>S: advanceUntilIdle()
     S->>VM: проматывает delay(1000),<br/>выполняет fetch()
@@ -222,6 +236,20 @@ sequenceDiagram
           </div>
           <div class="cap">StandardTestDispatcher: корутина ждёт, пока тест явно не промотает виртуальное время</div>
           </div>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TB
+  START["runTest стартует"] --> BODY["Тело теста бежит сразу<br/>UnconfinedTestDispatcher, eagerly"]
+  BODY --> CHILD["launch / async внутри<br/>встают в очередь Standard"]
+  CHILD --> ADV["advanceUntilIdle<br/>проматывает вирт. время"]
+  BODY --> BG["backgroundScope-корутины<br/>не ждутся, отменяются в конце"]
+  CHILD --> HANG{"Корутина<br/>не завершилась?"}
+  HANG -->|"60 с реального времени"| ERR["UncompletedCoroutinesError"]
+  style ERR fill:#7a2e2e,stroke:#e74c3c,color:#fff
+          </div>
+          <div class="cap">Жизненный цикл runTest: тело eagerly, дети — в очереди, фон в backgroundScope, таймаут 60 с</div>
+          </div>
+          <details class="qa"><summary><code>runTest</code> со Standard откладывает дочерние корутины — почему же тело самого теста бежит сразу? И что будет, если корутина внутри зависнет навсегда? <span class="q-badge">★</span></summary><div class="ans"><p>Тело <code>runTest</code> исполняется на <code>UnconfinedTestDispatcher</code>, поэтому идёт eagerly до первой точки приостановки. Отсюда асимметрия: сам блок теста бежит немедленно, а вот корутины, которые вы стартуете внутри через <code>launch</code>/<code>async</code> (они наследуют <code>StandardTestDispatcher</code> из <code>TestScope</code>), уходят в очередь планировщика и ждут <code>advanceUntilIdle()</code>/<code>runCurrent()</code>.</p><p>Зависнуть навсегда <code>runTest</code> не даст: у него есть таймаут по <em>реальному</em> времени — по умолчанию 60 секунд, настраивается параметром <code>timeout</code>. По истечении тест падает с <code>UncompletedCoroutinesError</code> и дампом висящих корутин. А для фона, который не должен блокировать финал (сбор <code>StateFlow</code>, бесконечный продюсер), есть <code>backgroundScope</code>: он на виртуальном времени, но его завершения <code>runTest</code> не ждёт.</p></div></details>
         </section>
 
         <section class="section" id="flow">
@@ -259,6 +287,7 @@ class SearchViewModelTest {
             <div class="ic">⚠️</div>
             <div class="bd"><strong>Конфляция StateFlow.</strong> <code>StateFlow</code> может «склеить» быстрые подряд идущие значения — промежуточное состояние Turbine не увидит, и тест на строгую последовательность станет flaky. Если важна именно цепочка состояний, иногда проще ассертить итог через <code>.value</code> или <code>expectMostRecentItem()</code>; Google рекомендует относиться к <code>StateFlow</code> как к держателю состояния и проверять текущее значение.</div>
           </div>
+          <details class="qa"><summary>Тест <code>StateFlow</code> через Turbine иногда пропускает <code>Loading</code>, хотя код «работает». В чём причина и как сделать тест детерминированным? <span class="q-badge">★</span></summary><div class="ans"><p><code>StateFlow</code> conflated и хранит только последнее значение. Если несколько <code>emit</code>/<code>setValue</code> успели пройти до того, как Turbine сделал первый <code>awaitItem()</code>, промежуточные состояния схлопнутся, и коллектор увидит лишь самое свежее. На <code>UnconfinedTestDispatcher</code> продюсер легко проскакивает <code>Idle → Loading → Content</code> ещё до подписки — отсюда «то ловит, то нет».</p><p>Лечение: подписаться (запустить <code>flow.test { }</code> и снять первый <code>awaitItem()</code> на начальном значении) <em>до</em> триггера; либо взять <code>StandardTestDispatcher</code> для пошагового контроля; либо вообще не проверять промежуточную цепочку на <code>StateFlow</code>, а ассертить терминальное <code>.value</code> / <code>expectMostRecentItem()</code>. Если последовательность состояний — это контракт, моделируйте её обычным cold <code>Flow</code> или <code>SharedFlow</code> без конфляции, а событийный поток — через <code>Channel</code>/<code>SharedFlow</code> с <code>replay=0</code>.</p></div></details>
         </section>
 
         <section class="section" id="instrumented">
@@ -304,7 +333,7 @@ class LoginScreenTest {
           <ul>
             <li><strong>UiAutomator</strong> — чёрный ящик на уровне всей системы: умеет взаимодействовать с <em>другими</em> приложениями, шторкой, настройками. Для кросс-приложенческих E2E и системных диалогов (разрешения), куда Espresso не дотягивается.</li>
             <li><strong>Robolectric</strong> — запускает Android-зависимый код прямо на <strong>JVM</strong> без эмулятора (через «тени» — shadows). Те же тесты могут идти быстрее без девайса; удобно для кода, что трогает <code>Context</code>/ресурсы, но не нуждается в реальном рендере.</li>
-            <li><strong>Screenshot-тесты</strong> — фиксируют эталонный рендер и сравняют пиксели при каждом прогоне, ловя визуальные регрессии. <strong>Paparazzi</strong> (Cash App) рендерит Compose/View на JVM без устройства; <strong>Roborazzi</strong> делает скриншоты поверх Robolectric. Плюс — официальный Compose Preview Screenshot Testing.</li>
+            <li><strong>Screenshot-тесты</strong> — фиксируют эталонный рендер и сравнивают пиксели при каждом прогоне, ловя визуальные регрессии. <strong>Paparazzi</strong> (Cash App) рендерит Compose/View на JVM без устройства; <strong>Roborazzi</strong> делает скриншоты поверх Robolectric. Плюс — официальный Compose Preview Screenshot Testing.</li>
           </ul>
           <div class="table-wrap">
             <table>
@@ -318,6 +347,20 @@ class LoginScreenTest {
               </tbody>
             </table>
           </div>
+          <p class="subhead">Что Compose-тест синхронизирует сам, а что нет</p>
+          <p>Compose ждёт <em>свои</em> механизмы автоматически, но всё, что крутится мимо его графа, для теста невидимо — и тут нужен <code>registerIdlingResource</code> на <code>ComposeTestRule</code> (Compose поддерживает <code>IdlingResource</code> так же, как Espresso).</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Compose дождётся сам</th><th>Нужен IdlingResource / waitUntil</th></tr></thead>
+              <tbody>
+                <tr><td>Рекомпозиция</td><td>Фоновый поток вне Compose</td></tr>
+                <tr><td>Анимации на <code>withFrameNanos</code></td><td>Корутина на <code>Dispatchers.IO</code></td></tr>
+                <tr><td>Snapshot-state</td><td>Сторонняя очередь, callback API</td></tr>
+                <tr><td>Корутины на <code>Recomposer</code></td><td>WorkManager, внешний таймер</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <details class="qa"><summary>Compose-тест синхронизируется с рекомпозицией сам. Какой класс асинхронной работы он НЕ видит, и чем <code>mainClock</code>/<code>waitForIdle</code> отличаются от <code>waitUntil</code>? <span class="q-badge">★</span></summary><div class="ans"><p>Compose синхронизируется со своими механизмами: рекомпозицией, анимациями на <code>withFrameNanos</code>, корутинами на <code>Recomposer</code>. Работу <em>вне</em> этого графа — фоновый поток, не-Compose корутину на <code>Dispatchers.IO</code>, стороннюю очередь — он не отслеживает, и тут нужен <code>registerIdlingResource</code>.</p><p>У теста есть виртуальные часы <code>composeTestRule.mainClock</code>. По умолчанию <code>autoAdvance=true</code>: rule сам проматывает кадры и анимации до idle на каждом действии, а <code>waitForIdle()</code> ждёт, пока нет ожидающих рекомпозиций и анимаций. Выставив <code>mainClock.autoAdvance=false</code>, можно вручную двигать <code>advanceTimeBy</code> и проверять промежуточные кадры анимации. Разница в том, что <code>waitForIdle</code> ждёт «успокоения» самого Compose, а <code>waitUntil(condition)</code> крутит цикл, пока ваше произвольное условие не станет истинным — для работы, которую rule сам не дождётся.</p></div></details>
         </section>
 
         <section class="section" id="practices">
@@ -404,6 +447,90 @@ class ProfileViewModelTest {
         assertEquals(ProfileState.Error("offline"), vm.state.value)
     }
 }</code></pre>
+          <details class="qa"><summary>Что такое тавтологичный тест и почему <code>verify</code> над мокнутым методом — запах? Когда <code>verify</code> оправдан, а когда нет? <span class="q-badge">★</span></summary><div class="ans"><p>Тавтологичный тест — это когда вы мокаете зависимость, заставляете её вернуть X, а потом через <code>verify</code> проверяете, что код вызвал ровно то, что вы сами и запрограммировали. Проверяется не поведение, а ваша же настройка мока, и тест повторяет реализацию один в один: поменяли внутренний вызов — тест упал, хотя поведение не изменилось. Это brittle test.</p><p><code>verify</code> оправдан только для побочных эффектов без наблюдаемого результата-состояния: отправка аналитики, запись в лог, инвалидация кэша, отправка письма — там факт вызова и есть единственное доказательство эффекта. Всё, что возвращает значение или меняет состояние (репозиторий отдал данные → ViewModel выставил <code>UiState</code>), проверяйте через <em>результат</em> (state verification) на fake, а не через <code>verify</code>. Правило простое: один <code>verify</code> на команду-эффект; если он дублирует ассерт состояния — он лишний.</p></div></details>
+        </section>
+
+        <section class="section" id="events">
+          <h2>Тестирование событий: SharedFlow и Channel</h2>
+          <p>Глава выше разбирала <code>StateFlow</code> — держатель состояния. Но навигация, снэкбары, тосты — это <em>события</em>, а не состояние, и тестируются принципиально иначе. Событие должно сработать ровно один раз: показать <code>StateFlow</code> для one-shot плохо, потому что при повороте экрана коллектор переподпишется и получит последнее значение <strong>заново</strong> — снэкбар выскочит второй раз. Поэтому события возят через <code>SharedFlow</code> с <code>replay=0</code> или <code>Channel</code>.</p>
+          <p class="subhead">replay=0: подписка должна идти до эмиссии</p>
+          <p><code>SharedFlow</code> с <code>replay=0</code> горячий и не хранит историю. Подписчик, пришедший <em>после</em> <code>emit</code>, событие просто не увидит. В тесте это значит: сбор надо запустить <strong>до</strong> триггера. Через Turbine <code>flow.test { }</code> подписывается синхронно внутри блока, либо вынесите коллектор в <code>backgroundScope</code> и дайте ему реально подписаться через <code>runCurrent()</code> до вызова действия.</p>
+          <div class="code-label">NavEventsTest.kt — SharedFlow replay=0</div>
+<pre><code class="language-kotlin">@Test
+fun `onSave success emits Back`() = runTest {
+    coEvery { repo.save() } returns Unit
+    val vm = EditViewModel(repo)
+
+    val received = mutableListOf&lt;NavEvent&gt;()
+    backgroundScope.launch { vm.events.toList(received) } // подписались...
+    runCurrent()                                          // ...и дали подписке сработать
+
+    vm.onSave()                                           // ...только теперь триггер
+    advanceUntilIdle()
+
+    assertEquals(NavEvent.Back, received.single())
+}</code></pre>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Порядок «подписался → событие».</strong> Если эмитить до того, как коллектор реально встал в очередь планировщика, событие потеряется и тест станет flaky. На <code>StandardTestDispatcher</code> между <code>launch { collect }</code> и эмиссией всегда вставляйте <code>runCurrent()</code> — иначе подписка ещё не активна.</div>
+          </div>
+          <p class="subhead">Channel + receiveAsFlow</p>
+          <p>Альтернатива — <code>Channel</code> (обычно <code>Channel.BUFFERED</code>), выставленный наружу как <code>receiveAsFlow()</code>. У него другая семантика доставки: событие буферизуется и достаётся <em>одному</em> коллектору ровно один раз, даже если подписка пришла чуть позже эмиссии. Это удобнее для строго one-shot событий, но <code>Channel</code> по своей природе single-consumer — два экрана на один поток не подпишутся. В тесте его собирают так же: через Turbine или коллектор в <code>backgroundScope</code>.</p>
+          <details class="qa"><summary>Почему конфляция у <code>SharedFlow</code> с <code>replay=0</code> не работает как у <code>StateFlow</code>, и какой это даёт риск в тесте? <span class="q-badge">★</span></summary><div class="ans"><p><code>StateFlow</code> всегда держит одно последнее значение и схлопывает промежуточные — потерять можно «середину». У <code>SharedFlow</code> с <code>replay=0</code> и достаточным <code>extraBufferCapacity</code> конфляции нет: каждое событие доставляется отдельно. Зато появляется другой риск — <strong>гонка подписки</strong>: пока коллектор не подписался, эмиссия уходит в никуда (нет ни буфера replay, ни ожидания). В тесте это лечится порядком «сначала запустить сбор и дать ему подписаться (<code>runCurrent()</code>), потом эмитить». То есть у <code>StateFlow</code> вы боретесь с конфляцией, а у событийного <code>SharedFlow</code> — с порядком подписки.</p></div></details>
+        </section>
+
+        <section class="section" id="test-quality">
+          <h2>Как измерить качество тестов: мутационное тестирование</h2>
+          <p>Покрытие (JaCoCo / Kover) считает, какие строки и ветки <em>исполнились</em> во время прогона. Но исполнение — не проверка: тест, который дёргает код без единого ассерта, даёт 100% покрытия и ловит ноль багов. Нужен инструмент, который меряет не охват, а силу самих утверждений.</p>
+          <p class="subhead">Killed vs survived: мутационный score</p>
+          <p>Мутационное тестирование (PIT / Pitest) намеренно вносит мелкие правки в продакшн-код — мутации: <code>+</code> на <code>-</code>, <code>&gt;</code> на <code>&gt;=</code>, выкинуть вызов, инвертировать условие — и прогоняет тесты на каждой. Если тесты <strong>упали</strong>, мутацию «убили»: тест эффективен. Если <strong>прошли</strong> — мутация «выжила»: тест слеп к этому изменению. Mutation score = доля убитых мутаций. Это прямая мера качества ассертов, а не строк. Цена — медленный прогон (тесты гоняются на каждую мутацию), поэтому мутационку применяют точечно к критичной логике.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Метрика</th><th>Что реально меряет</th><th>Слепое пятно</th></tr></thead>
+              <tbody>
+                <tr><td>Покрытие строк</td><td>Какие строки исполнились</td><td>Исполнение ≠ проверка</td></tr>
+                <tr><td>Покрытие ветвей</td><td>Обе ветки <code>if</code> пройдены</td><td>Ветка пройдена без ассерта</td></tr>
+                <tr><td>Mutation score</td><td>Ловят ли ассерты реальные изменения</td><td>Медленно; не для всего кода</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="subhead">Анти-паттерны плохого теста</p>
+          <ul>
+            <li><strong>Тавтологичный тест</strong> — <code>verify</code> своей же настройки мока; проверяет конфигурацию, а не поведение.</li>
+            <li><strong>Тест без ассерта</strong> — «прошивает» код ради покрытия, ничего не утверждает.</li>
+            <li><strong>Тест на приватную реализацию</strong> — лезет во внутренности, падает при любом рефакторинге.</li>
+            <li><strong>Over-mocking</strong> — мокнуто всё подряд; тест дублирует код один в один.</li>
+          </ul>
+          <p>Хороший тест проверяет <em>поведение и контракт</em>, переживает рефакторинг внутренностей, несёт один смысл и читается как спецификация: «при ошибке сети показываем Error» — а не «вызван метод X».</p>
+          <details class="qa"><summary>Почему 100% покрытия не значит «нет багов», но и мутационный score не делают целью на весь код? <span class="q-badge">★</span></summary><div class="ans"><p>Покрытие показывает исполнение, а баг — это неверная логика, которую тест должен <em>поймать ассертом</em>. Можно прогнать каждую строку и ничего не утверждать — отсюда зелёные 100% при дырявых тестах. Мутационный score честнее: он проверяет, замечают ли ассерты подмену логики.</p><p>Но гнать мутационку на весь код невыгодно: каждая мутация — отдельный полный прогон тестов, время растёт мультипликативно. Поэтому её включают точечно — на ядро бизнес-логики, расчёты, критичные ветвления, — а на тривиальном коде (DTO, маппинги) держат обычное покрытие веток. И score тоже не самоцель: 100% убитых мутаций на геттерах никому не нужны.</p></div></details>
+        </section>
+
+        <section class="section" id="ci">
+          <h2>CI/CD для Android</h2>
+          <p>На Senior/Lead спрашивают не «знаю ли я JUnit», а как держать тесты быстрыми и стабильными в конвейере. Типовой pipeline идёт от дешёвого к дорогому: <strong>lint</strong> (статический анализ, detekt/ktlint) → <strong>unit</strong> на JVM → <strong>instrumented</strong> на эмуляторе → подпись и дистрибуция. Каждый шаг — гейт: упал ранний и дешёвый, до дорогого instrumented дело не доходит. Сборкой и подписью подробно занимается глава <a href="gradle-build.html">Gradle и сборка</a>; здесь — про тестовую часть конвейера.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart LR
+  L["lint + detekt"] --> U["unit на JVM"]
+  U --> I["instrumented<br/>на эмуляторе"]
+  I --> S["подпись AAB"]
+  S --> D["дистрибуция"]
+          </div>
+          <div class="cap">Pipeline: дешёвые быстрые гейты первыми, instrumented и дистрибуция — в конце</div>
+          </div>
+          <p class="subhead">Изоляция и параллелизм instrumented-тестов</p>
+          <ul>
+            <li><strong>AndroidX Test Orchestrator</strong> запускает каждый instrumented-тест в своём процессе <code>Instrumentation</code>. Общий стейт и синглтоны не текут между тестами, краш одного теста не валит весь класс, можно делать <code>clearPackageData</code> между прогонами. Цена — рестарт процесса на каждый тест, то есть медленнее.</li>
+            <li><strong>Sharding</strong> — разбивка набора по нескольким эмуляторам/раннерам (<code>numShards</code>/<code>shardIndex</code>) для параллелизма. На практике поверх этого берут Gradle Managed Devices или Firebase Test Lab.</li>
+            <li><strong>Screenshot-тесты в CI</strong> работают в двух режимах: <em>record</em> (записать эталоны) и <em>verify</em> (сравнить с эталоном). Эталоны хранят в репозитории; больная точка — рендер на разных API и плотностях, поэтому фиксируют конкретное окружение.</li>
+          </ul>
+          <p class="subhead">Кэш Gradle и флейки</p>
+          <p>В CI критичен кэш Gradle (build cache + кэш зависимостей) — без него каждый прогон пересобирает всё с нуля и конвейер ползёт. Флейки в instrumented — отдельная боль: политика повторов (retry) маскирует симптом, но не лечит причину, и допустима разве что как временный буфер на инфраструктурную нестабильность эмулятора. Где гонять что: <strong>unit на каждый PR</strong> (быстро, дёшево), <strong>instrumented — на merge или ночных прогонах</strong> (дорого, медленно).</p>
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>Retry — пластырь, а не лечение.</strong> Автоповтор упавшего теста скрывает флейк, и команда перестаёт ему доверять: зелёный прогон с тремя ретраями ничего не гарантирует. Сначала найдите источник недетерминизма (время, гонки, общий стейт), а retry оставьте только для заведомо инфраструктурных сбоев эмулятора.</div>
+          </div>
+          <details class="qa"><summary>Зачем Orchestrator, если sharding и так распараллеливает тесты — они решают одну задачу? <span class="q-badge">★</span></summary><div class="ans"><p>Нет, это ортогональные вещи. Sharding отвечает за <em>скорость</em>: режет набор тестов на части и гоняет их на нескольких эмуляторах параллельно. Orchestrator отвечает за <em>изоляцию</em>: запускает каждый тест в отдельном процессе <code>Instrumentation</code>, чтобы статика, синглтоны и общий стейт не протекали между тестами, а краш одного не уносил остальные.</p><p>Их используют вместе: sharding раскидывает тесты по раннерам, а Orchestrator внутри каждого раннера изолирует тесты друг от друга. Без Orchestrator один «грязный» тест в шарде отравит соседей по тому же процессу — и параллелизм лишь быстрее размножит флейки.</p></div></details>
         </section>
 
         <section class="section" id="video">
@@ -478,6 +605,21 @@ class ProfileViewModelTest {
           <details class="qa">
             <summary>Что делать с flaky-тестом? <span class="q-badge">Middle+</span></summary>
             <div class="ans"><p>Не «ретраить вслепую» и не <code>@Ignore</code> — найти источник недетерминизма. Чаще всего это: реальное время/<code>Thread.sleep</code> (→ виртуальное время), гонки потоков и неподменённый <code>Main</code> (→ единый <code>TestDispatcher</code>), общий стейт между тестами (→ изоляция, <code>clearAllMocks</code>, новый SUT в <code>@Before</code>), обращение к сети/БД (→ fakes/MockWebServer/in-memory Room), случайность и текущая дата (→ инжект <code>Random(seed)</code>/<code>Clock</code>), асинхронный UI и анимации (→ Idling Resources, отключить анимации). Flaky-тест хуже отсутствия теста: он подрывает доверие к зелёному прогону.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Зачем нужен backgroundScope в runTest и чем он отличается от обычного launch внутри теста? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Обычный <code>launch</code> внутри <code>runTest</code> стартует дочернюю корутину в <code>TestScope</code>, и по правилам структурной конкуренции <code>runTest</code> <em>дождётся</em> её завершения перед концом теста. Если корутина бесконечна (сбор <code>StateFlow</code>, продюсер с <code>while(true)</code>), тест провисит до 60-секундного таймаута и упадёт с <code>UncompletedCoroutinesError</code>. <code>backgroundScope</code> — специальный scope внутри <code>runTest</code>: тоже на виртуальном времени, но его завершения <code>runTest</code> не ждёт и автоматически отменяет в конце. В него выносят всё фоновое, что нужно тесту, но не должно блокировать финал: коллекторы <code>StateFlow</code>/<code>SharedFlow</code>, длительные продюсеры. Это идиоматичная замена ручного <code>collectJob + cancel</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Чем spyk отличается от mockk и когда оправдан частичный мок? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p><code>mockk</code> создаёт полный дублёр: методы по умолчанию не реализованы (строгий мок кидает, relaxed возвращает дефолты), реальный код класса не выполняется. <code>spyk</code> оборачивает <em>реальный</em> объект: по умолчанию вызываются настоящие методы, а застабить можно лишь отдельные через <code>every</code>. Spy полезен, когда надо подменить один-два метода у в остальном рабочего объекта — например, замокать только обращение к сети у класса с кучей чистой логики. Но spy — запах: обычно он сигналит, что класс делает слишком много и его пора разбить или вынести зависимость в конструктор. На практике предпочитают fake целиком или mock интерфейса, а spy держат для legacy, который нельзя переписать.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как тестировать код, который читает текущее время или генерирует случайность, не делая тест flaky? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Нельзя завязываться на <code>System.currentTimeMillis()</code>/<code>LocalDateTime.now()</code>/<code>Random()</code> напрямую — результат недетерминирован. Время инжектят через <code>java.time.Clock</code>: в проде <code>Clock.systemDefaultZone()</code>, в тесте <code>Clock.fixed(instant, zone)</code>, а код берёт время как <code>clock.instant()</code>. Случайность — через инжектируемый <code>Random(seed)</code> с фиксированным семенем: последовательность повторяема. Генераторы UUID/ID выносят за интерфейс и подменяют fake-ом. Это частный случай общего принципа: любой недетерминированный источник (время, рандом, локаль, файловая система) — внешняя зависимость, которую внедряют, а не дёргают статически.</p></div>
           </details>
 
         </section>
@@ -591,6 +733,86 @@ class SearchViewModelDebounceTest {
             </details>
           </div>
 
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 4.</strong> ViewModel шлёт навигацию через событийный канал <code>events: SharedFlow&lt;NavEvent&gt;</code> (это <code>MutableSharedFlow</code> с <code>replay=0</code>). Метод <code>onSave()</code> при успехе репозитория эмитит <code>NavEvent.Back</code>. Напишите тест на успешный сценарий так, чтобы не потерять событие из-за <code>replay=0</code>, и объясните, почему подписка обязана идти до вызова <code>onSave()</code>.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">@OptIn(ExperimentalCoroutinesApi::class)
+class NavEventsTest {
+
+    @get:Rule val mainRule = MainDispatcherRule()
+    private val repo = mockk&lt;EditRepository&gt;()
+
+    @Test
+    fun `onSave success emits Back`() = runTest {
+        coEvery { repo.save() } returns Unit
+        val vm = EditViewModel(repo)
+
+        // вариант через backgroundScope: подписались ДО триггера
+        val received = mutableListOf&lt;NavEvent&gt;()
+        backgroundScope.launch { vm.events.toList(received) }
+        runCurrent()                      // дать коллектору реально подписаться
+
+        vm.onSave()                       // только теперь эмитим
+        advanceUntilIdle()
+
+        assertEquals(NavEvent.Back, received.single())
+    }
+
+    // Альтернатива через Turbine — test{} подписывается синхронно:
+    @Test
+    fun `onSave success emits Back via turbine`() = runTest {
+        coEvery { repo.save() } returns Unit
+        val vm = EditViewModel(repo)
+
+        vm.events.test {
+            vm.onSave()
+            advanceUntilIdle()
+            assertEquals(NavEvent.Back, awaitItem())
+            cancelAndIgnoreRemainingEvents()
+        }
+    }
+}</code></pre>
+                <p>Объяснение: при <code>replay=0</code> подписчик, пришедший после <code>emit</code>, событие не увидит — буфера истории нет. Поэтому коллектор (<code>backgroundScope.launch { collect }</code> или Turbine <code>test{}</code>) должен стартовать <em>до</em> триггера. С <code>StandardTestDispatcher</code> между запуском сбора и эмиссией нужен <code>runCurrent()</code>, иначе подписка ещё не активна и событие уйдёт в никуда. <code>backgroundScope</code> здесь удобен тем, что бесконечный <code>toList</code> не заблокирует завершение теста — его отменят автоматически.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 5.</strong> Напишите свой минимальный <code>MainDispatcherRule</code> на базе <code>TestWatcher</code>: в <code>starting()</code> — <code>Dispatchers.setMain(dispatcher)</code>, в <code>finished()</code> — <code>resetMain()</code>, с параметром <code>TestDispatcher</code> (по умолчанию <code>UnconfinedTestDispatcher</code>). Затем покажите тест ViewModel, чей <code>init</code>-блок грузит данные через <code>viewModelScope</code> и выставляет <code>state</code> в <code>Content</code> без ручного <code>advanceUntilIdle</code>. Объясните, почему с Unconfined advance не нужен, а со Standard — нужен.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">@OptIn(ExperimentalCoroutinesApi::class)
+class MainDispatcherRule(
+    val dispatcher: TestDispatcher = UnconfinedTestDispatcher()
+) : TestWatcher() {
+    override fun starting(d: Description) = Dispatchers.setMain(dispatcher)
+    override fun finished(d: Description) = Dispatchers.resetMain()
+}
+
+@OptIn(ExperimentalCoroutinesApi::class)
+class FeedViewModelTest {
+
+    @get:Rule val mainRule = MainDispatcherRule()   // Unconfined по умолчанию
+    private val repo = mockk&lt;FeedRepository&gt;()
+
+    @Test
+    fun `init loads data into Content`() {
+        coEvery { repo.load() } returns listOf("a", "b")
+
+        val vm = FeedViewModel(repo)               // init { viewModelScope.launch { ... } }
+
+        // никакого advanceUntilIdle — Unconfined уже всё выполнил
+        assertEquals(FeedState.Content(listOf("a", "b")), vm.state.value)
+    }
+}</code></pre>
+                <p>Объяснение: <code>UnconfinedTestDispatcher</code> выполняет корутину из <code>init</code> eagerly до первой приостановки, поэтому к моменту ассерта <code>state</code> уже обновлён. Со <code>StandardTestDispatcher</code> корутина отложена в очередь планировщика — нужен <code>runTest { advanceUntilIdle() }</code> (и тот же scheduler у rule и кода), иначе на момент проверки <code>state</code> ещё <code>Idle</code>. Это та же асимметрия «тело eagerly, дети в очереди», только применённая к загрузке в конструкторе.</p>
+              </div>
+            </details>
+          </div>
+
         </section>
 
         <div class="sources">
@@ -604,6 +826,8 @@ class SearchViewModelDebounceTest {
             <li><a href="https://mockk.io/" target="_blank" rel="noopener">MockK — mocking library for Kotlin</a> — <code>every</code>/<code>coEvery</code>, <code>verify</code>, <code>relaxed</code>, <code>slot</code>.</li>
             <li><a href="https://github.com/cashapp/turbine" target="_blank" rel="noopener">cashapp/turbine</a> — DSL <code>test { awaitItem() }</code> для Flow/StateFlow.</li>
             <li><a href="https://github.com/cashapp/paparazzi" target="_blank" rel="noopener">cashapp/paparazzi</a> — скриншот-тесты Compose/View на JVM без устройства.</li>
+            <li><a href="https://developer.android.com/training/testing/instrumented-tests/androidx-test-libraries/runner" target="_blank" rel="noopener">AndroidX Test Orchestrator</a> — изоляция instrumented-тестов, <code>clearPackageData</code>, sharding.</li>
+            <li><a href="https://pitest.org/" target="_blank" rel="noopener">PIT (Pitest)</a> — мутационное тестирование на JVM: killed/survived, mutation score.</li>
           </ol>
         </div>
       </article>
@@ -614,6 +838,6 @@ class SearchViewModelDebounceTest {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/app.js?v=20260620-4"></script>
+  <script src="../assets/app.js?v=20260621-3"></script>
 </body>
 </html>

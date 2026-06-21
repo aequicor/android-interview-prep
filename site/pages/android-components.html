@@ -29,7 +29,7 @@
         <header class="page-head">
           <span class="eyebrow">Платформа Android</span>
           <h1>Android-компоненты и межпроцессное взаимодействие</h1>
-          <p class="lead">Четыре базовых компонента Android-приложения: Activity (экран/точка входа), Service (служба для фоновой работы), BroadcastReceiver (приёмник системных и приложенческих событий), ContentProvider (поставщик данных), их жизненные циклы, ограничения фоновой работы в новых версиях ОС (операционной системы) и то, как процессы общаются через Binder и AIDL (Android Interface Definition Language — язык описания интерфейса для IPC, межпроцессного взаимодействия). Тема, по которой видно, понимаешь ли ты платформу «под капотом», а не только Jetpack Compose (декларативный инструментарий пользовательского интерфейса) поверх неё.</p>
+          <p class="lead">Эта глава теперь про компоненты без собственного экрана и про IPC (межпроцессное взаимодействие): Service, BroadcastReceiver, ContentProvider, Context, Binder, AIDL и Messenger. Activity и Fragment вынесены в отдельные главы, потому что у них свои цепочки вопросов: lifecycle, saved state, back stack, транзакции и state loss.</p>
           <div class="meta">
             <span class="tag lvl-mid">Middle</span>
             <span class="tag lvl-sen">Senior</span>
@@ -37,141 +37,18 @@
           </div>
         </header>
 
-        <section class="section" id="activity">
-          <h2>Activity: жизненный цикл и состояние</h2>
-          <p>Activity проходит через колбэки, парные по смыслу: <code>onCreate/onDestroy</code> (всё время жизни), <code>onStart/onStop</code> (видимость), <code>onResume/onPause</code> (фокус, foreground). Считывать эти пары — половина успеха: ресурсы, требующие парного освобождения, привязывают к симметричным колбэкам.</p>
-          <div class="diagram">
-          <div class="mermaid">
-stateDiagram-v2
-[*] --> Created: onCreate()
-Created --> Started: onStart()
-Started --> Resumed: onResume()
-Resumed --> Started: onPause()
-Started --> Stopped: onStop()
-Stopped --> Started: onRestart() + onStart()
-Stopped --> Destroyed: onDestroy()
-Destroyed --> [*]
-note right of Resumed
-RESUMED: на экране, в фокусе
-end note
-note right of Started
-STARTED: видна, но без фокуса
-(диалог, split-screen)
-end note
+        <section class="section" id="scope">
+          <h2>Граница этой главы</h2>
+          <p>Раньше здесь жили Activity, Fragment и IPC в одном месте. Это было удобно как обзор, но плохо для подготовки: по Activity отдельно спрашивают <code>isFinishing</code>, saved state и task/back stack; по Fragment — транзакции, <code>viewLifecycleOwner</code>, state loss и Fragment Result API. Поэтому эти два компонента теперь вынесены в соседние главы, а здесь остаётся платформа вокруг них.</p>
+          <div class="grid cols-2">
+            <div class="card">
+              <p><strong><a href="activity.html">Activity</a>.</strong> Lifecycle, <code>isFinishing</code>, process death, Activity Result API и launch modes.</p>
+            </div>
+            <div class="card">
+              <p><strong><a href="fragment.html">Fragment</a>.</strong> Два lifecycle, FragmentManager, транзакции, back stack и Fragment Result API.</p>
+            </div>
           </div>
-          <div class="cap">Жизненный цикл Activity. После onPause экран ещё виден; после onStop — уже нет</div>
-          </div>
-          <p class="subhead">onSaveInstanceState и восстановление</p>
-          <p>Система может убить процесс в фоне ради памяти. Чтобы UI восстановился «как был», непосредственно перед потенциальным уничтожением (после <code>onStop</code>, до Android P — после <code>onPause</code>) вызывается <code>onSaveInstanceState(Bundle)</code>. <code>Bundle</code> сериализуется и переживает смерть процесса. Ограничения: только небольшие данные (он маршалится через Binder, лимит ~1 МБ на всю транзакцию), типы должны быть <code>Parcelable</code>/примитивы.</p>
-          <div class="code-label">MainActivity.kt</div>
-<pre><code class="language-kotlin">class MainActivity : ComponentActivity() {
-    private var counter = 0
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        // восстановление транзиентного UI-состояния
-        counter = savedInstanceState?.getInt(KEY_COUNTER) ?: 0
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        outState.putInt(KEY_COUNTER, counter)   // только маленькие данные!
-    }
-
-    companion object { private const val KEY_COUNTER = "counter" }
-}</code></pre>
-          <div class="callout tip">
-            <div class="ic">💡</div>
-            <div class="bd"><strong>Три уровня живучести состояния.</strong> <code>ViewModel</code> переживает поворот, но <em>не</em> смерть процесса. <code>onSaveInstanceState</code>/<code>SavedStateHandle</code> переживает смерть процесса, но мало места. Постоянное хранилище (Room/DataStore) — для всего остального. На собесе различай эти три уровня чётко.</div>
-          </div>
-          <p class="subhead">Configuration changes</p>
-          <p>Поворот экрана, смена языка, темы, размера окна — это <em>configuration change</em>. По умолчанию система <strong>уничтожает и пересоздаёт</strong> Activity, чтобы перечитать ресурсы под новую конфигурацию. Можно перехватить вручную через <code>android:configChanges</code> + <code>onConfigurationChanged()</code>, но это считается «костылём» — теряется автоматическая подгрузка ресурсов. Правильный путь — поднимать состояние в <code>ViewModel</code>, а UI делать пересоздаваемым (Compose это и делает).</p>
-          <p class="subhead">Launch modes и back stack</p>
-          <p>Launch mode определяет, как новая Activity ложится в <strong>task</strong> (стек задач). Управляется атрибутом <code>android:launchMode</code> либо флагами <code>Intent</code> (<code>FLAG_ACTIVITY_*</code>).</p>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Launch mode</th><th>Поведение</th><th>Когда применять</th></tr></thead>
-              <tbody>
-                <tr><td><code>standard</code></td><td>Всегда новый экземпляр, можно несколько в стеке</td><td>По умолчанию, обычные экраны</td></tr>
-                <tr><td><code>singleTop</code></td><td>Если уже на вершине стека — переиспользуется, прилетает <code>onNewIntent()</code></td><td>Экран поиска, уведомления</td></tr>
-                <tr><td><code>singleTask</code></td><td>Один экземпляр в системе; при повторном запуске стек над ним очищается (<code>onNewIntent()</code>)</td><td>Главный/«домашний» экран приложения</td></tr>
-                <tr><td><code>singleInstance</code></td><td>Как singleTask, но в <em>отдельной task</em> в одиночестве</td><td>Звонилка, launcher, очень редко</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="callout warn">
-            <div class="ic">⚠️</div>
-            <div class="bd"><strong>Грабли singleTask/singleInstance.</strong> Они меняют поведение кнопки «Назад» и могут «вынести» Activity в чужой/отдельный task, ломая ожидаемую навигацию. На практике 95% экранов — <code>standard</code>/<code>singleTop</code>. Если интервьюер спрашивает про singleInstance «по жизни» — почти всегда правильный ответ «избегаю, кроме особых случаев».</div>
-          </div>
-          <p class="subhead">Intent: explicit и implicit</p>
-          <p><strong>Explicit</strong> — указан конкретный класс-получатель (внутри своего приложения). <strong>Implicit</strong> — описано <em>действие</em> (<code>action</code> + <code>category</code> + <code>data</code>), а система через intent-filter находит подходящий компонент (часто в другом приложении).</p>
-          <div class="code-label">Intent.kt</div>
-<pre><code class="language-kotlin">// Explicit — знаем класс
-startActivity(Intent(this, DetailActivity::class.java).apply {
-    putExtra("id", 42)
-})
-
-// Implicit — описываем намерение, система выбирает приложение
-val share = Intent(Intent.ACTION_SEND).apply {
-    type = "text/plain"
-    putExtra(Intent.EXTRA_TEXT, "Привет с собеса")
-}
-// безопасно: проверка, что есть кому обработать
-if (share.resolveActivity(packageManager) != null) startActivity(share)</code></pre>
-          <p class="subhead">ActivityResult API</p>
-          <p>Старый <code>startActivityForResult()/onActivityResult()</code> устарел: ручной разбор <code>requestCode</code>, потеря результата при смерти процесса. Современный <strong>ActivityResult API</strong> регистрирует контракт заранее, лайфсайкл-безопасен и типизирован.</p>
-          <div class="code-label">PickImage.kt</div>
-<pre><code class="language-kotlin">// регистрируем ДО onCreate-резолва, переживает пересоздание Activity
-private val pickImage = registerForActivityResult(
-    ActivityResultContracts.GetContent()
-) { uri: Uri? ->
-    uri?.let { viewModel.onImagePicked(it) }
-}
-
-// запуск без requestCode-магии
-fun chooseImage() = pickImage.launch("image/*")</code></pre>
-        </section>
-
-        <section class="section" id="fragment">
-          <h2>Fragment: lifecycle и viewLifecycleOwner</h2>
-          <p>Fragment — переиспользуемая часть UI внутри Activity. Ключевое отличие от Activity: у фрагмента <strong>два разных жизненных цикла</strong> — самого фрагмента и его <em>View</em>. View может уничтожаться и пересоздаваться (например, при уходе в back stack), пока сам фрагмент жив.</p>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Этап Fragment</th><th>Этап View</th><th>Что делаем</th></tr></thead>
-              <tbody>
-                <tr><td><code>onAttach</code> → <code>onCreate</code></td><td>—</td><td>Инициализация, аргументы</td></tr>
-                <tr><td><code>onCreateView</code></td><td><code>View</code> создан</td><td>Надуть/получить layout</td></tr>
-                <tr><td><code>onViewCreated</code></td><td><code>viewLifecycleOwner</code> активен</td><td>Подписки на UI, биндинг</td></tr>
-                <tr><td><code>onDestroyView</code></td><td><code>View</code> уничтожен</td><td>Обнулить binding, отписки</td></tr>
-                <tr><td><code>onDestroy</code> → <code>onDetach</code></td><td>—</td><td>Финальная очистка</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="callout danger">
-            <div class="ic">🛑</div>
-            <div class="bd"><strong>Почему <code>viewLifecycleOwner</code> критичен.</strong> Если подписаться на <code>Flow</code>/<code>LiveData</code>, указав <code>this</code> (lifecycle фрагмента) вместо <code>viewLifecycleOwner</code>, подписка переживёт уничтожение View. После <code>onDestroyView</code> придёт новое значение — и колбэк обратится к <strong>уже мёртвой</strong> View (или старому binding) → <code>NullPointerException</code> или утечка. Правило: всё, что трогает View, подписывай на <code>viewLifecycleOwner</code>.</div>
-          </div>
-          <div class="code-label">ProfileFragment.kt</div>
-<pre><code class="language-kotlin">override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-    super.onViewCreated(view, savedInstanceState)
-    // привязка к жизни VIEW, а не фрагмента
-    viewLifecycleOwner.lifecycleScope.launch {
-        viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            viewModel.state.collect { render(it) }
-        }
-    }
-}</code></pre>
-          <p class="subhead">FragmentManager и Fragment Result API</p>
-          <p><code>FragmentManager</code> управляет транзакциями (add/replace/remove) и back stack фрагментов. Для передачи данных между фрагментами <em>без</em> прямых ссылок (которые ведут к связности и крашам) используют <strong>Fragment Result API</strong>: один фрагмент кладёт результат в менеджер, другой подписывается по строковому ключу.</p>
-          <div class="code-label">FragmentResult.kt</div>
-<pre><code class="language-kotlin">// Фрагмент-получатель: слушатель привязан к viewLifecycleOwner
-setFragmentResultListener("filterKey") { _, bundle ->
-    val sort = bundle.getString("sort")
-    viewModel.applySort(sort)
-}
-
-// Фрагмент-отправитель (например, BottomSheet)
-setFragmentResult("filterKey", bundleOf("sort" to "price_asc"))</code></pre>
+          <details class="qa"><summary>Почему Activity и Fragment лучше держать отдельными главами, а не параграфами внутри компонентов? <span class="q-badge">★</span></summary><div class="ans"><p>Потому что у них отдельные механики владения состоянием. Activity связана с task, Intent, Window, saved instance state и флагами вроде <code>isFinishing</code>. Fragment живёт внутри FragmentManager, имеет отдельный lifecycle View и транзакции. Если оставить всё в одном параграфе, получится список API без главного: где именно ломается lifetime и почему.</p></div></details>
         </section>
 
         <section class="section" id="service">
@@ -252,7 +129,65 @@ val req = OneTimeWorkRequestBuilder&lt;SyncWorker&gt;()
     .build()
 WorkManager.getInstance(context).enqueue(req)</code></pre>
           <p class="subhead">Doze и App Standby</p>
-          <p><strong>Doze</strong> включается, когда устройство долго лежит без движения с выключенным экраном: система «замораживает» сетевой доступ, откладывает джобы/алармы и собирает их в редкие «окна обслуживания». <strong>App Standby</strong> ограничивает приложения, которыми давно не пользовались (бакеты active/working set/frequent/rare/restricted). Вывод для кандидата: нельзя рассчитывать на точное время фоновых задач — используй WorkManager, а для критичной точности по времени — <code>setExactAndAllowWhileIdle()</code> с разрешением (и осторожно).</p>
+          <p><strong>Doze</strong> включается, когда устройство долго лежит без движения с выключенным экраном: система «замораживает» сетевой доступ, откладывает джобы/алармы и собирает их в редкие «окна обслуживания». <strong>App Standby</strong> ограничивает приложения, которыми давно не пользовались (бакеты active/working set/frequent/rare/restricted). Вывод для кандидата: нельзя рассчитывать на точное время фоновых задач — для отложенной работы подходит WorkManager, а для критичной точности по времени — <code>setExactAndAllowWhileIdle()</code> с разрешением (и осторожно).</p>
+          <p>Глубже про WorkManager, FGS-типы и точные алармы — в отдельной главе <a href="background-work.html">Фоновая работа</a>; здесь — только то, что нужно для разговора о компонентах.</p>
+          <details class="qa"><summary>Чем <code>START_STICKY</code>, <code>START_NOT_STICKY</code> и <code>START_REDELIVER_INTENT</code> отличаются по тому, что прилетит в <code>onStartCommand</code> после убийства сервиса, и почему <code>START_STICKY</code> коварен? <span class="q-badge">★</span></summary><div class="ans"><p>Возврат <code>onStartCommand</code> говорит системе, как поступить, если она убила сервис и появилась возможность перезапустить.</p><ul><li><code>START_STICKY</code> — сервис пересоздаётся, но <code>intent == null</code> (последний Intent заново не передаётся). Годится для плеера, который сам держит состояние; коварство в том, что про проверку <code>intent</code> на null забывают и ловят NPE.</li><li><code>START_NOT_STICKY</code> — система не перезапускает сервис, пока не придёт новый <code>startService</code>. Для работы, которую бессмысленно возобновлять.</li><li><code>START_REDELIVER_INTENT</code> — сервис пересоздаётся и получает <em>последний</em> Intent заново. Для работы, которую обязательно доделать (докачка файла).</li></ul><p>Отдельно: с Android 8 убитый в фоне <code>START_STICKY</code>-сервис может вообще не перезапуститься из-за Background Execution Limits. Нужны гарантии — это <code>WorkManager</code>, а не надежда на sticky.</p></div></details>
+        </section>
+
+        <section class="section" id="workmanager">
+          <h2>WorkManager под капотом</h2>
+          <p>В callout выше WorkManager назван «современной заменой сервисам» — но на собесе про фоновую работу спрашивают глубже, чем «есть такой класс». Разберём, как он даёт гарантии и чем управляется. Полная глава — <a href="background-work.html">Фоновая работа</a>; здесь — суть для вопросов про компоненты.</p>
+          <p class="subhead">Где он хранит работу и почему она переживает ребут</p>
+          <p>Запросы лежат в собственной SQLite-базе (через Room), а не в памяти процесса. Поэтому работа переживает перезапуск приложения и перезагрузку устройства: после ребута её восстанавливает <code>RescheduleReceiver</code>, ловящий <code>BOOT_COMPLETED</code>. Под капотом на разных версиях WorkManager выбирает движок — <code>JobScheduler</code> (API 23+) либо, для старых, связку <code>AlarmManager</code> + <code>BroadcastReceiver</code>.</p>
+          <p class="subhead">Уникальная работа и политики конфликта</p>
+          <p>Чтобы не плодить дубли синхронизации, работу ставят уникальной — через <code>enqueueUniqueWork</code> / <code>enqueueUniquePeriodicWork</code> с именем и политикой:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Политика</th><th>Что делает при конфликте имён</th><th>Когда</th></tr></thead>
+              <tbody>
+                <tr><td><code>REPLACE</code></td><td>Отменить существующую, поставить новую</td><td>Актуальна только последняя задача</td></tr>
+                <tr><td><code>KEEP</code></td><td>Оставить существующую, новую проигнорировать</td><td>Хватит одной запущенной</td></tr>
+                <tr><td><code>APPEND</code> / <code>APPEND_OR_REPLACE</code></td><td>Добавить в конец цепочки</td><td>Задачи должны идти по очереди</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="subhead">Цепочки, expedited, constraints</p>
+          <p>Цепочки строят через <code>beginWith().then()</code>; output одной <code>Worker</code> автоматически становится input следующей. <strong>Expedited work</strong> (<code>setExpedited</code>, с 2.7) — для важной, инициированной пользователем работы, которую надо начать почти сразу, но коротко. Система даёт ей повышенный приоритет в рамках квоты foreground-времени; когда квота исчерпана, запрос откатывается по политике (<code>RUN_AS_NON_EXPEDITED_WORK_REQUEST</code> или <code>DROP</code>). На API &lt; 31 expedited реализуется через foreground service, поэтому нужен <code>getForegroundInfo()</code> с уведомлением; на API 31+ — через expedited job в <code>JobScheduler</code> без уведомления.</p>
+          <div class="code-label">SyncChain.kt</div>
+<pre><code class="language-kotlin">val constraints = Constraints(
+    requiredNetworkType = NetworkType.CONNECTED,
+    requiresBatteryNotLow = true
+)
+val download = OneTimeWorkRequestBuilder&lt;DownloadWorker&gt;()
+    .setConstraints(constraints)
+    .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+    .build()
+val process = OneTimeWorkRequestBuilder&lt;ProcessWorker&gt;().build()
+
+WorkManager.getInstance(context)
+    .beginUniqueWork("sync", ExistingWorkPolicy.KEEP, download)
+    .then(process)   // output download → input process
+    .enqueue()</code></pre>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TD
+A["Нужна фоновая работа"] --> B{"Пользователь видит её сейчас?"}
+B -->|"да: плеер, навигация"| C["Foreground service (+ тип, Android 14)"]
+B -->|"нет"| D{"Надо доделать гарантированно?"}
+D -->|"да, можно подождать"| E["WorkManager"]
+D -->|"да, начать почти сразу"| F["WorkManager expedited"]
+D -->|"точное время"| G["AlarmManager (exact)"]
+E --> H["constraints + backoff + unique work"]
+F --> H
+          </div>
+          <div class="cap">Выбор механизма: видимость сейчас → FGS, отложенная гарантия → WorkManager, точное время → AlarmManager</div>
+          </div>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Где WorkManager не годится.</strong> Точное время срабатывания (будильник, напоминание в 9:00) — это <code>AlarmManager</code> с <code>setExactAndAllowWhileIdle</code>, а не WorkManager, который собирает работу в окна и уважает Doze. Мгновенная видимая пользователю работа — foreground service. WorkManager — про «рано или поздно, но точно».</div>
+          </div>
+          <details class="qa"><summary>Чем expedited work отличается от обычного запроса и от foreground service, и что произойдёт, когда исчерпается квота foreground-времени? <span class="q-badge">★</span></summary><div class="ans"><p>От обычного запроса expedited отличается приоритетом: он начинается почти сразу и игнорирует часть отложек, но рассчитан на короткую работу (минуты). От FGS — тем, что это всё ещё управляемая WorkManager отложенно-гарантированная работа, а не процесс, который пользователь видит и контролирует прямо сейчас.</p><p>Квота foreground-времени общая на приложение. Когда она исчерпана, новый expedited-запрос не падает молча: он откатывается по <code>OutOfQuotaPolicy</code> — либо выполнится как обычный неускоренный запрос (<code>RUN_AS_NON_EXPEDITED_WORK_REQUEST</code>), либо будет отброшен (<code>DROP</code>). На API &lt; 31 расход квоты особенно заметен, потому что под капотом expedited там — это foreground service.</p></div></details>
         </section>
 
         <section class="section" id="receiver">
@@ -270,7 +205,7 @@ WorkManager.getInstance(context).enqueue(req)</code></pre>
             </table>
           </div>
           <p class="subhead">Ограничение implicit broadcast (Android 8+)</p>
-          <p>Чтобы пачка приложений не «просыпалась» от каждого системного события, начиная с <strong>Android 8</strong> нельзя регистрировать <em>implicit</em> броадкасты в манифесте. Исключения остались для важных событий, которые приходят редко: <code>ACTION_BOOT_COMPLETED</code>, <code>ACTION_LOCALE_CHANGED</code>, <code>ACTION_MY_PACKAGE_REPLACED</code>, события медиа-носителей и др. (полный список — «Implicit Broadcast Exceptions»). Для всего остального: регистрируй ресивер динамически, пока приложение активно, либо используй explicit-броадкаст с указанием пакета/компонента.</p>
+          <p>Чтобы пачка приложений не «просыпалась» от каждого системного события, начиная с <strong>Android 8</strong> нельзя регистрировать <em>implicit</em> броадкасты в манифесте. Исключения остались для важных событий, которые приходят редко: <code>ACTION_BOOT_COMPLETED</code>, <code>ACTION_LOCALE_CHANGED</code>, <code>ACTION_MY_PACKAGE_REPLACED</code>, события медиа-носителей и др. (полный список — «Implicit Broadcast Exceptions»). Для всего остального ресивер регистрируют динамически, пока приложение активно, либо используют explicit-броадкаст с указанием пакета/компонента.</p>
           <div class="code-label">NetworkReceiver.kt</div>
 <pre><code class="language-kotlin">class NetworkReceiver(val onChange: (Boolean) -&gt; Unit) : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -292,6 +227,7 @@ override fun onStop() {
             <div class="ic">⚠️</div>
             <div class="bd"><strong>LocalBroadcastManager — deprecated.</strong> Он опирался на Binder (механизм IPC) ради сообщений <em>внутри одного процесса</em> — это избыточно и поощряло нарушение слоёв («любой компонент слышит любое событие»). Современная замена для внутреннего event-bus — <code>SharedFlow</code>/<code>StateFlow</code> (или <code>LiveData</code>): лайфсайкл-безопасно, типизированно, без накладных расходов Binder.</div>
           </div>
+          <details class="qa"><summary>Сколько времени есть у <code>onReceive()</code> до ANR, почему нельзя просто запустить корутину прямо в нём, и что меняет <code>goAsync()</code>? <span class="q-badge">★</span></summary><div class="ans"><p><code>onReceive()</code> идёт на главном потоке, и у него жёсткий лимит ~10 секунд для foreground-броадкаста — дальше система объявляет ANR и может убить процесс.</p><p>Просто запустить корутину или Thread ненадёжно: как только <code>onReceive</code> вернёт управление, процесс считается неактивным и его могут убить до завершения работы, а сам объект ресивера перестаёт быть валидным. <code>goAsync()</code> возвращает <code>PendingResult</code> и говорит системе «я ещё не закончил» — процесс держат живым чуть дольше (тот же бюджет ~10 сек, не бесконечно), а по завершении обязателен <code>pendingResult.finish()</code>.</p><p>Это для коротких операций. Для длительной работы из ресивера канонично — <code>enqueue</code> в <code>WorkManager</code> (подробнее в главе <a href="background-work.html">Фоновая работа</a>), а не <code>goAsync</code>.</p></div></details>
         </section>
 
         <section class="section" id="provider">
@@ -332,14 +268,40 @@ val intent = Intent(Intent.ACTION_VIEW).apply {
           </div>
           <div class="callout danger">
             <div class="ic">🛑</div>
-            <div class="bd"><strong>Классическая утечка.</strong> Передать <em>Activity Context</em> в долгоживущий объект (синглтон, статика, фоновый поток, корутина, которая переживает экран). Activity не сможет быть собрана GC, пока её держит «вечный» объект → утечка всего дерева View. Правило: для всего, что живёт дольше экрана, бери <code>applicationContext</code>. Для UI — Activity, но не сохраняй её ссылку надолго.</div>
+            <div class="bd"><strong>Классическая утечка.</strong> Передать <em>Activity Context</em> в долгоживущий объект (синглтон, статика, фоновый поток, корутина, которая переживает экран). Activity не сможет быть собрана GC, пока её держит «вечный» объект → утечка всего дерева View. Правило: для всего, что живёт дольше экрана, берите <code>applicationContext</code>. Для UI — Activity, но не сохраняйте её ссылку надолго.</div>
           </div>
+          <details class="qa"><summary>Почему <code>ContentProvider.onCreate()</code> вызывается <em>раньше</em> <code>Application.onCreate()</code>, как этим пользуются библиотеки и чем это бьёт по холодному старту? <span class="q-badge">★</span></summary><div class="ans"><p>При старте процесса система сперва создаёт <code>Application</code> (конструктор и <code>attachBaseContext</code>), затем зовёт <code>onCreate()</code> всех объявленных <code>ContentProvider</code>, и только потом — <code>Application.onCreate()</code>. То есть провайдеры инициализируются в окне между attach и onCreate приложения.</p><p>Этим пользовались для автоинициализации SDK без кода пользователя: библиотека объявляет служебный провайдер в манифесте (через manifest merger), и его <code>onCreate</code> поднимает SDK ещё до вашего <code>Application.onCreate</code>. Так раньше стартовали WorkManager и Firebase.</p><p>Минус — каждый такой провайдер замедляет cold start: их <code>onCreate</code> выполняются последовательно на главном потоке. Ради этого появился <code>androidx.startup</code>: один <code>InitializationProvider</code> агрегирует все <code>Initializer</code> вместо россыпи провайдеров. Отключить чужую автоинициализацию можно через <code>tools:node="remove"</code> для нужного провайдера в манифесте.</p></div></details>
+        </section>
+
+        <section class="section" id="security">
+          <h2>Безопасность компонентов</h2>
+          <p>Senior-собес почти всегда трогает безопасность межкомпонентного взаимодействия, а тема легко проседает: компоненты по неосторожности экспортируют, <code>PendingIntent</code> отдают мутабельным. Разберём три точки, где это спрашивают.</p>
+          <p class="subhead">android:exported и изменение Android 12</p>
+          <p><code>android:exported</code> определяет, могут ли <em>другие</em> приложения запускать ваш компонент. Экспортированный компонент — это поверхность атаки: любой может прислать ему Intent. Раньше при наличии <code>intent-filter</code> компонент по умолчанию считался <code>exported=true</code>, и это часто упускали. С <strong>Android 12 (API 31)</strong> для любого компонента с <code>intent-filter</code> атрибут <code>android:exported</code> надо указывать <em>явно</em>, иначе приложение не соберётся. Правило: <code>exported=false</code> для внутренних компонентов; для <code>exported=true</code> — проверка прав через <code>permission</code> и недоверие входящему Intent.</p>
+          <p class="subhead">PendingIntent и обязательный флаг изменяемости</p>
+          <p><code>PendingIntent</code> — токен, который вы отдаёте чужому коду (системе, нотификации, виджету), позволяя выполнить действие <em>от вашего имени</em> и с вашими правами. Опасность: если он мутабельный, а обёрнутый <code>Intent</code> имеет пустой компонент, получатель может его переписать (Intent redirection) и заставить ваше приложение сделать нежелательное. С <strong>Android 12 (API 31)</strong> при создании <code>PendingIntent</code> обязательно явно указывать <code>FLAG_IMMUTABLE</code> или <code>FLAG_MUTABLE</code> — иначе <code>IllegalArgumentException</code>. По умолчанию берут <code>FLAG_IMMUTABLE</code>; <code>FLAG_MUTABLE</code> — только когда системе реально нужно дописать данные (inline-reply в нотификации, Bubbles).</p>
+          <div class="code-label">Notify.kt</div>
+<pre><code class="language-kotlin">val intent = Intent(this, DetailActivity::class.java).apply {
+    putExtra("id", itemId)
+}
+val pending = PendingIntent.getActivity(
+    this, 0, intent,
+    // по умолчанию — IMMUTABLE; флаг обязателен с API 31
+    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+)</code></pre>
+          <p class="subhead">Проверка вызывающего на стороне сервиса</p>
+          <p>Если сервис всё же экспортирован, на стороне Binder можно узнать, кто пришёл: <code>Binder.getCallingUid()</code> / <code>getCallingPid()</code> возвращают UID/PID реального вызывающего на время транзакции. По UID сверяют подпись или package и отказывают чужим. У <code>ContentProvider</code> та же логика — плюс временные URI permissions (<code>FLAG_GRANT_READ_URI_PERMISSION</code>, см. выше), чтобы отдать один файл, а не весь источник.</p>
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>Экспортированный компонент без проверки.</strong> <code>exported=true</code> без <code>permission</code> и без валидации Intent означает, что любое приложение на устройстве может дёргать ваш сервис/Activity с произвольными данными. Для внутренних компонентов — всегда <code>exported=false</code>; для межприложенческих — <code>protectionLevel="signature"</code> у кастомного permission, чтобы доступ имели только ваши же подписанные приложения.</div>
+          </div>
+          <details class="qa"><summary>Гарантирует ли <code>FLAG_IMMUTABLE</code>, что получатель вообще ничего не сможет добавить к <code>PendingIntent</code>, и зачем тогда системе <code>FLAG_MUTABLE</code>? <span class="q-badge">★</span></summary><div class="ans"><p>Immutable значит, что обёрнутый <code>Intent</code> нельзя переписать через <code>fillIn()</code>: компонент, action, data и уже заданные extras зафиксированы. Это и закрывает Intent redirection — чужой код не подменит назначение.</p><p>Но есть сценарии, где системе нужно <em>дописать</em> данные в момент срабатывания: inline-reply в нотификации возвращает введённый пользователем текст через <code>RemoteInput</code>, Bubbles и некоторые системные UI тоже доклеивают свои extras. Для них и существует <code>FLAG_MUTABLE</code> — но это узкие, осознанные случаи, а дефолт остаётся immutable.</p></div></details>
         </section>
 
         <section class="section" id="ipc-binder">
           <h2>IPC: Binder под капотом</h2>
           <p>Процессы в Android изолированы (каждое приложение — свой Linux-процесс и UID). Чтобы они общались, нужен <strong>IPC</strong>. Основной механизм — <strong>Binder</strong>: это и есть транспорт почти всего системного API (вызов <code>ActivityManager</code>, <code>startActivity</code> через <code>system_server</code> и т.д.).</p>
-          <p>Binder реализован как драйвер ядра <code>/dev/binder</code>. На стороне клиента ты держишь <strong>proxy</strong> (реализует интерфейс, но внутри упаковывает вызов), на стороне сервера — <strong>stub</strong> (распаковывает и вызывает реальный метод). Клиент зовёт <code>transact()</code>, драйвер копирует данные в адресное пространство сервера и вызывает <code>onTransact()</code>. Сервер обрабатывает вызовы в <strong>пуле binder-потоков</strong> (по умолчанию до ~16), поэтому удалённые методы могут выполняться <em>параллельно</em> и не на main-потоке.</p>
+          <p>Binder реализован как драйвер ядра <code>/dev/binder</code>. На стороне клиента находится <strong>proxy</strong> (реализует интерфейс, но внутри упаковывает вызов), на стороне сервера — <strong>stub</strong> (распаковывает и вызывает реальный метод). Клиент зовёт <code>transact()</code>, драйвер копирует данные в адресное пространство сервера и вызывает <code>onTransact()</code>. Сервер обрабатывает вызовы в <strong>пуле binder-потоков</strong> (по умолчанию до ~16), поэтому удалённые методы могут выполняться <em>параллельно</em> и не на main-потоке.</p>
           <div class="diagram">
           <div class="mermaid">
 sequenceDiagram
@@ -362,12 +324,31 @@ C-&gt;&gt;C: unmarshalling результата
             <div class="ic">ℹ️</div>
             <div class="bd"><strong>Почему Binder, а не сокеты/pipe.</strong> Binder делает копирование один раз (через драйвер), знает про процессы/потоки/UID (можно проверить <code>Binder.getCallingUid()</code>), переносит ссылки на объекты между процессами и интегрирован с моделью безопасности Android. Это быстрее и безопаснее обычного двойного копирования через сокет.</div>
           </div>
+          <p class="subhead">Смерть сервера и linkToDeath</p>
+          <p>Клиент удалённого сервиса держит proxy на чужой процесс — а тот может умереть в любой момент. Чтобы узнать об этом не на следующем упавшем вызове, а сразу, регистрируют death recipient: <code>binder.linkToDeath(recipient, 0)</code>. Колбэк <code>DeathRecipient.binderDied()</code> срабатывает, когда процесс-владелец Binder умер, и клиент успевает сбросить состояние и переподключиться. Без этого после смерти сервера любой <code>transact</code> бросит <code>DeadObjectException</code> (наследник <code>RemoteException</code>).</p>
+          <div class="diagram">
+          <div class="mermaid">
+stateDiagram-v2
+[*] --> Unbound
+Unbound --> Bound: bindService()
+Bound --> Alive: onServiceConnected()
+Alive --> ServerDied: binderDied() / DeadObjectException
+ServerDied --> Bound: переподключение (rebind)
+Alive --> Unbound: unbindService()
+note right of ServerDied
+сработал death recipient,
+proxy больше не валиден
+end note
+          </div>
+          <div class="cap">Жизнь связи клиент–сервис: death recipient ловит смерть сервера и запускает reconnect</div>
+          </div>
+          <details class="qa"><summary>Зачем клиенту <code>linkToDeath</code> и что случится, если синхронный AIDL-вызов сделать с главного потока, а сервер в этот момент повиснет? <span class="q-badge">★</span></summary><div class="ans"><p><code>linkToDeath</code> даёт death-notification: при смерти удалённого процесса вызывается <code>binderDied()</code>, и клиент узнаёт о разрыве до того, как упадёт на следующем <code>transact</code> с <code>DeadObjectException</code>. Это позволяет аккуратно сбросить кеш proxy и переподключиться.</p><p>Синхронный AIDL-вызов блокирует вызывающий поток до ответа сервера. Сделаете его с главного потока, а сервер зависнет — ваш UI-поток встанет, и через ~5 секунд прилетит ANR. Поэтому удалённые синхронные вызовы делают с фонового потока. Дополнительно: вложенные Binder-вызовы могут выполняться повторно-входяще (reentrant) на том же binder-потоке.</p></div></details>
         </section>
 
         <section class="section" id="ipc-aidl">
           <h2>AIDL, Messenger и процессы</h2>
           <p class="subhead">AIDL: интерфейс между процессами</p>
-          <p>Писать proxy/stub руками тяжело — для этого есть <strong>AIDL</strong> (Android Interface Definition Language). Описываешь интерфейс в <code>.aidl</code>, генератор создаёт <code>Stub</code> (наследуешь на сервере) и <code>Proxy</code> (получаешь на клиенте через <code>asInterface()</code>). Данные пересекают границу процесса через <strong>маршалинг в <code>Parcel</code></strong>; кастомные классы должны быть <code>Parcelable</code>.</p>
+          <p>Писать proxy/stub руками тяжело — для этого есть <strong>AIDL</strong> (Android Interface Definition Language). Описываете интерфейс в <code>.aidl</code>, генератор создаёт <code>Stub</code> (наследуете на сервере) и <code>Proxy</code> (получаете на клиенте через <code>asInterface()</code>). Данные пересекают границу процесса через <strong>маршалинг в <code>Parcel</code></strong>; кастомные классы должны быть <code>Parcelable</code>.</p>
           <div class="code-label">IRemoteService.aidl</div>
 <pre><code class="language-kotlin">interface IRemoteService {
     int add(int a, int b);
@@ -425,225 +406,142 @@ D --> G
           </div>
           <div class="cap">Выбор механизма IPC под задачу</div>
           </div>
-        </section>
-
-        <section class="section" id="video">
-          <h2>Видео-разбор</h2>
-                    <a class="ytcard" href="https://youtu.be/SJw3Nu_h8kk?t=0" target="_blank" rel="noopener">
-            <span class="yt-thumb" style="background-image:url('https://img.youtube.com/vi/SJw3Nu_h8kk/hqdefault.jpg')">
-              <span class="yt-play"></span>
-              <span class="yt-time">▶ с начала</span>
-            </span>
-            <span class="yt-meta">
-              <strong>Activities &amp; the Activity Lifecycle</strong>
-              <span class="yt-by">Philipp Lackner · EN</span>
-              <span class="yt-why">Короткий разбор жизненного цикла Activity и пересоздания при повороте.</span>
-            </span>
-          </a>
+          <details class="qa"><summary>Гарантирует ли <code>oneway</code>-вызов неблокирование и порядок доставки, и почему он всё равно может бросить <code>TransactionTooLargeException</code>, хотя клиент «не ждёт ответа»? <span class="q-badge">★</span></summary><div class="ans"><p><code>oneway</code> делает вызов асинхронным: клиент не блокируется и не получает возврата (метод обязан быть <code>void</code>). В пределах <em>одного</em> интерфейса <code>oneway</code>-вызовы от одного клиента доставляются по порядку, но между разными интерфейсами/binder-объектами порядок не гарантирован.</p><p>«Не ждёт ответа» не значит «без маршалинга». Аргументы всё равно сериализуются в <code>Parcel</code> и копируются в буфер транзакции получателя ещё на стороне вызова — поэтому слишком большой аргумент переполняет буфер и бросает <code>TransactionTooLargeException</code> синхронно у вызывающего, до того как сервер начнёт обработку. Плюс у <code>oneway</code> отдельный, меньший лимит буфера, так что крупные данные через него тем более не гоняют — передают URI/идентификатор.</p></div></details>
         </section>
 
         <section class="section" id="faq">
           <h2>Частые вопросы интервьюера</h2>
 
           <details class="qa">
-            <summary>Что вызывается при повороте экрана и как сохранить состояние? <span class="q-badge">Middle</span></summary>
-            <div class="ans"><p>Поворот — это configuration change: Activity по умолчанию уничтожается (<code>onPause → onStop → onSaveInstanceState → onDestroy</code>) и пересоздаётся (<code>onCreate → onStart → onResume</code>). Состояние сохраняют по трём уровням: <code>ViewModel</code> (переживает поворот, но не смерть процесса), <code>onSaveInstanceState</code>/<code>SavedStateHandle</code> (переживает смерть процесса, но только маленькие <code>Parcelable</code>), постоянное хранилище (Room/DataStore — всё остальное). Перехватывать поворот через <code>configChanges</code> вручную считается антипаттерном.</p></div>
+            <summary>Service — это фоновый поток? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>Нет. Service — компонент без UI, но его callbacks по умолчанию приходят на main thread процесса. Если внутри <code>onStartCommand()</code> сделать тяжёлую работу, получите ANR так же, как в Activity. Для CPU/IO нужны корутины, Executor или Worker. Service решает вопрос lifetime компонента, а не выбора потока.</p></div>
           </details>
 
           <details class="qa">
-            <summary>Зачем нужен viewLifecycleOwner во фрагменте? <span class="q-badge">Middle+</span></summary>
-            <div class="ans"><p>У фрагмента два жизненных цикла: самого фрагмента и его View. View может пересоздаваться (back stack), пока фрагмент жив. Если подписку на <code>Flow</code>/<code>LiveData</code>, которая трогает View, привязать к lifecycle фрагмента (<code>this</code>), она переживёт <code>onDestroyView</code> и при новом эмите обратится к уничтоженной View или старому binding → NPE/утечка. Поэтому всё, что работает с View, подписываем на <code>viewLifecycleOwner</code>.</p></div>
+            <summary>Чем foreground service отличается от WorkManager? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Foreground service — для работы, которую пользователь видит прямо сейчас: плеер, навигация, запись, активная тренировка. У него есть постоянное уведомление и тип FGS. WorkManager — для гарантированной отложенной работы: синхронизация, выгрузка логов, retry при сети. Правило выбора: «пользователь контролирует процесс сейчас» — FGS; «надо выполнить рано или поздно» — WorkManager.</p></div>
           </details>
 
           <details class="qa">
-            <summary>Чем foreground service отличается от WorkManager и что выбрать? <span class="q-badge">Middle+</span></summary>
-            <div class="ans"><p>Foreground service — для работы, которую пользователь <em>видит прямо сейчас</em> (плеер, навигация, запись), с постоянным уведомлением; с Android 14 обязателен <code>foregroundServiceType</code> + соответствующее разрешение. WorkManager — для <em>гарантированной отложенной</em> работы (синхронизация, выгрузка, ретраи): переживает перезагрузку, уважает Doze и constraints, сам выбирает движок. Правило: «нужно показать прогресс/удержать систему сейчас» → FGS; «надо доделать рано или поздно, можно подождать» → WorkManager.</p></div>
+            <summary>Почему с Android 8 нельзя ловить большинство implicit broadcast в manifest? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Чтобы одно системное событие не будило десятки процессов. С Android 8 manifest-registered receiver больше не получает большинство implicit broadcast-ов, кроме списка исключений вроде <code>BOOT_COMPLETED</code> и редких системных событий. Для текущего экрана receiver регистрируют динамически, для фоновой реакции ставят WorkManager constraints или explicit broadcast.</p></div>
           </details>
 
           <details class="qa">
-            <summary>Почему с Android 8 нельзя ловить implicit broadcast в манифесте? <span class="q-badge">Senior</span></summary>
-            <div class="ans"><p>Раньше системное событие (например, изменение сети) будило десятки приложений разом, расходуя батарею и память. С Android 8 манифест-регистрация implicit-броадкастов запрещена (кроме списка исключений — <code>BOOT_COMPLETED</code>, <code>LOCALE_CHANGED</code>, события медиа-носителей и т.п., которые приходят редко). Решения: регистрировать ресивер динамически, пока приложение активно; использовать explicit-броадкаст с указанием компонента; либо подписываться на изменения через <code>WorkManager</code> constraints или <code>ConnectivityManager.NetworkCallback</code>.</p></div>
+            <summary>Что такое Binder и почему через него не гоняют большие объёмы? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Binder — основной IPC-транспорт Android. Клиент вызывает proxy, сервер принимает вызов в stub, аргументы маршалятся в <code>Parcel</code> и проходят через driver. Буфер Binder-транзакций ограничен и делится между параллельными транзакциями процесса, поэтому большие Bundle/Parcelable дают <code>TransactionTooLargeException</code>. Передают id/URI, а данные читают из БД, файла, ContentProvider или shared memory.</p></div>
           </details>
 
           <details class="qa">
-            <summary>Что такое Binder и почему он, а не сокеты? <span class="q-badge">Senior</span></summary>
-            <div class="ans"><p>Binder — ядро IPC в Android (драйвер <code>/dev/binder</code>), транспорт почти всего системного API. Клиент держит proxy, сервер — stub; вызов идёт через <code>transact()</code>/<code>onTransact()</code>, драйвер копирует <code>Parcel</code> в память сервера, обработка — в пуле binder-потоков (отсюда параллелизм и не-main-поток). Преимущества над сокетами: одно копирование, знание о процессах/UID (проверка прав <code>getCallingUid()</code>), перенос ссылок на объекты, интеграция с моделью безопасности. AIDL — это генератор proxy/stub поверх Binder.</p></div>
+            <summary>AIDL или Messenger: что выбрать? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>AIDL нужен, когда у удалённого сервиса богатый типизированный API и параллельные вызовы от клиентов; обработка идёт в binder thread pool, значит серверный код должен быть потокобезопасным. Messenger проще: один <code>Handler</code>, сообщения обрабатываются последовательно. Для простого обмена командами хватает Messenger; для настоящего IPC API берут AIDL.</p></div>
           </details>
 
           <details class="qa">
-            <summary>Откуда берётся TransactionTooLargeException? <span class="q-badge">Senior</span></summary>
-            <div class="ans"><p>Буфер транзакций Binder один на процесс и невелик (порядка 1 МБ, делится между всеми параллельными транзакциями). Если через Intent extras, AIDL-вызов или <code>onSaveInstanceState</code> протащить большой объект (огромный список, битмап), маршалинг переполняет буфер → исключение. Чаще всего ловится при <code>onSaveInstanceState</code> с тяжёлым <code>Bundle</code>. Лечение: не гонять большие данные через IPC — передавать идентификатор/URI, а данные доставать из общего хранилища (Room, файл, ContentProvider).</p></div>
+            <summary>Какой Context можно хранить в долгоживущем объекте? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>В долгоживущем объекте — только <code>applicationContext</code> или вообще никакой Context. Activity Context знает про тему и окно, поэтому нужен для UI, диалогов и inflate, но умирает с экраном. Положите его в singleton, static field, callback или долгую корутину — удержите Activity и всё View-дерево после <code>onDestroy()</code>.</p></div>
           </details>
 
           <details class="qa">
-            <summary>В чём разница AIDL и Messenger? <span class="q-badge">Middle+</span></summary>
-            <div class="ans"><p>Оба работают поверх Binder. <strong>AIDL</strong> даёт полноценный типизированный интерфейс с методами и поддерживает <em>параллельные</em> вызовы (binder thread pool) — нужно, когда много клиентов или богатый API; требует думать о потокобезопасности. <strong>Messenger</strong> строит очередь <code>Message</code> поверх одного Binder и обрабатывает их <em>последовательно</em> в <code>Handler</code> — меньше кода, нет многопоточности, подходит для простого обмена сообщениями. Эвристика: нужен параллелизм/сложный API → AIDL, иначе → Messenger.</p></div>
+            <summary>Зачем нужен <code>android:exported</code> и почему он стал обязательным? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p><code>android:exported</code> явно говорит, может ли другой app запускать компонент. Компонент с intent-filter — потенциальная внешняя точка входа, поэтому с Android 12 для таких компонентов атрибут нужно указывать явно. Внутренние компоненты держат <code>exported=false</code>; публичные компоненты валидируют входящий Intent и при необходимости защищаются permission.</p></div>
           </details>
-
-          <details class="qa">
-            <summary>Какой Context брать и где утечки? <span class="q-badge">Middle</span></summary>
-            <div class="ans"><p><strong>Application Context</strong> живёт весь процесс — его берут для синглтонов, БД, DI-графа, всего, что переживает экран. <strong>Activity Context</strong> знает про тему/окно — нужен для надувания UI и диалогов, но умирает с экраном. Утечка возникает, когда Activity Context (или View/Activity) сохраняют в долгоживущем объекте (статика, синглтон, фоновый поток/корутина) — Activity не может быть собрана GC, утекает всё дерево View. Правило: дольше экрана — только <code>applicationContext</code>.</p></div>
-          </details>
-
-          <details class="qa">
-            <summary>Чем плох LocalBroadcastManager и чем заменить? <span class="q-badge">Middle+</span></summary>
-            <div class="ans"><p>Он deprecated: использовал Binder (механизм IPC) для сообщений <em>внутри одного процесса</em> — избыточно по накладным расходам и поощрял глобальный event-bus, где любой компонент слышит любое событие (нарушение слоёв, сложно отслеживать). Современная замена — реактивные потоки: <code>SharedFlow</code>/<code>StateFlow</code> в общем источнике (репозиторий/ViewModel) или <code>LiveData</code>. Это лайфсайкл-безопасно, типизированно и имеет понятный scope.</p></div>
-          </details>
-
         </section>
 
         <section class="section" id="tasks">
           <h2>Задачи</h2>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 1.</strong> Напишите Fragment, который подписывается на Flow&lt;List&lt;String&gt;&gt; из ViewModel и обновляет RecyclerView-адаптер. При этом подписка должна автоматически останавливаться, когда View уничтожена, и возобновляться при пересоздании View (например, при возврате из back stack). Покажите корректный код в onViewCreated.</p>
+            <p class="task-problem"><strong>Задача 1.</strong> Реализуйте foreground service для активной загрузки файла: объявите service в manifest, стартуйте его из foreground-контекста и покажите, где начинается работа не на main thread.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
-                <pre><code class="language-kotlin">class ItemsFragment : Fragment(R.layout.fragment_items) {
-    private val viewModel: ItemsViewModel by viewModels()
-    private var binding: FragmentItemsBinding? = null
-
-    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        super.onViewCreated(view, savedInstanceState)
-        binding = FragmentItemsBinding.bind(view)
-        val adapter = ItemsAdapter()
-        binding!!.recyclerView.adapter = adapter
-
-        // viewLifecycleOwner — жизнь View, а не фрагмента
-        viewLifecycleOwner.lifecycleScope.launch {
-            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.items.collect { list -&gt;
-                    adapter.submitList(list)
-                }
-            }
-        }
-    }
-
-    override fun onDestroyView() {
-        super.onDestroyView()
-        binding = null  // обнуляем, чтобы не держать мёртвую View
-    }
-}</code></pre>
-                <p>Объяснение: <code>repeatOnLifecycle(STARTED)</code> автоматически отменяет корутину при переходе ниже STARTED (onStop) и перезапускает при возврате. Привязка к <code>viewLifecycleOwner</code> гарантирует, что подписка живёт ровно столько, сколько живёт View — не дольше. Если вместо <code>viewLifecycleOwner</code> передать <code>this</code> (lifecycle фрагмента), подписка переживёт <code>onDestroyView</code> и при следующем эмите обратится к уничтоженному binding → NPE.</p>
-              </div>
-            </details>
-          </div>
-
-          <div class="task-card">
-            <p class="task-problem"><strong>Задача 2.</strong> Реализуйте foreground service для запущенной тренировки (fitness-tracking), который работает на Android 14+. Service должен: стартовать из Activity, показывать постоянное уведомление с каналом, корректно объявить тип в манифесте и запросить нужное разрешение. Покажите манифест и минимальный код сервиса.</p>
-            <details class="task-solution">
-              <summary>Показать решение</summary>
-              <div class="task-ans">
-                <pre><code class="language-kotlin">// AndroidManifest.xml (фрагмент)
+<pre><code class="language-kotlin">// AndroidManifest.xml (фрагмент)
 // &lt;uses-permission android:name="android.permission.FOREGROUND_SERVICE" /&gt;
-// &lt;uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" /&gt;
-// &lt;uses-permission android:name="android.permission.POST_NOTIFICATIONS" /&gt;
+// &lt;uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" /&gt;
 //
 // &lt;service
-//     android:name=".WorkoutService"
-//     android:foregroundServiceType="health"
+//     android:name=".UploadService"
+//     android:foregroundServiceType="dataSync"
 //     android:exported="false" /&gt;
 
-class WorkoutService : Service() {
+class UploadService : Service() {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val channelId = createNotificationChannel()
-        val notification = NotificationCompat.Builder(this, channelId)
-            .setContentTitle("Тренировка идёт")
-            .setContentText("Время: 00:00")
-            .setSmallIcon(R.drawable.ic_run)
-            .setOngoing(true)
-            .build()
-
-        if (Build.VERSION.SDK_INT &gt;= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        startForeground(NOTIFICATION_ID, buildNotification())
+        scope.launch {
+            try {
+                uploader.uploadPendingFiles()
+            } finally {
+                stopSelf(startId)
+            }
         }
+        return START_NOT_STICKY
+    }
 
-        return START_STICKY
+    override fun onDestroy() {
+        scope.cancel()
+        super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
-
-    private fun createNotificationChannel(): String {
-        val id = "workout_channel"
-        if (Build.VERSION.SDK_INT &gt;= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                id, "Тренировка", NotificationManager.IMPORTANCE_LOW
-            )
-            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
-        }
-        return id
-    }
-
-    companion object {
-        const val NOTIFICATION_ID = 1001
-
-        fun start(context: Context) {
-            val intent = Intent(context, WorkoutService::class.java)
-            // startForegroundService — обязателен при старте FGS из foreground-контекста
-            context.startForegroundService(intent)
-        }
-    }
 }</code></pre>
-                <p>Объяснение: на Android 14 (API 34) тип <code>health</code> обязателен для фитнес-трекинга — без него <code>startForeground()</code> кидает <code>MissingForegroundServiceTypeException</code>. <code>START_STICKY</code> просит систему перезапустить сервис, если она его убьёт (Intent будет null в следующем <code>onStartCommand</code>). Уведомление с <code>IMPORTANCE_LOW</code> не издаёт звук и подходит для постоянного статуса.</p>
+                <p>Service не даёт фоновый поток сам по себе, поэтому upload уходит в <code>Dispatchers.IO</code>. Для гарантированной отложенной выгрузки лучше WorkManager; foreground service оправдан, если пользователь видит активную загрузку сейчас.</p>
               </div>
             </details>
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 3.</strong> Предскажите, что выведет следующий код при первом запуске Activity, а затем при повороте экрана. Объясните порядок колбэков и почему counter сохраняется (или нет) после поворота.</p>
+            <p class="task-problem"><strong>Задача 2.</strong> В <code>BroadcastReceiver.onReceive()</code> нужно выполнить короткую работу и не потерять её после возврата из callback. Покажите вариант с <code>goAsync()</code> и объясните ограничение.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
-                <pre><code class="language-kotlin">class PredictActivity : AppCompatActivity() {
-    private var counter = 0
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        counter = savedInstanceState?.getInt("counter") ?: 0
-        Log.d("LC", "onCreate counter=$counter")
-    }
-
-    override fun onStart()   { super.onStart();   Log.d("LC", "onStart") }
-    override fun onResume()  { super.onResume();  Log.d("LC", "onResume")  }
-    override fun onPause()   { super.onPause();   Log.d("LC", "onPause")   }
-    override fun onStop()    { super.onStop();    Log.d("LC", "onStop")    }
-    override fun onDestroy() { super.onDestroy(); Log.d("LC", "onDestroy") }
-
-    override fun onSaveInstanceState(out: Bundle) {
-        super.onSaveInstanceState(out)
-        counter++
-        out.putInt("counter", counter)
-        Log.d("LC", "onSaveInstanceState counter=$counter")
+<pre><code class="language-kotlin">class ShortWorkReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val pending = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                repository.flushSmallEvent(context.applicationContext)
+            } finally {
+                pending.finish()
+            }
+        }
     }
 }</code></pre>
-                <p>Первый запуск: <code>onCreate counter=0</code> → <code>onStart</code> → <code>onResume</code>.</p>
-                <p>При повороте: <code>onPause</code> → <code>onStop</code> → <code>onSaveInstanceState counter=1</code> → <code>onDestroy</code> → <code>onCreate counter=1</code> → <code>onStart</code> → <code>onResume</code>.</p>
-                <p>Объяснение: поворот — configuration change; система уничтожает и пересоздаёт Activity. Перед уничтожением вызывается <code>onSaveInstanceState</code> (после <code>onStop</code> начиная с Android P), который сохраняет Bundle в памяти процесса. При пересоздании Bundle передаётся в <code>onCreate</code>, поэтому counter равен 1. Ключевое: <code>onSaveInstanceState</code> вызывается только при системном уничтожении (поворот, смерть процесса), но не при явном <code>finish()</code>.</p>
+                <p><code>goAsync()</code> удерживает receiver pending, но не даёт бесконечное время: бюджет всё равно короткий, порядка секунд. Для долгой или гарантированной работы receiver должен быстро поставить WorkManager-запрос и выйти.</p>
               </div>
             </details>
           </div>
 
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 3.</strong> Клиент вызывает удалённый AIDL-сервис и иногда получает ANR. Назовите причину и исправьте вызов.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">class RemoteRepository(
+    private val service: IRemoteCatalog
+) {
+    suspend fun load(id: Long): Item = withContext(Dispatchers.IO) {
+        service.getItem(id) // синхронный Binder-вызов, не main thread
+    }
+}</code></pre>
+                <p>AIDL-вызов по умолчанию синхронный: вызывающий поток ждёт ответ удалённого процесса. Если сделать его на main thread, зависший сервер блокирует UI и приводит к ANR. Клиентские вызовы выносят с main, а серверный Stub пишут потокобезопасным, потому что его могут вызвать из binder thread pool параллельно.</p>
+              </div>
+            </details>
+          </div>
         </section>
 
         <div class="sources">
           <h2>Источники</h2>
           <ol>
-            <li><a href="https://developer.android.com/guide/components/activities/activity-lifecycle" target="_blank" rel="noopener">The activity lifecycle — Android Developers</a> — колбэки, onSaveInstanceState, пересоздание.</li>
-            <li><a href="https://developer.android.com/guide/components/activities/tasks-and-back-stack" target="_blank" rel="noopener">Tasks and the back stack — Android Developers</a> — launch modes, task, флаги Intent.</li>
-            <li><a href="https://developer.android.com/develop/background-work/services/fgs/service-types" target="_blank" rel="noopener">Foreground service types — Android Developers</a> — полный список типов FGS и разрешений (Android 14).</li>
+            <li><a href="https://developer.android.com/develop/background-work/services" target="_blank" rel="noopener">Services overview — Android Developers</a> — started, bound и foreground services.</li>
+            <li><a href="https://developer.android.com/develop/background-work/services/fgs/service-types" target="_blank" rel="noopener">Foreground service types — Android Developers</a> — типы FGS и разрешения.</li>
             <li><a href="https://developer.android.com/about/versions/oreo/background" target="_blank" rel="noopener">Background Execution Limits — Android Developers</a> — ограничения сервисов и implicit-броадкастов с Android 8.</li>
-            <li><a href="https://developer.android.com/develop/background-work/background-tasks/broadcasts/broadcast-exceptions" target="_blank" rel="noopener">Implicit broadcast exceptions — Android Developers</a> — список разрешённых implicit-броадкастов.</li>
-            <li><a href="https://developer.android.com/develop/background-work/services/aidl" target="_blank" rel="noopener">Android Interface Definition Language (AIDL) — Android Developers</a> — Stub/Proxy, oneway, маршалинг через Parcel.</li>
-            <li><a href="https://developer.android.com/reference/android/os/Binder" target="_blank" rel="noopener">Binder — Android Developers (reference)</a> — transact/onTransact, thread pool, getCallingUid.</li>
-            <li><a href="https://www.youtube.com/watch?v=SJw3Nu_h8kk" target="_blank" rel="noopener">Philipp Lackner — Activities &amp; the Activity Lifecycle</a> — видео-разбор жизненного цикла.</li>
+            <li><a href="https://developer.android.com/develop/background-work/background-tasks/broadcasts/broadcast-exceptions" target="_blank" rel="noopener">Implicit broadcast exceptions — Android Developers</a> — список исключений для manifest-registered receivers.</li>
+            <li><a href="https://developer.android.com/guide/topics/providers/content-provider-basics" target="_blank" rel="noopener">Content provider basics — Android Developers</a> — ContentResolver, URI и доступ к данным.</li>
+            <li><a href="https://developer.android.com/develop/background-work/services/aidl" target="_blank" rel="noopener">Android Interface Definition Language (AIDL) — Android Developers</a> — Stub/Proxy, oneway и маршалинг через Parcel.</li>
+            <li><a href="https://developer.android.com/reference/android/os/Binder" target="_blank" rel="noopener">Binder — Android Developers reference</a> — transact/onTransact, thread pool и идентичность вызывающего.</li>
           </ol>
         </div>
       </article>
@@ -654,6 +552,6 @@ class WorkoutService : Service() {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/app.js?v=20260620-4"></script>
+  <script src="../assets/app.js?v=20260621-3"></script>
 </body>
 </html>

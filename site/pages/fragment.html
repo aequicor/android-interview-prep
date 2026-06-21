@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    (() => {
+      const key = "aip-theme";
+      let theme = null;
+      try { theme = localStorage.getItem(key); } catch(e) {}
+      if (theme !== "dark" && theme !== "light") {
+        theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <title>Fragment · Android-собес</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+</head>
+<body data-page="fragment">
+  <div class="layout">
+    <aside id="sidebar"></aside>
+    <div id="content">
+      <article class="page">
+        <div class="breadcrumb"></div>
+        <header class="page-head">
+          <span class="eyebrow">Платформа Android</span>
+          <h1>Fragment: lifecycle, транзакции и Result API</h1>
+          <p class="lead">Fragment — не «маленькая Activity», а объект с собственным lifecycle, отдельным lifecycle View и управлением через FragmentManager. На собесе по нему почти всегда копают в <code>viewLifecycleOwner</code>, back stack, <code>commit()</code>/<code>commitNow()</code>, state loss и передачу результата без прямых ссылок.</p>
+          <div class="meta">
+            <span class="tag lvl-mid">Middle</span>
+            <span class="tag lvl-sen">Senior</span>
+            <span class="tag hot">Частый вопрос</span>
+          </div>
+        </header>
+
+        <section class="section" id="why-fragments">
+          <h2>Зачем фрагменты ещё спрашивают</h2>
+          <p>Даже если новый UI пишется на Compose, фрагменты остаются в legacy-коде, Navigation Component, BottomSheet/Dialog-сценариях, гибридных экранах и библиотеках. Интервьюеру важен не сам факт «умею создать Fragment», а понимание границ владения: кто держит View, кто держит back stack, кто отвечает за результат и почему прямые ссылки между фрагментами быстро превращаются в утечки.</p>
+
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Ось</th><th>Activity</th><th>Fragment</th></tr></thead>
+              <tbody>
+                <tr><td>Владелец окна</td><td>Да, получает Window от системы</td><td>Нет, живёт внутри Activity/контейнера</td></tr>
+                <tr><td>Back stack</td><td>Task/back stack Activity</td><td>Back stack внутри <code>FragmentManager</code></td></tr>
+                <tr><td>Lifecycle View</td><td>Обычно совпадает с экраном</td><td>Отдельный lifecycle View, короче жизни фрагмента</td></tr>
+                <tr><td>Передача результата</td><td>Activity Result API</td><td>Fragment Result API / shared ViewModel</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <details class="qa">
+            <summary>Почему фрагмент нельзя воспринимать как «Activity без manifest»? <span class="q-badge">★</span></summary>
+            <div class="ans"><p>Activity — системный компонент с Window, task/back stack и Intent-входом. Fragment — объект, которым управляет <code>FragmentManager</code> внутри уже существующего окна. У него может быть уничтожена View, пока сам Fragment остаётся в back stack. Отсюда и главная разница: код, который трогает View, должен жить в lifecycle View, а не в lifecycle Fragment. В Activity такой двойственности обычно нет.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="fragment-lifecycle">
+          <h2>Два lifecycle: Fragment и его View</h2>
+          <p>У фрагмента есть lifecycle самого объекта и lifecycle View. View создаётся в <code>onCreateView()</code>/<code>onViewCreated()</code> и уничтожается в <code>onDestroyView()</code>. Сам Fragment при этом может остаться живым: например, когда его положили в back stack через <code>replace()</code>. Именно на этом ломаются binding, Flow-подписки и LiveData-observers.</p>
+
+          <div class="diagram">
+          <div class="mermaid">
+stateDiagram-v2
+[*] --> Attached: onAttach()
+Attached --> Created: onCreate()
+Created --> ViewCreated: onCreateView()
+ViewCreated --> Started: onStart()
+Started --> Resumed: onResume()
+Resumed --> Started: onPause()
+Started --> ViewCreated: onStop()
+ViewCreated --> ViewDestroyed: onDestroyView()
+ViewDestroyed --> Created
+Created --> Destroyed: onDestroy()
+Destroyed --> Detached: onDetach()
+Detached --> [*]
+          </div>
+          <div class="cap">Lifecycle Fragment и View: после <code>onDestroyView()</code> Fragment может остаться в back stack, но его старая View уже мертва</div>
+          </div>
+
+          <div class="code-label">ProfileFragment.kt</div>
+<pre><code class="language-kotlin">class ProfileFragment : Fragment(R.layout.fragment_profile) {
+    private var _binding: FragmentProfileBinding? = null
+    private val binding: FragmentProfileBinding
+        get() = checkNotNull(_binding)
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        _binding = FragmentProfileBinding.bind(view)
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.state.collect { state -&gt;
+                    binding.render(state)
+                }
+            }
+        }
+    }
+
+    override fun onDestroyView() {
+        _binding = null
+        super.onDestroyView()
+    }
+}</code></pre>
+
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong><code>this</code> вместо <code>viewLifecycleOwner</code> — частая утечка.</strong> Подписка на lifecycle Fragment переживёт <code>onDestroyView()</code>. Новый emit после ухода в back stack попытается тронуть старый binding: получите <code>NullPointerException</code>, дубль подписки или удержание старой View.</div>
+          </div>
+
+          <details class="qa">
+            <summary>Почему <code>getViewLifecycleOwner()</code> бросает исключение до <code>onCreateView()</code> и после <code>onDestroyView()</code>? <span class="q-badge">★</span></summary>
+            <div class="ans"><p><code>viewLifecycleOwner</code> существует только пока у фрагмента есть View. До создания View и после её уничтожения owner отсутствует, поэтому обращение к нему бросает <code>IllegalStateException</code>. Это не каприз API, а защита от неявной подписки на мёртвую View. Подписки, которые трогают UI, ставим в <code>onViewCreated()</code> на текущий owner; после пересоздания View owner будет новым.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="fragment-manager">
+          <h2>FragmentManager: чей back stack и чей scope</h2>
+          <p><code>FragmentManager</code> хранит активные фрагменты, выполняет транзакции и ведёт back stack. В Activity обычно берут <code>supportFragmentManager</code>; внутри Fragment — <code>parentFragmentManager</code>, если меняем соседей на уровне родителя, и <code>childFragmentManager</code>, если внутри текущего фрагмента есть вложенные фрагменты: tabs, pager, маленький internal-flow.</p>
+
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Manager</th><th>Где брать</th><th>Когда нужен</th></tr></thead>
+              <tbody>
+                <tr><td><code>supportFragmentManager</code></td><td>В <code>FragmentActivity</code></td><td>Корневой контейнер Activity</td></tr>
+                <tr><td><code>parentFragmentManager</code></td><td>В Fragment</td><td>Навигация между sibling-фрагментами</td></tr>
+                <tr><td><code>childFragmentManager</code></td><td>В Fragment</td><td>Вложенный flow внутри текущего фрагмента</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="code-label">host_activity.xml</div>
+<pre><code class="language-xml">&lt;androidx.fragment.app.FragmentContainerView
+    android:id="@+id/container"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent" /&gt;</code></pre>
+
+          <div class="code-label">HostActivity.kt</div>
+<pre><code class="language-kotlin">class HostActivity : AppCompatActivity(R.layout.host_activity) {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        if (savedInstanceState == null) {
+            supportFragmentManager.commit {
+                setReorderingAllowed(true)
+                replace&lt;FeedFragment&gt;(R.id.container)
+            }
+        }
+    }
+}</code></pre>
+
+          <p><code>FragmentContainerView</code> предпочтительнее старого <code>FrameLayout</code> под фрагменты: он лучше интегрирован с FragmentManager, корректно обрабатывает attach/detach View и не допускает случайных дочерних View, которые FragmentManager не контролирует.</p>
+
+          <details class="qa">
+            <summary>Почему nested-фрагменты лучше класть в <code>childFragmentManager</code>, а не в общий manager Activity? <span class="q-badge">★</span></summary>
+            <div class="ans"><p>Если вложенный flow живёт внутри конкретного Fragment, его back stack должен умереть вместе с этим Fragment. <code>childFragmentManager</code> даёт именно такую область владения: удалили родителя — удалились и вложенные фрагменты. Если же класть внутренние tabs/pager в manager Activity, родитель умирает, а его «дети» остаются в общем back stack и начинают жить дольше своего UI. Это почти гарантированный путь к странной навигации и утечкам.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="transactions">
+          <h2>Транзакции: <code>add</code>, <code>replace</code>, <code>commit</code>, <code>commitNow</code></h2>
+          <p>Транзакция — пачка операций над FragmentManager: добавить, заменить, удалить, показать, скрыть, attach/detach. Она не обязана выполниться сразу: обычный <code>commit()</code> ставит работу в очередь главного потока. Это важно для рассуждения о порядке callback-ов, state loss и тестах, где хочется «прямо сейчас».</p>
+
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Операция</th><th>Что делает</th><th>Подводный камень</th></tr></thead>
+              <tbody>
+                <tr><td><code>add</code></td><td>Добавляет новый Fragment в контейнер</td><td>Старый остаётся; можно случайно наложить View</td></tr>
+                <tr><td><code>replace</code></td><td>Удаляет текущие Fragment в контейнере и добавляет новый</td><td>У старого уничтожается View; сам Fragment может попасть в back stack</td></tr>
+                <tr><td><code>hide/show</code></td><td>Прячет/показывает View без уничтожения</td><td>Состояние View остаётся, но память тоже занята</td></tr>
+                <tr><td><code>detach/attach</code></td><td>Уничтожает/пересоздаёт View, сохраняя Fragment</td><td>Все UI-ссылки нужно чистить в <code>onDestroyView()</code></td></tr>
+                <tr><td><code>remove</code></td><td>Удаляет Fragment из manager</td><td>После pop back stack его уже не восстановить, если не было записи back stack</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="code-label">Navigation.kt</div>
+<pre><code class="language-kotlin">fun Fragment.openDetails(id: Long) {
+    parentFragmentManager.commit {
+        setReorderingAllowed(true)
+        replace&lt;DetailsFragment&gt;(
+            R.id.container,
+            args = bundleOf("id" to id)
+        )
+        addToBackStack("details:$id")
+    }
+}</code></pre>
+
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TD
+A["commit()"] --> B["Очередь main"]
+B --> C{"state saved?"}
+C -->|"нет"| D["Выполнить операции"]
+C -->|"да"| E["IllegalStateException"]
+F["commitNow()"] --> G["Выполнить синхронно"]
+G --> H{"есть addToBackStack?"}
+H -->|"да"| I["нельзя"]
+H -->|"нет"| D
+          </div>
+          <div class="cap"><code>commit()</code> асинхронен; <code>commitNow()</code> выполняет транзакцию сразу, но не совместим с <code>addToBackStack()</code></div>
+          </div>
+
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong><code>setReorderingAllowed(true)</code> — почти всегда да.</strong> Он разрешает FragmentManager оптимизировать порядок операций внутри транзакции и корректнее вести postponed transitions. Современные гайды рекомендуют включать его для транзакций, особенно если они идут в back stack.</div>
+          </div>
+
+          <details class="qa">
+            <summary>Почему <code>replace()</code> не равен «поменять View на новую» и как это связано с back stack? <span class="q-badge">★</span></summary>
+            <div class="ans"><p><code>replace()</code> — это сокращение для «remove всех Fragment из контейнера и add нового». Если транзакция добавлена в back stack, удалённый Fragment остаётся сохранённым как часть записи back stack: его View уничтожена, но сам объект может быть восстановлен при pop. Поэтому старый binding уже недействителен, а подписки на lifecycle Fragment всё ещё могут жить. Отсюда правило с <code>viewLifecycleOwner</code> и очисткой binding в <code>onDestroyView()</code>.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="back-stack-state-loss">
+          <h2>Back stack, state saved и <code>commitAllowingStateLoss</code></h2>
+          <p>FragmentManager сохраняет своё состояние вместе с Activity. После <code>onSaveInstanceState()</code> система уже зафиксировала, какие фрагменты и back stack нужно восстановить. Если в этот момент попытаться сделать обычный <code>commit()</code>, FragmentManager бросит <code>IllegalStateException</code>: вы меняете состояние, которое уже сохранено.</p>
+
+          <div class="code-label">SafeDialog.kt</div>
+<pre><code class="language-kotlin">fun FragmentActivity.showDialogSafely(dialog: DialogFragment, tag: String) {
+    val manager = supportFragmentManager
+    val canShow = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) &&
+        !manager.isStateSaved &&
+        !isFinishing &&
+        !isDestroyed
+
+    if (canShow) {
+        dialog.show(manager, tag)
+    }
+}</code></pre>
+
+          <p><code>commitAllowingStateLoss()</code> не делает транзакцию «безопасной». Он только говорит FragmentManager не падать, если состояние уже сохранено. Итог может потеряться после восстановления: пользователь думает, что диалог показан, а после process death или поворота его уже нет. Используйте его только там, где потеря UI-события приемлема.</p>
+
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>API</th><th>Поведение</th><th>Когда уместен</th></tr></thead>
+              <tbody>
+                <tr><td><code>commit()</code></td><td>Асинхронно, падает после saved state</td><td>Обычная навигация</td></tr>
+                <tr><td><code>commitNow()</code></td><td>Синхронно, без back stack</td><td>Инициализация контейнера, тесты, когда нужен готовый Fragment сразу</td></tr>
+                <tr><td><code>commitAllowingStateLoss()</code></td><td>Асинхронно, не падает после saved state, но результат может потеряться</td><td>Некритичный UI, где потеря не ломает сценарий</td></tr>
+                <tr><td><code>executePendingTransactions()</code></td><td>Принудительно выполняет pending commits</td><td>Редко; чаще сигнал, что архитектура слишком завязана на синхронность</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <details class="qa">
+            <summary>Почему проверка <code>isStateSaved</code> лучше, чем ловить <code>IllegalStateException</code> вокруг <code>commit()</code>? <span class="q-badge">★</span></summary>
+            <div class="ans"><p>Исключение означает, что вы уже попытались изменить зафиксированное состояние FragmentManager. Это поздняя диагностика. <code>isStateSaved</code> проверяет условие до транзакции: если состояние сохранено, лучше отложить навигацию до возвращения в STARTED/RESUMED или сохранить событие как состояние ViewModel. Для диалога «показать ошибку» можно ничего не делать; для перехода на следующий шаг заказа потерять событие нельзя.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="communication">
+          <h2>Передача данных: args, shared ViewModel и Fragment Result API</h2>
+          <p>Прямая ссылка Fragment A на Fragment B — почти всегда плохой знак: нарушается lifetime, появляется связность с конкретным контейнером, сложнее тестировать. Есть три нормальных канала: аргументы при создании, shared ViewModel для общего состояния и Fragment Result API для одноразового результата между фрагментами.</p>
+
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Задача</th><th>Инструмент</th><th>Почему</th></tr></thead>
+              <tbody>
+                <tr><td>Передать id при открытии</td><td>Arguments / Navigation args</td><td>Данные нужны новому Fragment с момента создания</td></tr>
+                <tr><td>Общий state двух экранов</td><td><code>activityViewModels()</code> или navGraph ViewModel</td><td>State живёт в общем owner, не в соседнем Fragment</td></tr>
+                <tr><td>Вернуть выбор из BottomSheet/Dialog</td><td>Fragment Result API</td><td>Одноразовый результат без прямых ссылок</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="code-label">FragmentResult.kt</div>
+<pre><code class="language-kotlin">class FeedFragment : Fragment(R.layout.feed) {
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        parentFragmentManager.setFragmentResultListener(
+            "filter",
+            viewLifecycleOwner
+        ) { _, bundle -&gt;
+            val sort = bundle.getString("sort").orEmpty()
+            viewModel.applySort(sort)
+        }
+    }
+}
+
+class FilterBottomSheet : BottomSheetDialogFragment() {
+    fun onSortSelected(sort: String) {
+        parentFragmentManager.setFragmentResult(
+            "filter",
+            bundleOf("sort" to sort)
+        )
+        dismiss()
+    }
+}</code></pre>
+
+          <p>Listener привязан к <code>viewLifecycleOwner</code>, поэтому результат доставится только когда View получателя жива. Если результат установлен раньше listener-а, FragmentManager хранит последний результат по ключу и отдаёт его, когда listener станет активным.</p>
+
+          <details class="qa">
+            <summary>Почему Fragment Result API хранит только один результат на ключ, а не очередь событий? <span class="q-badge">★</span></summary>
+            <div class="ans"><p>API моделирует «последний результат для ключа», а не event queue. Это хорошо для выбора фильтра: если пользователь три раза поменял сортировку в BottomSheet, получателю нужен последний выбор. Для событий, где важна каждая запись, Fragment Result API не подходит: берите shared ViewModel с <code>SharedFlow</code>/Channel или доменное хранилище событий. И обязательно проектируйте ключи: строковый ключ — часть контракта между отправителем и получателем.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="dialogs-bottom-sheets">
+          <h2>DialogFragment и BottomSheet: те же правила lifecycle</h2>
+          <p><code>DialogFragment</code> и <code>BottomSheetDialogFragment</code> удобны для выбора, подтверждения и короткого ввода, но правила те же: не держать ссылку на Activity/Fragment-получатель, не коммитить после saved state, возвращать результат через Fragment Result API или shared ViewModel. Показывать диалог из сетевого callback-а после <code>onSaveInstanceState()</code> — классический путь к <code>Can not perform this action after onSaveInstanceState</code>.</p>
+
+          <div class="code-label">ConfirmDeleteDialog.kt</div>
+<pre><code class="language-kotlin">class ConfirmDeleteDialog : DialogFragment() {
+
+    override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
+        return AlertDialog.Builder(requireContext())
+            .setTitle("Удалить элемент?")
+            .setPositiveButton("Удалить") { _, _ -&gt;
+                parentFragmentManager.setFragmentResult(
+                    REQUEST_KEY,
+                    bundleOf("confirmed" to true)
+                )
+            }
+            .setNegativeButton("Отмена", null)
+            .create()
+    }
+
+    companion object {
+        const val REQUEST_KEY = "confirm_delete"
+    }
+}</code></pre>
+
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Не передавайте callback через constructor.</strong> Fragment должен переживать пересоздание системой. Переданный в constructor listener потеряется или удержит старую Activity. Аргументы — через <code>arguments</code>, результат — через Fragment Result API или ViewModel.</div>
+          </div>
+
+          <details class="qa">
+            <summary>Почему <code>requireContext()</code> в <code>onCreateDialog()</code> допустим, а хранить этот Context в поле — нет? <span class="q-badge">★</span></summary>
+            <div class="ans"><p><code>requireContext()</code> в момент создания диалога берёт актуальный Context, привязанный к текущему attach. Хранить его в поле опасно: Fragment может detach/attach, Activity пересоздастся, а поле продолжит держать старый Context и всё окно. Если Context нужен кратко — берём локально в callback. Если нужен дольше UI — почти всегда нужен <code>applicationContext</code> или явная зависимость, не Activity.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="failure-modes">
+          <h2>Типичные поломки Fragment</h2>
+          <p>Фрагменты ломаются на границах: не тот manager, не тот lifecycle owner, транзакция после saved state, передача результата через прямую ссылку. Хороший ответ на собесе называет не только «как правильно», но и симптом, по которому вы найдёте баг в проде.</p>
+
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Симптом</th><th>Причина</th><th>Фикс</th></tr></thead>
+              <tbody>
+                <tr><td>NPE после возврата из back stack</td><td>Подписка пережила <code>onDestroyView()</code> и трогает старый binding</td><td><code>viewLifecycleOwner</code>, очистка binding</td></tr>
+                <tr><td>Диалог падает после сетевого ответа</td><td><code>commit()</code> после <code>onSaveInstanceState()</code></td><td>Проверка <code>isStateSaved</code>, событие через state, показ после STARTED</td></tr>
+                <tr><td>Back закрывает не тот экран</td><td>Транзакция ушла не в тот FragmentManager</td><td>Развести <code>parentFragmentManager</code> и <code>childFragmentManager</code></td></tr>
+                <tr><td>Результат не дошёл</td><td>Ключи не совпали или listener привязан к мёртвому owner</td><td>Константа ключа, listener в <code>onViewCreated()</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <details class="qa">
+            <summary>Почему «вызову <code>findFragmentByTag()</code> и напрямую дёрну метод» плохо даже если работает в демо? <span class="q-badge">★</span></summary>
+            <div class="ans"><p>Такой код привязывает отправителя к конкретному контейнеру, tag и классу получателя. После пересоздания, другого layout-а, nested manager или Navigation Component получатель может быть не там, где вы его ищете. Плюс прямой вызов обходит lifecycle: можно вызвать метод, когда View получателя уже уничтожена. Контракт через arguments/result/shared ViewModel явно говорит, кому принадлежит состояние и когда его можно доставить.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="faq">
+          <h2>Частые вопросы интервьюера</h2>
+
+          <details class="qa">
+            <summary>Зачем нужен <code>viewLifecycleOwner</code>? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>У Fragment есть lifecycle объекта и lifecycle его View. View уничтожается в <code>onDestroyView()</code>, а Fragment может остаться в back stack. Всё, что трогает View — binding, adapter, Flow/LiveData render, — привязываем к <code>viewLifecycleOwner</code>. Тогда подписка умирает вместе с View и создаётся заново в <code>onViewCreated()</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Чем <code>commit()</code> отличается от <code>commitNow()</code>? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p><code>commit()</code> ставит транзакцию в очередь главного потока: callbacks нового Fragment не обязаны выполниться до следующей строки кода. <code>commitNow()</code> выполняет транзакцию синхронно, но не поддерживает <code>addToBackStack()</code>. Для обычной навигации берут <code>commit()</code>; <code>commitNow()</code> оставляют для инициализации или тестов, где нужен готовый Fragment сразу.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Что такое state loss и почему <code>commitAllowingStateLoss()</code> опасен? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>State loss — транзакция после того, как FragmentManager уже сохранил своё состояние для восстановления. Обычный <code>commit()</code> падает, потому что новое состояние не попадёт в сохранённый снимок. <code>commitAllowingStateLoss()</code> подавляет падение, но результат может исчезнуть после пересоздания. Это допустимо только для некритичного UI; навигацию и бизнес-события так терять нельзя.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Когда брать shared ViewModel, а когда Fragment Result API? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Shared ViewModel — для общего состояния, которое живёт в owner: Activity, nav graph или родительский Fragment. Fragment Result API — для одноразового результата: фильтр из BottomSheet, подтверждение из DialogFragment, выбранный id. Если нужно хранить stream событий или каждое событие важно, Fragment Result API уже тесен — берите ViewModel с Flow.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Почему <code>replace()</code> может привести к утечке binding? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p><code>replace()</code> удаляет старый Fragment из контейнера; если транзакция в back stack, сам Fragment сохраняется, но его View уничтожается. Если binding хранится в поле и не очищается в <code>onDestroyView()</code>, Fragment удерживает старую View. При возврате создаётся новая View, а старая всё ещё висит в памяти. Поэтому pattern с nullable binding и очисткой обязателен для View Binding во Fragment.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Почему нельзя передавать аргументы Fragment через constructor? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>Система может пересоздать Fragment после process death или configuration change через пустой constructor и восстановленные arguments. Constructor-параметры при этом потеряются. Поэтому входные данные кладут в <code>arguments</code> Bundle или используют Navigation args; зависимости создаёт DI/FragmentFactory, но runtime-параметры экрана идут через arguments.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="tasks">
+          <h2>Задачи</h2>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 1.</strong> Исправьте Fragment, который собирает Flow в <code>lifecycleScope</code> самого Fragment и падает после возврата из back stack.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+    super.onViewCreated(view, savedInstanceState)
+
+    viewLifecycleOwner.lifecycleScope.launch {
+        viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            viewModel.items.collect { items -&gt;
+                adapter.submitList(items)
+            }
+        }
+    }
+}</code></pre>
+                <p>Подписка живёт ровно столько, сколько живёт View. При <code>onDestroyView()</code> owner переходит в DESTROYED, корутина отменяется, а при новой View код запускается заново в <code>onViewCreated()</code>.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 2.</strong> Покажите безопасную передачу результата из BottomSheet во Fragment списка без прямой ссылки на получателя.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">private const val FILTER_KEY = "filter"
+private const val SORT_KEY = "sort"
+
+class ListFragment : Fragment(R.layout.list) {
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        parentFragmentManager.setFragmentResultListener(
+            FILTER_KEY,
+            viewLifecycleOwner
+        ) { _, bundle -&gt;
+            viewModel.applySort(bundle.getString(SORT_KEY).orEmpty())
+        }
+    }
+}
+
+class FilterSheet : BottomSheetDialogFragment() {
+    fun select(sort: String) {
+        parentFragmentManager.setFragmentResult(
+            FILTER_KEY,
+            bundleOf(SORT_KEY to sort)
+        )
+        dismiss()
+    }
+}</code></pre>
+                <p>Оба фрагмента договариваются только о строковом ключе и Bundle-контракте. Получатель не передаёт ссылку в sheet, а listener привязан к lifecycle его View.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 3.</strong> Нужно показать DialogFragment из callback-а репозитория. Что проверить перед <code>show()</code> и почему <code>commitAllowingStateLoss()</code> не решает проблему?</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">fun FragmentActivity.tryShowErrorDialog(message: String) {
+    val manager = supportFragmentManager
+    val active = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+
+    if (active && !manager.isStateSaved && !isFinishing && !isDestroyed) {
+        ErrorDialog.newInstance(message).show(manager, "error")
+    } else {
+        viewModel.rememberPendingError(message)
+    }
+}</code></pre>
+                <p>Если state уже сохранён, обычный commit упадёт, а <code>commitAllowingStateLoss()</code> просто разрешит потерять показ диалога после восстановления. Для важного события лучше записать его в state и показать, когда экран снова STARTED.</p>
+              </div>
+            </details>
+          </div>
+        </section>
+
+        <div class="sources">
+          <h2>Источники</h2>
+          <ol>
+            <li><a href="https://developer.android.com/guide/fragments/lifecycle" target="_blank" rel="noopener">Fragment lifecycle — Android Developers</a> — lifecycle Fragment и view lifecycle.</li>
+            <li><a href="https://developer.android.com/guide/fragments/fragmentmanager" target="_blank" rel="noopener">FragmentManager — Android Developers</a> — manager, back stack, child/parent managers.</li>
+            <li><a href="https://developer.android.com/guide/fragments/transactions" target="_blank" rel="noopener">Fragment transactions — Android Developers</a> — операции транзакций, <code>commit()</code>, <code>commitNow()</code>, <code>setReorderingAllowed()</code>.</li>
+            <li><a href="https://developer.android.com/guide/fragments/communicate" target="_blank" rel="noopener">Communicating with fragments — Android Developers</a> — Fragment Result API и shared ViewModel.</li>
+            <li><a href="https://developer.android.com/guide/fragments/dialogs" target="_blank" rel="noopener">DialogFragment — Android Developers</a> — диалоги через Fragment lifecycle.</li>
+            <li><a href="https://developer.android.com/reference/androidx/fragment/app/FragmentManager#isStateSaved()" target="_blank" rel="noopener">FragmentManager.isStateSaved() — AndroidX reference</a> — проверка state saved перед транзакцией.</li>
+          </ol>
+        </div>
+      </article>
+    </div>
+    <aside id="toc"></aside>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="../assets/app.js?v=20260621-3"></script>
+</body>
+</html>

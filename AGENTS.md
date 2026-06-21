@@ -2,16 +2,30 @@
 
 This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
 
-## AUTO-LOAD: Read these files at session start (no need to be asked)
+## Skill Routing (No Auto-Load)
 
-Before doing anything else in this project, read:
-1. `.claude/skills/interview-prep-author/SKILL.md` — markup/page authoring contract (HTML skeleton, components, nav wiring)
-2. `.claude/skills/interview-prep-author/references/components.md` — all copy-paste snippets
-3. `.claude/skills/tech-author/SKILL.md` — text-quality contract (factual accuracy + no AI markers); pull its `references/` when writing/editing prose
-4. `.claude/skills/infographic-author/SKILL.md` — visual-quality contract for diagrams/infographics (right type, restraint, semantic color, theming, accessibility, no AI "slop"); pull its `references/` when designing or fixing a diagram
-5. `.claude/skills/ru-humanizer/SKILL.md` — чистка русского текста от ИИ-стиля и канцелярита; применять при любом редактировании или генерации русскоязычной прозы
+Do **not** preload `.claude/skills/**` at session start. The core contracts are summarized
+here so routine requests can start from `AGENTS.md`; load a skill only when the user's task
+matches its YAML `description` or explicitly names it. When a skill triggers, read only its
+`SKILL.md` and the referenced files needed for the current task.
 
-This applies to **every request** involving content (new pages, section edits, study material, конспекты, методички). The four skills compose: `interview-prep-author` governs the markup (where a diagram goes), `tech-author` governs the writing (prose and captions), `infographic-author` governs the visualization itself (is the diagram good), and `ru-humanizer` governs the Russian prose style (human-sounding, no AI markers). Do NOT skip this step even if the user doesn't say "use the skill".
+- `interview-prep-author` — use for Android interview-prep pages and study material:
+  new/edited главы, параграфы, Q&A, Kotlin code examples, comparison tables, video cards,
+  Mermaid diagrams, sources, or page/navigation wiring. It owns the markup contract:
+  thin chapter pages, `data-page`/`TOPICS` consistency, single-level параграфы, existing
+  components, escaped code, `.ytcard` videos, Mermaid placement, and the page checklist.
+- `tech-author` — use for technical prose: writing, expanding, fact-checking, or removing
+  AI markers from explanations, captions, chapters, конспекты, and методички. It owns
+  factual discipline and depth: verify API names, signatures, versions, numbers, defaults,
+  and deprecated status; write at Middle+/Senior level with mechanisms, edge cases,
+  trade-offs, failure modes, and follow-up questions.
+- `infographic-author` — use when creating, choosing, reviewing, or fixing diagrams and
+  infographics. It owns visual quality: choose the type by the task, prefer Mermaid for
+  standard flow/sequence/state/class diagrams, use semantic CSS-token colors, keep the
+  diagram restrained, accessible, readable in both themes, and free of visual AI markers.
+- `ru-humanizer` — use for Russian prose polishing: remove AI-style turns and канцелярит
+  while preserving facts, terms, and technical meaning. It is a style pass for prose, not
+  a tool for rewriting code, tables, or technical specifications.
 
 ## What this is
 
@@ -25,6 +39,7 @@ A self-contained project for preparing for an **Android developer interview** (M
 | `.claude/skills/tech-author/` | A Codex **skill** (`SKILL.md` + `references/`) — the text-quality contract: factual accuracy (no hallucinated APIs/versions/numbers) and prose free of AI markers. Governs *what the writing says and how it reads*, independent of markup. |
 | `.claude/skills/infographic-author/` | A Codex **skill** (`SKILL.md` + `references/`) — the visual-quality contract for diagrams/infographics: right diagram type, restraint, semantic color, hierarchy, dark/light theming, accessibility, and no AI "slop". Governs *whether the visualization is good*, independent of markup and prose. |
 | `infographic-author.skill` | A zip-packaged copy of that skill (the distributable bundle). Keep it in sync with the `.claude/skills/infographic-author/` source if you edit the skill. |
+| `.claude/skills/ru-humanizer/` | A Codex **skill** (`SKILL.md` only) — the Russian-prose style contract: strip AI-style and канцелярит so text reads as human-written. Applies to any RU prose you write or edit. Not bundled into a `.skill` zip (neither is `.claude/skills/tech-author/`). |
 | `ПЛАН_ПОДГОТОВКИ.md` | The long-form source prep plan (~30 KB). The site is the interactive rendering of this material; the homepage links to it. |
 | `books/` | Specialist books converted to `.md` for grep-based research (see below). The orignal PDFs live alongside. |
 
@@ -37,7 +52,7 @@ The study material has exactly **three** structural levels. Use these names ever
 | Term | EN | What it is | In code / markup |
 | --- | --- | --- | --- |
 | **Группа** | group | An umbrella category that unites thematically-close **главы** (e.g. «Язык и проектирование», «Данные и сеть»). | An entry in the `GROUPS` map in `app.js`. Rendered as the sidebar group headers, the mind-map legend, the topic-card eyebrow, and the breadcrumb. **9** groups. |
-| **Глава** | chapter | A self-contained area of study — one interview topic (e.g. «ООП и SOLID», «Язык Kotlin»). | An entry in the `TOPICS` array = one page `site/pages/*.html` carrying `<body data-page="ID">`. **18** chapters. |
+| **Глава** | chapter | A self-contained area of study — one interview topic (e.g. «ООП и SOLID», «Язык Kotlin»). | An entry in the `TOPICS` array = one page `site/pages/*.html` carrying `<body data-page="ID">`. **21** chapters. |
 | **Параграф** | paragraph | A specific topic *inside* a глава (e.g. «Null-safety», «Scope-функции»). One entry in the on-page table of contents. | A `<section class="section" id="…">` whose first child is an `<h2>`. `buildTOC` emits one TOC link per параграф. |
 
 **Подпараграфов нет (no sub-paragraphs).** The hierarchy stops at the параграф — `группа → глава → параграф` — and nothing below it is a navigational level. Inside a параграф a minor sub-point may be set off with a run-in lead-in `<p class="subhead">…</p>`, but that is **plain text: not a heading, not a TOC entry**. Never reintroduce `<h3>`/`<h4>` as a structural sub-level. The on-page TOC is therefore single-level (параграфы only).
@@ -47,7 +62,8 @@ The study material has exactly **three** structural levels. Use these names ever
 A **вопрос со звёздочкой** is a deliberately advanced, often counter-intuitive question that goes at the **end of each content параграф** — one per параграф, right after its body. It targets what you rarely need in day-to-day application development but interviewers prize: the mechanism «под капотом», the non-obvious edge case, the «почему именно так» behind an API — a level *above* the baseline Middle+/Senior material in the параграф itself («то, что не требуется знать в проде, но ценят на собесе»).
 
 - **Placement:** one per content параграф, at its end (skip the meta параграфы — `#faq`, video, tasks, sources). It lives inside the параграф's `<section>`, so it never creates a TOC entry (the TOC is built only from `.section > h2`).
-- **Markup:** render it as a Q&A `.qa` card (the same component as «Частые вопросы») flagged with a `★` badge — `<span class="q-badge">★</span>` — so it reads as distinct from the collected FAQ block. No new CSS needed.
+- **Markup (authoring stays the same):** write it as a Q&A `.qa` card (the same component as «Частые вопросы») flagged with a `★` badge — `<span class="q-badge">★</span>`. No new markup to learn.
+- **Rendering:** `app.js` (`upgradeStarred()`) detects any `.qa` whose summary carries the `★` badge and re-renders it at load as a collapsed strip «★ Дополнительно вопрос со звёздочкой» — the question text is hidden until opened (moved into a `<p class="extra-q">`, badge stripped, the `<details>` reclassed `.qa`→`.extra`). Strip styling lives in `style.css` under `.extra`. On disk it's a `.qa`+`★`, on screen it's the «Дополнительно» strip.
 - **Bar:** it must be genuinely beyond-baseline. If a параграф has nothing worth asking above its own body, leave it out rather than padding with a filler question.
 
 ## Running the site
@@ -69,7 +85,7 @@ Edits to `.html`/`.css`/`.js` show up on reload (mind the cache-busting note bel
 **The wiring contract you must keep consistent:**
 - `<body data-page="X">` **must equal** the `id` of the matching `TOPICS` entry **and** the page's filename base (`NN-X.html`). A mismatch leaves the page with no sidebar highlight, breadcrumb, or prev/next.
 - `TOPICS` **order matters**: it sets the mind-map node angles and the prev/next chain. `buildSidebar` groups entries by their `group` field assuming **same-group entries are contiguous** — don't interleave groups.
-- The homepage hero hard-codes counts ("18 глав", "9 групп") in `index.html`. These are *not* derived from the data — update them by hand when adding/removing a глава or группа. (The `0/18` progress stat *is* dynamic.)
+- The homepage hero hard-codes counts ("21 глава", "9 групп") in `index.html`. These are *not* derived from the data — update them by hand when adding/removing a глава or группа. (The `0/21` progress stat *is* dynamic.)
 
 **State lives in `localStorage`**, no backend:
 - `aip-progress-v1` — set of completed глава ids (the "mark done" checkmarks).
@@ -80,9 +96,13 @@ Edits to `.html`/`.css`/`.js` show up on reload (mind the cache-busting note bel
 - **TOC + scrollspy**: `buildTOC` auto-generates the right-hand TOC from `.section > h2` headings — one link per **параграф** (single-level; no `<h3>` sub-level) — and tracks the active one via `IntersectionObserver`. Content only appears in the TOC if wrapped in `<section class="section">` with a real `<h2>`.
 - **Theming**: all colors are CSS custom properties on `:root` (dark) overridden by `[data-theme="light"]` in `site/assets/style.css`. Use the variables (`--accent`, `--panel`, `--text`, `--border`, …), never literal colors, so both themes stay correct.
 
-## Authoring / extending content — use the skill
+## Authoring / Extending Content — On Demand
 
-When the task is to **add a глава, expand a параграф, or write study content**, three skills are the authoritative spec — read them first rather than reinventing markup, prose, or diagrams. `interview-prep-author` governs the *markup*, `tech-author` governs the *writing*, `infographic-author` governs the *diagrams/infographics*.
+When the task is to **add a глава, expand a параграф, or write study content**, use the
+skill-routing section above to decide which skill(s) to load. Do not load every contract
+up front. `interview-prep-author` governs the *markup*, `tech-author` governs the *writing*,
+`infographic-author` governs the *diagrams/infographics*, and `ru-humanizer` governs
+*Russian prose style*.
 
 Markup (`interview-prep-author`):
 - `.claude/skills/interview-prep-author/SKILL.md` — the mandatory page skeleton, workflow (research facts first → build from templates → run the checklist), and the navigation-wiring steps.
@@ -102,13 +122,16 @@ Visuals (`infographic-author`) — apply when designing, adding, or fixing any d
 - `.claude/skills/infographic-author/references/anti-slop.md` — catalog of visual AI markers (rainbow color, shadows/gradients/glow, all-bold, rings for cycles, labels on arrows, decoration) with bad→good fixes.
 - `.claude/skills/infographic-author/references/review-checklist.md` — pre-submit checklist: render integrity + diagram strength + theming/accessibility.
 
-The hard rules from that skill that, if violated, break rendering:
+Russian style (`ru-humanizer`) — apply as the last pass over any Russian prose you wrote or edited, on top of `tech-author`:
+- `.claude/skills/ru-humanizer/SKILL.md` — how to strip AI-style and канцелярит so the text reads as human-written (this is the whole skill — no `references/`).
+
+Hard rendering rules:
 - **Escape `<`, `>`, `&`** inside `<code>`/`<pre>` as `&lt; &gt; &amp;` — otherwise Kotlin generics (`List&lt;T&gt;`) are parsed as HTML tags.
 - **Mermaid blocks have no leading indentation** (directive starts at column 0); quote node labels containing `(){}:,<`.
 - **Videos use the `.ytcard` link card, never `<iframe>`** — some videos block embedding (error 153); the card always works and opens YouTube at a timestamp.
 - **Files must end at `</html>`** with no trailing junk/NUL bytes.
 
-After changing `app.js` or `style.css`, **bump the cache-busting version** `assets/app.js?v=YYYYMMDD-N` (currently `?v=20260620-4`) in **all** HTML files (root + every page in `site/pages/`) so browsers don't serve a stale copy.
+After changing `app.js` or `style.css`, **bump the cache-busting version** `assets/app.js?v=YYYYMMDD-N` (currently `?v=20260621-1`) in **all** HTML files (root + every page in `site/pages/`) so browsers don't serve a stale copy.
 
 If you edit a packaged skill (`.claude/skills/interview-prep-author/` or `.claude/skills/infographic-author/`), repackage its `.skill` bundle (a zip whose top-level folder is the skill name, containing `SKILL.md` + `references/`) so the bundled copy stays current.
 
