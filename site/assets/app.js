@@ -1613,15 +1613,14 @@ function renderInterviewQuestion(q, i, state){
   const answered = selected !== null;
   const correct = answered && selected === q.answer;
   const done = state.finished;
+  const titleId = `quiz-title-${q.id}`;
   const cls = ["quiz-question"];
   if (done) cls.push(correct ? "is-correct" : "is-wrong");
   const stateText = done ? (correct ? "Верно" : (answered ? "Пробел" : "Без ответа")) : q.level;
 
   return `
-    <fieldset class="${cls.join(" ")}">
-      <legend>
-        <span>${i + 1}. ${formatInline(q.question)}</span>
-      </legend>
+    <div class="${cls.join(" ")}" role="group" aria-labelledby="${esc(titleId)}">
+      <div class="quiz-question-title" id="${esc(titleId)}">${i + 1}. ${formatInline(q.question)}</div>
       <div class="quiz-q-meta">
         <span class="tag">${esc(q.area)}</span>
         <span class="quiz-state">${esc(stateText)}</span>
@@ -1630,7 +1629,7 @@ function renderInterviewQuestion(q, i, state){
         ${q.options.map((opt, idx) => renderInterviewOption(q, idx, opt, selected, done)).join("")}
       </div>
       ${done ? renderInterviewFeedback(q, selected) : ""}
-    </fieldset>
+    </div>
   `;
 }
 function renderInterviewOption(q, idx, opt, selected, done){
