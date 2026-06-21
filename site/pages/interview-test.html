@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    (() => {
+      const key = "aip-theme";
+      let theme = null;
+      try { theme = localStorage.getItem(key); } catch(e) {}
+      if (theme !== "dark" && theme !== "light") {
+        theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      document.documentElement.setAttribute("data-theme", theme);
+    })();
+  </script>
+  <title>Тестирование собеседования · Android-собес</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-8">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+</head>
+<body data-page="interview-test">
+  <div class="layout">
+    <aside id="sidebar"></aside>
+    <div id="content">
+      <article class="page">
+        <div class="breadcrumb"></div>
+        <header class="page-head">
+          <span class="eyebrow">Проверка готовности</span>
+          <h1>Тестирование: собеседование</h1>
+          <p class="lead">Короткий тест по Android Middle+/Senior: один лучший ответ на вопрос. После завершения страница покажет пробелы и даст ссылки на параграфы, куда стоит вернуться.</p>
+          <div class="meta">
+            <span class="tag lvl-mid">Middle+</span>
+            <span class="tag lvl-sen">Senior</span>
+            <span class="tag hot">Список пробелов</span>
+          </div>
+        </header>
+
+        <section class="section" id="test">
+          <h2>Собеседование в формате теста</h2>
+          <p>Выберите вариант, который лучше всего отвечает на вопрос интервьюера. Неправильный или пропущенный ответ попадёт в отчёт как пробел: рядом будет объяснение и ссылка на нужную главу или конкретный параграф.</p>
+          <div id="interview-test" class="quiz-shell" data-interview-test></div>
+        </section>
+
+        <section class="section" id="result-rules">
+          <h2>Как читать результат</h2>
+          <p>Оценка нужна не для красивого процента, а для маршрута повторения. Если вопрос провален, откройте предложенный параграф, проговорите ответ вслух и вернитесь к тесту позже. Самые полезные ссылки в отчёте ведут не только на главу, но и на конкретный якорь внутри неё.</p>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Практичный режим.</strong> Проходите тест после нескольких глав подряд. Если ошиблись в механике, не перечитывайте весь сайт: переходите по ссылке из пробела и закрывайте ровно этот участок.</div>
+          </div>
+        </section>
+      </article>
+    </div>
+    <aside id="toc"></aside>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="../assets/glossary.js?v=20260621-8"></script>
+  <script src="../assets/app.js?v=20260621-8"></script>
+</body>
+</html>

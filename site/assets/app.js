@@ -64,6 +64,478 @@ const TOPICS = [
     short:"STAR (Situation, Task, Action, Result — ситуация, задача, действие, результат), истории, процесс найма и вопросы компании.", subs:["STAR","Истории","Процесс"] },
 ];
 
+const SPECIAL_PAGES = {
+  "interview-test": {
+    file: "interview-test.html",
+    icon: "✓",
+    title: "Тестирование",
+    groupTitle: "Проверка готовности",
+    short: "Собеседование в формате теста: вопросы по Android Middle+/Senior, отчёт о пробелах и ссылки на параграфы для повторения.",
+  },
+};
+
+const INTERVIEW_TEST_KEY = "aip-interview-test-v1";
+const INTERVIEW_TEST_QUESTIONS = [
+  {
+    id: "oop-solid-dependency",
+    level: "Middle+",
+    area: "Проектирование",
+    topicId: "oop-solid",
+    sectionId: "solid",
+    question: "Во ViewModel внутри конструктора создаётся `RetrofitClient.create()` и конкретный `UserRepositoryImpl`. Какая проблема здесь важнее всего для собеса?",
+    options: [
+      "Класс нарушает инкапсуляцию, потому что Retrofit лучше хранить в `companion object`.",
+      "ViewModel жёстко зависит от детали реализации: зависимость нельзя заменить fake-ом, а тест полезет в сеть.",
+      "Такой код всегда создаёт memory leak, потому что Retrofit держит Activity.",
+      "Проблемы нет: ViewModel должна сама знать, откуда брать данные."
+    ],
+    answer: 1,
+    gap: "DIP, DI и тестируемость зависимостей.",
+    explain: "ViewModel должна зависеть от абстракции, полученной снаружи. Тогда в проде придёт реальный репозиторий, а в тесте — fake или mock; сетевой клиент не размазывается по UI-слою.",
+    refs: [
+      { topicId: "oop-solid", sectionId: "solid", label: "ООП и SOLID → SOLID" },
+      { topicId: "architecture", sectionId: "testing", label: "Архитектура и DI → Тестируемость" }
+    ]
+  },
+  {
+    id: "kotlin-platform-type",
+    level: "Middle+",
+    area: "Kotlin",
+    topicId: "kotlin",
+    sectionId: "interop",
+    question: "Java-метод без nullability-аннотаций возвращает `String`, а Kotlin видит результат как platform type `String!`. Какой ответ безопаснее?",
+    options: [
+      "Kotlin автоматически считает такой тип non-null, поэтому NPE невозможен.",
+      "Это тип с неизвестной nullability: на границе с Java значение нужно проверить или явно принять риск.",
+      "Platform type всегда превращается в `String?`, иначе код не скомпилируется.",
+      "Нужно заменить все Java-вызовы на `lateinit`, чтобы компилятор не ругался."
+    ],
+    answer: 1,
+    gap: "Null-safety на Java/Kotlin-границе.",
+    explain: "Platform type означает, что Kotlin не знает контракт nullability. Вы можете трактовать его как nullable или non-null, но ответственность за проверку лежит на вашем коде.",
+    refs: [
+      { topicId: "kotlin", sectionId: "null-safety", label: "Kotlin → Null-safety" },
+      { topicId: "kotlin", sectionId: "interop", label: "Kotlin → Java interop" }
+    ]
+  },
+  {
+    id: "kotlin-variance",
+    level: "Senior",
+    area: "Kotlin",
+    topicId: "kotlin",
+    sectionId: "generics",
+    question: "Почему `List<Cat>` можно передать туда, где ожидается `List<Animal>`, а с `MutableList<Cat>` и `MutableList<Animal>` так делать нельзя?",
+    options: [
+      "`List` в Kotlin ковариантен (`out T`) и только отдаёт элементы, а `MutableList` ещё принимает `T`, поэтому инвариантен.",
+      "`MutableList` запрещён только из-за JVM type erasure; на Kotlin/Native это бы работало.",
+      "`List` и `MutableList` оба ковариантны, но компилятор запрещает mutable-коллекции ради производительности.",
+      "Это ограничение появляется только при nullable-типах: `MutableList<Cat?>` был бы совместим."
+    ],
+    answer: 0,
+    gap: "Variance: `out`, `in` и mutable-коллекции.",
+    explain: "Ковариантный producer безопасен: из `List<Cat>` можно читать `Animal`. Mutable-коллекция ещё принимает элементы; если бы её отдали как `MutableList<Animal>`, туда можно было бы положить Dog и сломать список Cat.",
+    refs: [
+      { topicId: "kotlin", sectionId: "generics", label: "Kotlin → Дженерики и variance" }
+    ]
+  },
+  {
+    id: "activity-process-death",
+    level: "Middle+",
+    area: "Платформа Android",
+    topicId: "activity",
+    sectionId: "saved-state",
+    question: "После поворота экран сохраняет фильтр поиска, но после возврата из фона фильтр исчезает. Какой вывод правильный?",
+    options: [
+      "ViewModel переживает и поворот, и process death; ошибка точно в `onResume()`.",
+      "Поворот проверяет только configuration change. Для process death нужен `SavedStateHandle`, `onSaveInstanceState` или постоянное хранилище.",
+      "`onDestroy()` гарантированно вызывается перед убийством процесса, значит фильтр нужно сохранять там.",
+      "Фильтр нужно хранить в singleton, тогда процесс восстановит его автоматически."
+    ],
+    answer: 1,
+    gap: "Разница между configuration change и process death.",
+    explain: "ViewModel живёт, пока жив ViewModelStore в процессе. При убийстве процесса он пропадает; восстановить можно только сериализованное или сохранённое состояние.",
+    refs: [
+      { topicId: "activity", sectionId: "saved-state", label: "Activity → Saved state и process death" },
+      { topicId: "activity", sectionId: "failure-modes", label: "Activity → Failure modes" }
+    ]
+  },
+  {
+    id: "fragment-view-lifecycle",
+    level: "Middle+",
+    area: "Платформа Android",
+    topicId: "fragment",
+    sectionId: "fragment-lifecycle",
+    question: "Во Fragment подписка на Flow обновляет binding после `onDestroyView()`, и приложение падает. Как исправлять корень проблемы?",
+    options: [
+      "Подписываться на `this` как `LifecycleOwner`, потому что Fragment живёт дольше view.",
+      "Использовать `viewLifecycleOwner` и запускать сбор в lifecycle view, а binding очищать в `onDestroyView()`.",
+      "Сделать binding static, чтобы он переживал пересоздание view.",
+      "Перенести всю подписку в `onAttach()`, пока Fragment ещё не отрисован."
+    ],
+    answer: 1,
+    gap: "Два lifecycle у Fragment и срок жизни view.",
+    explain: "У Fragment есть lifecycle самого Fragment и отдельный lifecycle его view. UI-подписки должны жить ровно столько же, сколько view, иначе они держат старый binding и стреляют после уничтожения разметки.",
+    refs: [
+      { topicId: "fragment", sectionId: "fragment-lifecycle", label: "Fragment → Два lifecycle" },
+      { topicId: "fragment", sectionId: "failure-modes", label: "Fragment → Failure modes" }
+    ]
+  },
+  {
+    id: "background-work-choice",
+    level: "Middle+",
+    area: "Платформа Android",
+    topicId: "background-work",
+    sectionId: "choose",
+    question: "Нужно гарантированно выгрузить накопленные логи, можно подождать сеть и зарядку, точное время не важно. Что выбрать?",
+    options: [
+      "Foreground service: пользователь не обязан видеть работу, но так надёжнее.",
+      "WorkManager с constraints: работа отложенная, гарантированная и переживает перезапуск.",
+      "AlarmManager exact alarm: он лучше для любой фоновой задачи.",
+      "Обычный `Thread` из `Application`, потому что процесс всё равно останется жив."
+    ],
+    answer: 1,
+    gap: "Выбор WorkManager / FGS / AlarmManager.",
+    explain: "WorkManager закрывает отложенную гарантированную работу с constraints и ретраями. FGS нужен для видимой пользователю работы прямо сейчас, AlarmManager — для точного времени.",
+    refs: [
+      { topicId: "background-work", sectionId: "choose", label: "Фоновая работа → Что выбирать" },
+      { topicId: "components", sectionId: "workmanager", label: "Android-компоненты → WorkManager" }
+    ]
+  },
+  {
+    id: "looper-main-block",
+    level: "Middle+",
+    area: "Многопоточность",
+    topicId: "looper-handler",
+    sectionId: "anr",
+    question: "В `onClick` синхронно читается большой файл, экран зависает, иногда прилетает ANR. Что здесь происходит?",
+    options: [
+      "Looper сам перенесёт чтение файла в фон, если операция долгая.",
+      "Main thread занят блокирующим I/O, очередь сообщений не обрабатывается, кадры и input ждут.",
+      "ANR возникает только от бесконечного цикла, файловый I/O не считается.",
+      "Проблема решается заменой `Handler` на `HandlerThread`, даже если чтение всё ещё запускается из `onClick` на Main."
+    ],
+    answer: 1,
+    gap: "Main Looper, очередь сообщений и ANR.",
+    explain: "Главный поток должен быстро отдавать управление Looper. Долгий I/O на Main блокирует input, lifecycle-callbacks и кадры; тяжёлое уводят в фон и возвращают на Main только результат.",
+    refs: [
+      { topicId: "looper-handler", sectionId: "event-loop", label: "Looper и Handler → Event loop" },
+      { topicId: "looper-handler", sectionId: "anr", label: "Looper и Handler → ANR" }
+    ]
+  },
+  {
+    id: "threads-volatile",
+    level: "Senior",
+    area: "Многопоточность",
+    topicId: "threads",
+    sectionId: "memory-model",
+    question: "Поле `@Volatile var counter = 0` инкрементируют из нескольких потоков через `counter++`. Почему результат всё равно может быть неверным?",
+    options: [
+      "`@Volatile` даёт видимость, но `counter++` остаётся read-modify-write из нескольких операций без атомарности.",
+      "`@Volatile` работает только для `Boolean`, а для `Int` игнорируется JVM.",
+      "Проблема только в Android: на обычной JVM `counter++` с volatile атомарен.",
+      "Нужно заменить `var` на `val`, и инкремент станет потокобезопасным."
+    ],
+    answer: 0,
+    gap: "Visibility vs atomicity в Java/Kotlin memory model.",
+    explain: "Volatile гарантирует видимость и порядок чтения/записи, но не делает составную операцию атомарной. Для счётчика нужен `AtomicInteger`, lock или другая синхронизация.",
+    refs: [
+      { topicId: "threads", sectionId: "memory-model", label: "Потоки и память JVM → Memory model" },
+      { topicId: "threads", sectionId: "cas", label: "Потоки и память JVM → CAS" }
+    ]
+  },
+  {
+    id: "executors-queue-growth",
+    level: "Senior",
+    area: "Многопоточность",
+    topicId: "executors",
+    sectionId: "growth-model",
+    question: "`ThreadPoolExecutor` создан с `corePoolSize = 4`, `maximumPoolSize = 20` и неограниченной очередью. Почему под нагрузкой потоков всё равно может остаться 4?",
+    options: [
+      "При неограниченной очереди новые задачи встают в queue после заполнения core, поэтому пулу не нужно расти до maximum.",
+      "`maximumPoolSize` работает только у `ScheduledExecutorService`.",
+      "JVM запрещает создавать больше потоков, чем ядер CPU.",
+      "Пул растёт только если задачи бросают исключения."
+    ],
+    answer: 0,
+    gap: "Модель роста ThreadPoolExecutor и роль очереди.",
+    explain: "ThreadPoolExecutor сначала заполняет core, затем кладёт задачи в очередь. До maximum он растёт, когда очередь не принимает задачу; с unbounded queue этот момент может не наступить.",
+    refs: [
+      { topicId: "executors", sectionId: "growth-model", label: "Executor и пулы → Модель роста" },
+      { topicId: "executors", sectionId: "queues", label: "Executor и пулы → Очереди" }
+    ]
+  },
+  {
+    id: "coroutines-async-await",
+    level: "Middle+",
+    area: "Корутины",
+    topicId: "coroutines",
+    sectionId: "launch-async",
+    question: "В коде два сетевых запроса запускают так: `val a = async { loadA() }.await(); val b = async { loadB() }.await()`. Почему параллелизма почти нет?",
+    options: [
+      "`async` всегда запускается лениво, пока не вызвать `start()`.",
+      "Первый `await()` сразу ждёт завершения первой корутины, и только потом создаётся вторая.",
+      "Сетевые запросы нельзя запускать в корутинах, нужен только `Thread`.",
+      "`async` работает параллельно только внутри `GlobalScope`."
+    ],
+    answer: 1,
+    gap: "`async/await` и реальный параллелизм.",
+    explain: "Параллелизм появляется, когда обе корутины стартовали до ожидания результата: `val a = async { ... }; val b = async { ... }; a.await(); b.await()`. Немедленный await превращает код почти в последовательный.",
+    refs: [
+      { topicId: "coroutines", sectionId: "launch-async", label: "Корутины и Flow → launch / async" }
+    ]
+  },
+  {
+    id: "coroutines-cancellation",
+    level: "Middle+",
+    area: "Корутины",
+    topicId: "coroutines",
+    sectionId: "cancellation",
+    question: "Корутина крутит тяжёлый CPU-цикл без suspend-вызовов. Scope отменили, а цикл досчитался до конца. Что забыли?",
+    options: [
+      "Отмена у корутин кооперативная: в CPU-цикле нужны `isActive`, `ensureActive()` или `yield()`.",
+      "Нужно завернуть цикл в `NonCancellable`, чтобы отмена стала жёсткой.",
+      "Нужно ловить `CancellationException` и игнорировать её.",
+      "Корутины вообще не поддерживают отмену CPU-задач."
+    ],
+    answer: 0,
+    gap: "Кооперативная отмена и suspension points.",
+    explain: "Отмена проверяется в точках приостановки или вручную. Долгий вычислительный цикл без проверок не увидит `cancel()` и продолжит работу.",
+    refs: [
+      { topicId: "coroutines", sectionId: "cancellation", label: "Корутины и Flow → Отмена" }
+    ]
+  },
+  {
+    id: "flow-stateflow-events",
+    level: "Middle+",
+    area: "Flow",
+    topicId: "coroutines",
+    sectionId: "flow",
+    question: "ViewModel отправляет навигацию через `MutableStateFlow<NavEvent?>`. Иногда повторная навигация не приходит. Что здесь концептуально не так?",
+    options: [
+      "StateFlow подходит только для списков, но не для sealed classes.",
+      "StateFlow представляет состояние и конфлейтит значения; одноразовые события лучше отдавать через SharedFlow/Channel.",
+      "Нужно заменить `NavEvent` на `String`, тогда StateFlow перестанет конфлейтить.",
+      "Нужно сделать `replay = 10` у StateFlow."
+    ],
+    answer: 1,
+    gap: "StateFlow vs SharedFlow для состояния и событий.",
+    explain: "StateFlow хранит текущее состояние и пропускает равные значения. Для навигации, snackbar и других one-shot событий нужен поток событий без модели «последнее состояние».",
+    refs: [
+      { topicId: "coroutines", sectionId: "flow", label: "Корутины и Flow → Flow" },
+      { topicId: "coroutines", sectionId: "state-share-in", label: "Корутины и Flow → StateFlow / SharedFlow" }
+    ]
+  },
+  {
+    id: "compose-recomposition",
+    level: "Senior",
+    area: "Compose",
+    topicId: "compose",
+    sectionId: "recomposition",
+    question: "Composable получает большой mutable-объект параметром, внутри меняется поле, но UI не обновляется предсказуемо. Какая мысль ближе к правде?",
+    options: [
+      "Compose отслеживает любые поля любых объектов через reflection.",
+      "Рекомпозиция опирается на чтение Compose State и стабильность параметров; обычная мутация поля может остаться невидимой.",
+      "Нужно вызвать `notifyDataSetChanged()`, как в RecyclerView.",
+      "Любой `data class` автоматически observable, даже если внутри mutable list."
+    ],
+    answer: 1,
+    gap: "Compose state, стабильность и границы рекомпозиции.",
+    explain: "Compose инвалидирует области, которые прочитали observable state. Обычная мутация поля не становится событием для runtime; состояние надо хранить в snapshot state/Flow и передавать стабильные данные.",
+    refs: [
+      { topicId: "compose", sectionId: "state", label: "Jetpack Compose → State" },
+      { topicId: "compose", sectionId: "recomposition", label: "Jetpack Compose → Рекомпозиция" }
+    ]
+  },
+  {
+    id: "compose-effect-key",
+    level: "Middle+",
+    area: "Compose",
+    topicId: "compose",
+    sectionId: "effects",
+    question: "`LaunchedEffect(userId)` грузит профиль. Что произойдёт, когда `userId` изменится?",
+    options: [
+      "Старый effect продолжит работу, новый не запустится, потому что `LaunchedEffect` стартует один раз.",
+      "Старая корутина будет отменена, и effect перезапустится с новым ключом.",
+      "Compose выполнит загрузку синхронно на UI thread до конца композиции.",
+      "Ключ влияет только на `remember`, но не на `LaunchedEffect`."
+    ],
+    answer: 1,
+    gap: "Ключи side-effect API в Compose.",
+    explain: "Ключи задают срок жизни effect. Когда ключ меняется, Compose отменяет старую корутину и запускает новую, связанную с актуальной композицией.",
+    refs: [
+      { topicId: "compose", sectionId: "effects", label: "Jetpack Compose → Side effects" }
+    ]
+  },
+  {
+    id: "rendering-jank",
+    level: "Middle+",
+    area: "UI performance",
+    topicId: "rendering",
+    sectionId: "jank",
+    question: "Список скроллится рывками. В `onBind` синхронно декодируют bitmap и форматируют большие строки. Что это за класс проблемы?",
+    options: [
+      "Jank: работа на пути кадра не укладывается в бюджет, поэтому кадры пропускаются.",
+      "Memory leak: все рывки UI всегда вызваны утечкой Activity.",
+      "StrictMode crash: система обязана немедленно завершить приложение.",
+      "Проблема GPU: CPU-код в `onBind` не влияет на скролл."
+    ],
+    answer: 0,
+    gap: "Путь кадра, jank и работа на Main.",
+    explain: "Кадр должен пройти input, layout/draw и отправку команд быстро. Тяжёлая работа в bind/композиции забивает Main и даёт пропущенные кадры; её выносят, кэшируют и измеряют профилировщиком.",
+    refs: [
+      { topicId: "rendering", sectionId: "jank", label: "Рендеринг и кадры → Jank" },
+      { topicId: "rendering", sectionId: "lists", label: "Рендеринг и кадры → Списки" }
+    ]
+  },
+  {
+    id: "storage-datastore",
+    level: "Middle+",
+    area: "Данные",
+    topicId: "storage",
+    sectionId: "datastore",
+    question: "Для пользовательских настроек команда выбирает между SharedPreferences и DataStore. Что обычно сильнее всего говорит в пользу DataStore?",
+    options: [
+      "DataStore хранит данные только в памяти, поэтому он быстрее любого файла.",
+      "DataStore даёт асинхронный транзакционный API на Flow и не заставляет блокировать Main.",
+      "DataStore автоматически шифрует все значения через Keystore.",
+      "DataStore заменяет Room для сложных relational-запросов."
+    ],
+    answer: 1,
+    gap: "DataStore vs SharedPreferences.",
+    explain: "DataStore хорош для настроек и небольших typed/proto-данных: асинхронная запись, Flow-наблюдение и транзакционная модель. Шифрование и relational-модель — отдельные задачи.",
+    refs: [
+      { topicId: "storage", sectionId: "datastore", label: "Хранение данных → DataStore" },
+      { topicId: "storage", sectionId: "choose", label: "Хранение данных → Что выбирать" }
+    ]
+  },
+  {
+    id: "network-retry-idempotency",
+    level: "Middle+",
+    area: "Сеть",
+    topicId: "network",
+    sectionId: "http",
+    question: "Клиент не получил ответ на запрос создания платежа и хочет автоматически повторить HTTP-запрос. Какой вопрос нужно задать первым?",
+    options: [
+      "Есть ли у операции идемпотентный ключ или другой контракт, который защитит от двойного создания?",
+      "Можно ли заменить POST на GET, чтобы сервер точно создал платёж?",
+      "Подключён ли gzip: без него ретраи HTTP запрещены.",
+      "Какой цвет у кнопки оплаты: это влияет на retry policy."
+    ],
+    answer: 0,
+    gap: "Идемпотентность, retries и контракт API.",
+    explain: "При сетевой ошибке клиент может не знать, дошёл ли запрос до сервера. Для небезопасных операций нужен идемпотентный ключ или серверный контракт дедупликации, иначе retry создаст дубль.",
+    refs: [
+      { topicId: "network", sectionId: "http", label: "Сеть → HTTP" },
+      { topicId: "terminology", sectionId: "idempotency", label: "Терминология → Идемпотентность" }
+    ]
+  },
+  {
+    id: "security-keystore",
+    level: "Middle+",
+    area: "Безопасность",
+    topicId: "security",
+    sectionId: "keystore",
+    question: "В приложении лежит AES-ключ строкой в коде, им шифруют токены. Почему это плохая защита?",
+    options: [
+      "Строковый ключ можно извлечь из APK/памяти; ключи нужно хранить через Android Keystore или не держать секрет на клиенте.",
+      "AES нельзя использовать на Android вообще.",
+      "Проблема только в том, что строка слишком короткая; если сделать её длиннее, всё безопасно.",
+      "R8 гарантированно превратит строку в недоступный секрет."
+    ],
+    answer: 0,
+    gap: "Модель угроз клиента и Android Keystore.",
+    explain: "Клиентское приложение контролирует пользователь и атакующий с устройством. Хардкод-секреты достаются из APK или рантайма; Keystore уменьшает поверхность атаки, но не превращает клиент в доверенную среду.",
+    refs: [
+      { topicId: "security", sectionId: "keystore", label: "Безопасность → Keystore" },
+      { topicId: "security", sectionId: "reverse", label: "Безопасность → Reverse engineering" }
+    ]
+  },
+  {
+    id: "testing-run-test",
+    level: "Middle+",
+    area: "Тесты",
+    topicId: "testing",
+    sectionId: "coroutines",
+    question: "JVM-тест ViewModel падает: `Dispatchers.Main` не инициализирован, а `delay(1000)` реально ждёт секунду. Какой набор ближе к нормальному решению?",
+    options: [
+      "`Thread.sleep(1000)` и запуск теста только на эмуляторе.",
+      "`runTest`, `TestDispatcher`, подмена Main через `Dispatchers.setMain()`/JUnit rule и виртуальное время.",
+      "`GlobalScope.launch` внутри теста, чтобы корутина жила независимо.",
+      "Отключить все suspend-функции и тестировать только callbacks."
+    ],
+    answer: 1,
+    gap: "Тестирование корутин и виртуальное время.",
+    explain: "`runTest` даёт TestScope и виртуальное время, а MainDispatcherRule подменяет Android Main в JVM-тесте. Это делает тест быстрым и детерминированным.",
+    refs: [
+      { topicId: "testing", sectionId: "coroutines", label: "Тестирование → Корутины" },
+      { topicId: "coroutines", sectionId: "testing", label: "Корутины и Flow → Тестирование" }
+    ]
+  },
+  {
+    id: "gradle-ksp-kapt",
+    level: "Middle+",
+    area: "Сборка",
+    topicId: "gradle-build",
+    sectionId: "annotation",
+    question: "Почему Kotlin-проект часто мигрирует annotation processing с kapt на KSP, если библиотека это поддерживает?",
+    options: [
+      "KSP работает с Kotlin symbols напрямую, обычно уменьшает слой Java-stub и лучше ложится на Kotlin-код.",
+      "KSP автоматически переписывает архитектуру приложения на multi-module.",
+      "KSP нужен только для XML layouts и не связан с annotation processing.",
+      "kapt и KSP полностью одинаковы, разница только в названии Gradle-задачи."
+    ],
+    answer: 0,
+    gap: "kapt vs KSP и стоимость кодогенерации.",
+    explain: "kapt строит Java-stub-слой для Java-oriented processors. KSP работает ближе к Kotlin-модели символов; миграция снижает лишнюю работу, но возможна только если конкретный processor поддерживает KSP.",
+    refs: [
+      { topicId: "gradle-build", sectionId: "annotation", label: "Gradle и сборка → Annotation processing" },
+      { topicId: "gradle-build", sectionId: "speed", label: "Gradle и сборка → Ускорение сборки" }
+    ]
+  },
+  {
+    id: "system-design-offline",
+    level: "Senior",
+    area: "System design",
+    topicId: "system-design",
+    sectionId: "offline",
+    question: "Просят спроектировать offline-first ленту. Какой каркас ответа звучит наиболее зрело?",
+    options: [
+      "UI всегда читает локальную БД как single source of truth, сеть синхронизирует БД, ошибки/конфликты и freshness показываются явно.",
+      "UI всегда читает только сеть; если сети нет, показываем пустой экран.",
+      "Все ответы API храним в singleton Map, потому что так быстрее Room.",
+      "Offline-first означает, что синхронизация не нужна: пользователь сам перезапустит приложение."
+    ],
+    answer: 0,
+    gap: "Offline-first: source of truth, синхронизация и конфликты.",
+    explain: "Зрелый ответ разделяет чтение и синхронизацию: экран наблюдает локальное состояние, фоновые процессы обновляют его из сети, а продуктовые состояния stale/error/conflict не прячутся.",
+    refs: [
+      { topicId: "system-design", sectionId: "offline", label: "Системный дизайн → Offline-first" },
+      { topicId: "system-design", sectionId: "caching", label: "Системный дизайн → Кэширование" }
+    ]
+  },
+  {
+    id: "behavioral-star",
+    level: "Middle+",
+    area: "Поведенческое",
+    topicId: "behavioral",
+    sectionId: "star",
+    question: "Интервьюер просит рассказать про конфликт с коллегой. Какой ответ ближе к STAR?",
+    options: [
+      "Коллега был неправ, но я быстро всё решил, подробности не важны.",
+      "Кратко: контекст и задача, что именно сделал я, чем закончилось и какой вывод забрал в процесс.",
+      "Нужно пересказать всю историю команды с самого начала проекта.",
+      "Лучше сказать, что конфликтов никогда не было."
+    ],
+    answer: 1,
+    gap: "STAR-структура и конкретика в behavioral-ответах.",
+    explain: "STAR держит ответ проверяемым: ситуация, задача, действие кандидата, результат. Интервьюеру важны вклад, trade-off и вывод, а не героический пересказ без фактов.",
+    refs: [
+      { topicId: "behavioral", sectionId: "star", label: "Поведенческое интервью → STAR" },
+      { topicId: "behavioral", sectionId: "bank", label: "Поведенческое интервью → Банк историй" }
+    ]
+  }
+];
+
 const LS_KEY = "aip-progress-v1";
 const REVIEW_KEY = "aip-review-v1";
 const THEME_KEY = "aip-theme";
@@ -168,6 +640,7 @@ function cleanText(s){ return (s || "").replace(/\s+/g, " ").trim(); }
 function nodeElement(n){ return !n ? null : (n.nodeType === 1 ? n : n.parentElement); }
 function clamp(n, min, max){ return Math.max(min, Math.min(max, n)); }
 function topicById(id){ return TOPICS.find(t => t.id === id); }
+function specialPageById(id){ return SPECIAL_PAGES[id] || null; }
 function formatDate(ts){
   try { return new Date(ts).toLocaleDateString("ru-RU", { day:"2-digit", month:"short" }); }
   catch(e){ return ""; }
@@ -576,6 +1049,10 @@ function initTextBookmarks(){
 /* ---------- topbar ---------- */
 function buildTopbar(){
   const done = progressCount(), total = TOPICS.length;
+  const page = document.body.dataset.page || "home";
+  const testPage = specialPageById("interview-test");
+  const chaptersActive = page !== "interview-test" ? " active" : "";
+  const testActive = page === "interview-test" ? " active" : "";
   const bar = document.createElement("header");
   bar.className = "topbar";
   bar.innerHTML = `
@@ -584,6 +1061,10 @@ function buildTopbar(){
       <span class="logo">A</span>
       <span>Android-собес<small>подготовка · Middle+ / Senior</small></span>
     </a>
+    <nav class="top-tabs" aria-label="Основные разделы">
+      <a class="top-tab${chaptersActive}" href="${rel('index')}">Главы</a>
+      <a class="top-tab${testActive}" href="${rel(testPage.file)}">Тестирование</a>
+    </nav>
     <div class="search">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       <input id="search" type="search" placeholder="Поиск по главам…" autocomplete="off">
@@ -629,6 +1110,12 @@ function buildSidebar(activeId){
       <div class="bar"><i style="width:${pct}%"></i></div>
       <div class="lbl"><span>Прогресс</span><span>${done}/${total}</span></div>
     </div>`;
+  const testPage = specialPageById("interview-test");
+  if (testPage){
+    const active = activeId === "interview-test" ? " active" : "";
+    html += `<a class="nav-link nav-special${active}" data-search="${esc((testPage.title+' '+testPage.short).toLowerCase())}" href="${rel(testPage.file)}">
+      <span class="ni"><span>${testPage.icon}</span></span><span>Собеседование-тест</span></a>`;
+  }
   let lastGroup = null;
   TOPICS.forEach(t => {
     if (t.group !== lastGroup){
@@ -703,6 +1190,12 @@ function buildBreadcrumb(activeId){
   const el = document.querySelector(".breadcrumb");
   if (!el) return;
   const t = TOPICS.find(x => x.id === activeId);
+  if (!t){
+    const special = specialPageById(activeId);
+    if (!special) return;
+    el.innerHTML = `<a href="${rel('index')}">Главная</a> <span>›</span> <span>${esc(special.groupTitle)}</span> <span>›</span> <span style="color:var(--text-dim)">${esc(special.title)}</span>`;
+    return;
+  }
   el.innerHTML = `<a href="${rel('index')}">Главная</a> <span>›</span> <span>${GROUPS[t.group].title}</span> <span>›</span> <span style="color:var(--text-dim)">${esc(t.title)}</span>`;
 }
 
@@ -961,6 +1454,275 @@ function setupCaseCards(){
   });
 }
 
+/* ---------- тестовое собеседование ---------- */
+function freshInterviewState(){ return { answers: {}, finished: false, updatedAt: 0 }; }
+function getInterviewState(){
+  try {
+    const raw = JSON.parse(localStorage.getItem(INTERVIEW_TEST_KEY)) || {};
+    return {
+      answers: raw.answers && typeof raw.answers === "object" ? raw.answers : {},
+      finished: !!raw.finished,
+      updatedAt: raw.updatedAt || 0,
+      finishedAt: raw.finishedAt || 0,
+    };
+  } catch(e){
+    return freshInterviewState();
+  }
+}
+function setInterviewState(state){
+  try { localStorage.setItem(INTERVIEW_TEST_KEY, JSON.stringify(state)); } catch(e){}
+}
+function hasInterviewAnswer(state, qid){
+  return Object.prototype.hasOwnProperty.call(state.answers || {}, qid);
+}
+function interviewAnswer(state, qid){
+  return hasInterviewAnswer(state, qid) ? Number(state.answers[qid]) : null;
+}
+function formatInline(s){
+  return esc(s).replace(/`([^`]+)`/g, "<code>$1</code>");
+}
+function pluralRu(n, one, few, many){
+  const mod10 = Math.abs(n) % 10;
+  const mod100 = Math.abs(n) % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
+}
+function interviewRefHref(ref){
+  const t = topicById(ref.topicId);
+  if (!t) return "#";
+  return rel(t.file) + (ref.sectionId ? `#${ref.sectionId}` : "");
+}
+function uniqueInterviewRefs(refs){
+  const seen = new Set();
+  return refs.filter(ref => {
+    const key = `${ref.topicId || ""}#${ref.sectionId || ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+function interviewResult(state){
+  const questions = INTERVIEW_TEST_QUESTIONS;
+  const misses = questions.filter(q => !hasInterviewAnswer(state, q.id) || interviewAnswer(state, q.id) !== q.answer);
+  const answered = questions.filter(q => hasInterviewAnswer(state, q.id)).length;
+  const correct = questions.length - misses.length;
+  const unanswered = questions.length - answered;
+  return { questions, misses, answered, correct, unanswered, pct: Math.round(correct / questions.length * 100) };
+}
+function setupInterviewTest(){
+  const root = document.querySelector("[data-interview-test]");
+  if (!root || root.dataset.quizReady) return;
+  root.dataset.quizReady = "1";
+
+  const render = () => {
+    root.innerHTML = renderInterviewTest(getInterviewState());
+  };
+
+  root.addEventListener("change", e => {
+    const input = e.target.closest("[data-quiz-answer]");
+    if (!input) return;
+    const state = getInterviewState();
+    state.answers[input.dataset.qid] = Number(input.value);
+    state.finished = false;
+    state.updatedAt = Date.now();
+    state.finishedAt = 0;
+    setInterviewState(state);
+    render();
+  });
+
+  root.addEventListener("click", e => {
+    const btn = e.target.closest("[data-quiz-action]");
+    if (!btn) return;
+    const action = btn.dataset.quizAction;
+    const state = getInterviewState();
+
+    if (action === "finish"){
+      const result = interviewResult(state);
+      if (!result.answered){
+        showToast("Ответьте хотя бы на один вопрос");
+        return;
+      }
+      state.finished = true;
+      state.updatedAt = Date.now();
+      state.finishedAt = Date.now();
+      setInterviewState(state);
+      render();
+      if (result.unanswered) showToast(`Без ответа: ${result.unanswered}. Они попадут в пробелы.`);
+      setTimeout(() => document.getElementById("quiz-results")?.scrollIntoView({ behavior:"smooth", block:"start" }), 0);
+      return;
+    }
+
+    if (action === "edit"){
+      state.finished = false;
+      state.updatedAt = Date.now();
+      state.finishedAt = 0;
+      setInterviewState(state);
+      render();
+      return;
+    }
+
+    if (action === "reset"){
+      setInterviewState(freshInterviewState());
+      render();
+      showToast("Ответы сброшены");
+    }
+  });
+
+  render();
+}
+function renderInterviewTest(state){
+  const result = interviewResult(state);
+  const total = result.questions.length;
+  const progress = Math.round(result.answered / total * 100);
+  const statusText = state.finished
+    ? `${result.correct}/${total} верно`
+    : `${result.answered}/${total} отвечено`;
+  const finishLabel = state.finished ? "Показать пробелы" : "Завершить и показать пробелы";
+  const canFinish = result.answered > 0;
+
+  return `
+    <div class="quiz-panel">
+      <div class="quiz-intro">
+        <div>
+          <span class="study-label">Интервью-тест</span>
+          <p class="quiz-title">22 вопроса по ключевым главам</p>
+          <p class="quiz-copy">Формат специально похож на быстрый скрининг: короткий вопрос, четыре варианта, один лучший ответ.</p>
+        </div>
+        <div class="quiz-meters" aria-label="Статус теста">
+          <div class="study-meter"><b>${total}</b><span>вопроса</span></div>
+          <div class="study-meter"><b>${result.answered}</b><span>отвечено</span></div>
+          <div class="study-meter"><b>${state.finished ? result.misses.length : "—"}</b><span>пробелов</span></div>
+        </div>
+      </div>
+      <div class="quiz-progress" aria-label="${esc(statusText)}"><i style="width:${state.finished ? result.pct : progress}%"></i></div>
+      <div class="quiz-actions">
+        <button class="study-btn primary" type="button" data-quiz-action="finish"${canFinish ? "" : " disabled"}>${finishLabel}</button>
+        ${state.finished ? `<button class="study-btn" type="button" data-quiz-action="edit">Изменить ответы</button>` : ""}
+        <button class="study-btn" type="button" data-quiz-action="reset">Сбросить</button>
+      </div>
+    </div>
+    ${state.finished ? renderInterviewResults(state) : ""}
+    <div class="quiz-list">
+      ${result.questions.map((q, i) => renderInterviewQuestion(q, i, state)).join("")}
+    </div>
+  `;
+}
+function renderInterviewQuestion(q, i, state){
+  const selected = interviewAnswer(state, q.id);
+  const answered = selected !== null;
+  const correct = answered && selected === q.answer;
+  const done = state.finished;
+  const cls = ["quiz-question"];
+  if (done) cls.push(correct ? "is-correct" : "is-wrong");
+  const stateText = done ? (correct ? "Верно" : (answered ? "Пробел" : "Без ответа")) : q.level;
+
+  return `
+    <fieldset class="${cls.join(" ")}">
+      <legend>
+        <span>${i + 1}. ${formatInline(q.question)}</span>
+      </legend>
+      <div class="quiz-q-meta">
+        <span class="tag">${esc(q.area)}</span>
+        <span class="quiz-state">${esc(stateText)}</span>
+      </div>
+      <div class="quiz-options">
+        ${q.options.map((opt, idx) => renderInterviewOption(q, idx, opt, selected, done)).join("")}
+      </div>
+      ${done ? renderInterviewFeedback(q, selected) : ""}
+    </fieldset>
+  `;
+}
+function renderInterviewOption(q, idx, opt, selected, done){
+  const isSelected = selected === idx;
+  const isCorrect = idx === q.answer;
+  const cls = ["quiz-option"];
+  if (isSelected) cls.push("selected");
+  if (done && isCorrect) cls.push("correct");
+  if (done && isSelected && !isCorrect) cls.push("wrong");
+  return `
+    <label class="${cls.join(" ")}">
+      <input type="radio" name="${esc(q.id)}" value="${idx}" data-qid="${esc(q.id)}" data-quiz-answer${isSelected ? " checked" : ""}${done ? " disabled" : ""}>
+      <span class="quiz-radio" aria-hidden="true"></span>
+      <span>${formatInline(opt)}</span>
+    </label>
+  `;
+}
+function renderInterviewFeedback(q, selected){
+  const missed = selected !== q.answer;
+  const yourAnswer = selected === null ? "без ответа" : q.options[selected];
+  return `
+    <div class="quiz-feedback ${missed ? "bad" : "ok"}">
+      <p><strong>${missed ? "Разобрать." : "Верно."}</strong> ${formatInline(q.explain)}</p>
+      ${missed ? `<p class="quiz-answer-line">Ваш ответ: ${formatInline(yourAnswer)}<br>Правильно: ${formatInline(q.options[q.answer])}</p>` : ""}
+      <div class="gap-links">
+        ${uniqueInterviewRefs(q.refs).map(ref => `<a href="${interviewRefHref(ref)}">${esc(ref.label)}</a>`).join("")}
+      </div>
+    </div>
+  `;
+}
+function renderInterviewResults(state){
+  const result = interviewResult(state);
+  const total = result.questions.length;
+  const grade = result.pct >= 85
+    ? "К собеседованию близко. Ошибки ниже всё равно стоит проговорить вслух."
+    : result.pct >= 65
+      ? "База есть, но пробелы уже заметны. Закройте главы из отчёта и пройдите тест заново."
+      : "Сначала лучше пройти отмеченные главы. Сейчас тест показывает не точечные промахи, а слабые зоны.";
+  const missesByTopic = new Map();
+  result.misses.forEach(q => {
+    const key = q.topicId || "misc";
+    if (!missesByTopic.has(key)) missesByTopic.set(key, []);
+    missesByTopic.get(key).push(q);
+  });
+
+  return `
+    <div class="quiz-results" id="quiz-results" tabindex="-1">
+      <div class="quiz-score">
+        <div><b>${result.correct}/${total}</b><span>${result.pct}% верно</span></div>
+        <p>${esc(grade)}</p>
+      </div>
+      ${result.misses.length
+        ? `<p class="subhead">Пробелы по главам</p>
+          <div class="gap-list">
+            ${[...missesByTopic.entries()].map(([topicId, items]) => renderGapGroup(topicId, items, state)).join("")}
+          </div>`
+        : `<div class="gap-empty"><strong>Пробелов по этому проходу нет.</strong><p>Чтобы результат не был случайным, вернитесь к тесту через пару дней и попробуйте ответить без подсказок.</p></div>`}
+    </div>
+  `;
+}
+function renderGapGroup(topicId, items, state){
+  const topic = topicById(topicId);
+  const refs = uniqueInterviewRefs(items.flatMap(q => q.refs || []));
+  const missWord = pluralRu(items.length, "ошибка", "ошибки", "ошибок");
+  return `
+    <article class="gap-item">
+      <div class="gap-head">
+        <strong>${esc(topic ? topic.title : items[0].area)}</strong>
+        <span>${items.length} ${missWord}</span>
+      </div>
+      <div class="gap-questions">
+        ${items.map(q => renderGapQuestion(q, state)).join("")}
+      </div>
+      <div class="gap-links">
+        ${refs.map(ref => `<a href="${interviewRefHref(ref)}">${esc(ref.label)}</a>`).join("")}
+      </div>
+    </article>
+  `;
+}
+function renderGapQuestion(q, state){
+  const selected = interviewAnswer(state, q.id);
+  const yourAnswer = selected === null ? "без ответа" : q.options[selected];
+  return `
+    <div class="gap-question">
+      <p><strong>${formatInline(q.gap)}</strong></p>
+      <p>${formatInline(q.question)}</p>
+      <p class="quiz-answer-line">Ваш ответ: ${formatInline(yourAnswer)}<br>Правильно: ${formatInline(q.options[q.answer])}</p>
+      <p>${formatInline(q.explain)}</p>
+    </div>
+  `;
+}
+
 /* ---------- подсказки по терминам («как для Незнайки») ---------- */
 // Наводишь на термин / сокращение / английское слово — всплывает простое объяснение.
 // Словарь — в assets/glossary.js (window.GLOSSARY = [{t:"термин", a:["алиасы"], d:"объяснение"}]).
@@ -1006,6 +1768,52 @@ function decorateGloss(el, hit){
   el.setAttribute("aria-label", hit.term + ": " + hit.def);
 }
 
+function addGlossCandidate(list, value){
+  const s = String(value || "").trim();
+  if (s.length >= 2 && !list.includes(s)) list.push(s);
+}
+
+function inlineGlossCandidates(raw){
+  const list = [];
+  const s = String(raw || "").trim().replace(/\s+/g, " ");
+  addGlossCandidate(list, s);
+
+  const noTail = s.replace(/[?!.:;,]+$/g, "");
+  addGlossCandidate(list, noTail);
+  addGlossCandidate(list, noTail.replace(/[()]+$/g, ""));
+  addGlossCandidate(list, noTail.replace(/<[^<>]*>/g, ""));
+
+  const attr = noTail.match(/^([A-Za-z_][\w.-]*:[A-Za-z_][\w.-]*)\s*=/);
+  if (attr) addGlossCandidate(list, attr[1]);
+
+  const call = noTail.match(/^(@?[A-Za-z_][\w.$]*(?:\.[A-Za-z_][\w$]*)*)(?:<[^<>]*>)?\s*\(/);
+  if (call){
+    addGlossCandidate(list, call[1]);
+    const parts = call[1].split(".");
+    addGlossCandidate(list, parts[parts.length - 1]);
+  }
+
+  const generic = noTail.match(/^([A-Za-z_][\w.$]*)(?:<[^<>]+>)$/);
+  if (generic) addGlossCandidate(list, generic[1]);
+
+  const dotted = noTail.match(/^(@?[A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*)+)$/);
+  if (dotted){
+    addGlossCandidate(list, dotted[1]);
+    const parts = dotted[1].split(".");
+    addGlossCandidate(list, parts[parts.length - 1]);
+  }
+
+  return list;
+}
+
+function lookupInlineGloss(raw, ci, cs){
+  for (const key of inlineGlossCandidates(raw)){
+    const hit = cs.get(key) || ci.get(normGloss(key));
+    if (hit) return hit;
+  }
+  return null;
+}
+
 function annotateGlossary(){
   const root = document.querySelector("#content article.page");
   if (!root || !window.GLOSSARY || !window.GLOSSARY.length) return;
@@ -1023,7 +1831,7 @@ function annotateGlossary(){
       if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
       let p = node.parentElement;
       while (p && p !== box.parentElement){
-        if (GLOSS_SKIP.has(p.tagName) || p.classList.contains("mermaid") || p.classList.contains("gloss"))
+        if (GLOSS_SKIP.has(p.tagName) || p.classList.contains("mermaid") || p.classList.contains("gloss") || p.classList.contains("quiz-shell"))
           return NodeFilter.FILTER_REJECT;
         p = p.parentElement;
       }
@@ -1035,10 +1843,10 @@ function annotateGlossary(){
 
     // inline-код, целиком совпадающий с термином → подсказка на весь <code>
     box.querySelectorAll(":not(pre) > code").forEach(code => {
-      if (code.classList.contains("gloss") || code.closest("a")) return;
-      const raw = code.textContent.trim().replace(/[?!().:;,]+$/, "");
+      if (code.classList.contains("gloss") || code.closest("a") || code.closest(".quiz-shell")) return;
+      const raw = code.textContent.trim();
       if (raw.length < 2) return;
-      const hit = cs.get(raw) || ci.get(normGloss(raw));
+      const hit = lookupInlineGloss(raw, ci, cs);
       if (!hit) return;
       decorateGloss(code, hit);
     });
@@ -1088,7 +1896,7 @@ function annotateTextNode(node, ciRe, csRe, ci, cs){
 
 function positionGlossPop(el){
   const r = el.getBoundingClientRect();
-  glossPop.style.maxWidth = Math.min(340, window.innerWidth - 20) + "px";
+  glossPop.style.maxWidth = Math.min(460, window.innerWidth - 20) + "px";
   const pw = glossPop.offsetWidth, ph = glossPop.offsetHeight;
   let left = r.left + r.width / 2 - pw / 2;
   left = Math.max(10, Math.min(left, window.innerWidth - pw - 10));
@@ -1152,6 +1960,7 @@ function init(){
   setupRunnable();
   setupStudyCards();
   setupCaseCards();
+  setupInterviewTest();
   if (page && page !== "home") annotateGlossary();
 }
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
