@@ -29,7 +29,7 @@
         <header class="page-head">
           <span class="eyebrow">Язык и проектирование</span>
           <h1>ООП и SOLID</h1>
-          <p class="lead">База программирования для Android-разработчика: ООП, SOLID и GoF-паттерны. На собеседовании проверяют не только определения, а понимание через Android-классы вроде <code>Context</code>, <code>Activity</code>, <code>ViewModel</code>, <code>Repository</code> и через абстрактные задачи из твоего опыта.</p>
+          <p class="lead">База программирования для Android-разработчика: ООП, SOLID и GoF-паттерны. На собеседовании проверяют не только определения, а понимание через Android-классы вроде <code>Context</code>, <code>Activity</code>, <code>ViewModel</code>, <code>Repository</code> и через задачи из вашего опыта.</p>
           <div class="meta">
             <span class="tag lvl-mid">Middle</span>
             <span class="tag lvl-sen">Senior</span>
@@ -49,7 +49,7 @@
               <thead><tr><th>Столп</th><th>Определение</th><th>Суть</th><th>В Kotlin/Android</th></tr></thead>
               <tbody>
                 <tr><td><strong>Инкапсуляция</strong></td><td>Объединение состояния и поведения с ограничением прямого доступа к внутренним деталям.</td><td>Контролировать изменение состояния объекта через внешний контракт и сохранять инварианты.</td><td><code>private</code>/<code>internal</code>, backing property, <code>val</code> наружу + <code>var</code> внутри, <code>StateFlow</code> наружу + <code>MutableStateFlow</code> внутри.</td></tr>
-                <tr><td><strong>Наследование</strong></td><td>Создание нового типа на основе базового типа с получением и переопределением его поведения.</td><td>Иерархия <code>is-a</code>: подкласс является разновидностью базового и не ломает его контракт.</td><td>Классы <code>final</code> по умолчанию; нужен <code>open</code>/<code>abstract</code>; <code>override</code>; sealed-иерархии состояний.</td></tr>
+                <tr><td><strong>Наследование</strong></td><td>Создание нового типа на основе базового типа с получением и переопределением его поведения.</td><td>Иерархия <code>is-a</code>: подкласс ведёт себя как разновидность базового и не ломает его контракт.</td><td>Классы <code>final</code> по умолчанию; нужен <code>open</code>/<code>abstract</code>; <code>override</code>; sealed-иерархии состояний.</td></tr>
                 <tr><td><strong>Полиморфизм</strong></td><td>Один и тот же вызов работает с разными типами или разными сигнатурами.</td><td>Код зависит от общего контракта, а конкретная реализация выбирается через override, overload или generic-тип.</td><td>Динамический: <code>override</code>. Статический: перегрузка методов, generics. Также sealed + <code>when</code>.</td></tr>
                 <tr><td><strong>Абстракция</strong></td><td>Выделение существенных свойств объекта без привязки к деталям реализации.</td><td>Работать с понятием и контрактом: «источник профиля», «способ оплаты», «состояние экрана».</td><td><code>interface</code>, <code>abstract class</code>, Repository/UseCase поверх API, Room и cache.</td></tr>
               </tbody>
@@ -59,7 +59,7 @@
           <details class="qa">
             <summary>Инкапсуляция: состояние меняется только через контракт <span class="q-badge">OOP</span></summary>
             <div class="ans">
-              <p>Инкапсуляция — не просто «спрятать поля». Смысл в том, что объект сам отвечает за правила изменения своего состояния. Внешний код не может напрямую присвоить любое значение, он вызывает публичный метод, а объект проверяет инварианты.</p>
+              <p>Инкапсуляция — не тайник для полей. Объект сам отвечает за правила изменения своего состояния: внешний код вызывает публичный метод, а объект уже проверяет инварианты и не даёт записать произвольное значение напрямую.</p>
               <div class="code-label">UserViewModel.kt</div>
 <pre><code class="language-kotlin">class UserViewModel : ViewModel() {
     // изменяемое состояние — приватно
@@ -77,7 +77,7 @@
           <details class="qa">
             <summary>Наследование: что такое <code>is-a</code> <span class="q-badge">OOP</span></summary>
             <div class="ans">
-              <p><code>is-a</code> означает «является разновидностью». Если <code>CardPayment</code> наследует/реализует <code>PaymentMethod</code>, его можно использовать везде, где ожидают <code>PaymentMethod</code>. Если подтип требует особых проверок или ломает ожидания базового типа, это уже проблема LSP.</p>
+              <p><code>is-a</code> означает «разновидность». Если <code>CardPayment</code> наследует/реализует <code>PaymentMethod</code>, его можно использовать везде, где ожидают <code>PaymentMethod</code>. Если подтип требует особых проверок или ломает ожидания базового типа, это уже проблема LSP.</p>
 <pre><code class="language-kotlin">interface PaymentMethod {
     fun pay(amount: Long): Result&lt;Unit&gt;
 }
@@ -126,12 +126,12 @@ fun log(error: Throwable) { /* overload #2 */ }</code></pre>
 
         <section class="section" id="composition">
           <h2>Композиция, иерархия, расширение</h2>
-          <p>Грань такая: наследование описывает <code>is-a</code> («является разновидностью»), композиция описывает <code>has-a</code> («имеет/использует»), интерфейс часто описывает роль <code>can-do</code> («умеет делать»). Ошибка начинается там, где роль или зависимость превращают в жёсткую иерархию.</p>
+          <p>Грань такая: наследование описывает <code>is-a</code> («разновидность»), композиция описывает <code>has-a</code> («имеет/использует»), интерфейс часто описывает роль <code>can-do</code> («умеет делать»). Ошибка начинается там, где роль или зависимость превращают в жёсткую иерархию.</p>
           <div class="table-wrap">
             <table>
               <thead><tr><th>Название</th><th>Когда использовать</th><th>Android/Kotlin пример</th><th>Риск</th></tr></thead>
               <tbody>
-                <tr><td><strong>Иерархия / наследование</strong></td><td>Тип действительно является разновидностью базового типа, контракт стабилен.</td><td><code>sealed interface UiState</code> + варианты <code>Loading</code>/<code>Content</code>/<code>Error</code>.</td><td>Хрупкий базовый класс, лишние переопределения, нарушение LSP.</td></tr>
+                <tr><td><strong>Иерархия / наследование</strong></td><td>Тип действительно ведёт себя как разновидность базового, контракт стабилен.</td><td><code>sealed interface UiState</code> + варианты <code>Loading</code>/<code>Content</code>/<code>Error</code>.</td><td>Хрупкий базовый класс, лишние переопределения, нарушение LSP.</td></tr>
                 <tr><td><strong>Композиция</strong></td><td>Объект использует другой объект как зависимость или часть поведения.</td><td><code>ProfileViewModel</code> имеет <code>LoadProfileUseCase</code>.</td><td>Больше wiring-кода, если нет DI.</td></tr>
                 <tr><td><strong>Интерфейс роли</strong></td><td>Нужно описать способность, которую могут иметь разные классы.</td><td><code>Logger</code>, <code>PaymentMethod</code>, <code>ImageLoader</code>.</td><td>Слишком мелкие интерфейсы без реального клиента.</td></tr>
                 <tr><td><strong>Делегирование <code>by</code></strong></td><td>Класс реализует интерфейс, но работу передаёт вложенному объекту.</td><td><code>class Service(logger: Logger) : Logger by logger</code>.</td><td>Делегат не знает о переопределениях класса-обёртки.</td></tr>
@@ -315,7 +315,7 @@ class UserRepositoryImpl(private val api: Api) : UserRepository {
               </tbody>
             </table>
           </div>
-          <p>На Android чаще спрашивают не полный список, а где ты уже видел эти идеи в SDK и библиотеках.</p>
+          <p>На Android чаще спрашивают не полный список, а где вы уже видели эти идеи в SDK и библиотеках.</p>
           <div class="table-wrap">
             <table>
               <thead><tr><th>Паттерн</th><th>Категория</th><th>Где в Android</th></tr></thead>
@@ -347,7 +347,7 @@ class UserRepositoryImpl(private val api: Api) : UserRepository {
               <thead><tr><th>Принцип</th><th>Как понимать</th><th>Android-пример</th></tr></thead>
               <tbody>
                 <tr><td><strong>DRY</strong></td><td>Не дублируй знание, которое должно меняться в одном месте.</td><td>Один mapper DTO→domain вместо копий в разных ViewModel.</td></tr>
-                <tr><td><strong>KISS</strong></td><td>Выбирай простейшее решение, которое реально закрывает задачу.</td><td>Обычный UseCase вместо самописного event-bus.</td></tr>
+                <tr><td><strong>KISS</strong></td><td>Выбирайте простейшее решение, которое реально закрывает задачу.</td><td>Обычный UseCase вместо самописного event-bus.</td></tr>
                 <tr><td><strong>YAGNI</strong></td><td>Не добавляй расширяемость «на будущее», пока нет требования.</td><td>Не строить сложную plugin-систему для одного экрана.</td></tr>
                 <tr><td><strong>TDD</strong></td><td>Писать тест до реализации: тест фиксирует ожидаемое поведение и ведёт дизайн.</td><td>Сначала тест на reducer/use case, потом код.</td></tr>
                 <tr><td><strong>Law of Demeter</strong></td><td>Объект должен говорить с близкими зависимостями, а не лезть через цепочки чужих объектов.</td><td>Избегать <code>session.user.profile.address.city</code>; дать метод/DTO с нужными данными.</td></tr>
@@ -428,7 +428,7 @@ val client = LoggingApiClient(RealApiClient())</code></pre>
             <summary>Decorator и Proxy реализуют тот же интерфейс и оборачивают объект. В чём разница? <span class="q-badge">★</span></summary>
             <div class="ans">
               <p>Совпадает структура — оба держат ссылку на обёрнутый объект того же типа и делегируют ему. Разница в намерении. Decorator добавляет новое поведение поверх существующего и рассчитан на стекирование: несколько декораторов навешивают независимые фичи (лог, кэш, ретрай). Proxy контролирует доступ к объекту, не меняя его обязанности: ленивое создание, проверка прав, удалённый вызов, подсчёт ссылок.</p>
-              <p>Грубая проверка: если оборачиваешь, чтобы объект «умел больше» — это декоратор; если чтобы решать, можно ли и когда обращаться к настоящему объекту — это прокси. На Android к прокси ближе ленивая инициализация тяжёлого ресурса и обёртки безопасности, к декоратору — цепочка <code>Interceptor</code>.</p>
+              <p>Грубая проверка: если объект оборачивают, чтобы он «умел больше», — это декоратор; если чтобы решать, можно ли и когда обращаться к настоящему объекту, — это прокси. На Android к прокси ближе ленивая инициализация тяжёлого ресурса и обёртки безопасности, к декоратору — цепочка <code>Interceptor</code>.</p>
             </div>
           </details>
         </section>
@@ -457,7 +457,7 @@ val client = LoggingApiClient(RealApiClient())</code></pre>
           <details class="qa">
             <summary>Где проходит граница между «здоровой абстракцией» и over-engineering, если требований ещё нет? <span class="q-badge">★</span></summary>
             <div class="ans">
-              <p>Полезный критерий — «правило трёх» и стоимость отката. Пока вариация одна, абстракция спекулятивна: ты угадываешь ось изменения, не зная её. Появилась вторая реализация — гипотеза подтвердилась, абстракцию вводят по факту, а не на упреждение. Это дешевле, потому что рефакторинг к интерфейсу из конкретного класса — механическая операция, а вот ломать неверно угаданную абстракцию дорого: она уже расползлась по вызовам.</p>
+              <p>Полезный критерий — «правило трёх» и стоимость отката. Пока вариация одна, абстракция спекулятивна: вы угадываете ось изменения, ещё не зная её. Появилась вторая реализация — гипотеза подтвердилась, абстракцию вводят по факту, а не на упреждение. Это дешевле, потому что рефакторинг к интерфейсу из конкретного класса — механическая операция, а вот ломать неверно угаданную абстракцию дорого: она уже расползлась по вызовам.</p>
               <p>Отдельно стоит «абстракция ради теста»: если зависимость и так подменяема (передаётся через конструктор, имеет fake-реализацию), интерфейс может не понадобиться — мок можно сделать и поверх открытого класса. Граница проходит там, где косвенность начинает стоить дороже, чем гибкость, которую она даёт прямо сейчас, а не гипотетически.</p>
             </div>
           </details>
@@ -543,7 +543,7 @@ val client = LoggingApiClient(RealApiClient())</code></pre>
           <h2>Задачи</h2>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 1.</strong> Тебе дан класс <code>OrderProcessor</code>, который в одном методе делает всё: загружает заказ из сети, считает скидку, форматирует чек и отправляет письмо. Нарушение SRP очевидно. Разбей класс на несколько с правильно распределённой ответственностью, сохранив рабочий публичный API. Допущение: сеть и email — заглушки (<code>TODO()</code>), акцент на структуру.</p>
+            <p class="task-problem"><strong>Задача 1.</strong> Дан класс <code>OrderProcessor</code>, который в одном методе делает всё: загружает заказ из сети, считает скидку, форматирует чек и отправляет письмо. Нарушение SRP очевидно. Разбейте класс на несколько с правильно распределённой ответственностью, сохранив рабочий публичный API. Допущение: сеть и email — заглушки (<code>TODO()</code>), акцент на структуру.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -591,7 +591,7 @@ class OrderProcessor(
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 2.</strong> Реализуй иерархию фигур с методом <code>area()</code>. Требование: добавление новой фигуры не должно менять существующий код (OCP). Начальный набор: <code>Circle</code> и <code>Rectangle</code>. Покажи, как добавить <code>Triangle</code> без правки кода, который считает суммарную площадь списка фигур.</p>
+            <p class="task-problem"><strong>Задача 2.</strong> Реализуйте иерархию фигур с методом <code>area()</code>. Требование: добавление новой фигуры не должно менять существующий код (OCP). Начальный набор: <code>Circle</code> и <code>Rectangle</code>. Покажите, как добавить <code>Triangle</code> без правки кода, который считает суммарную площадь списка фигур.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -631,7 +631,7 @@ fun main() {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 3.</strong> Реализуй паттерн <strong>Observer</strong> вручную (без <code>Flow</code> и <code>LiveData</code>): есть источник событий <code>EventBus</code> и несколько подписчиков. Подписчик должен уметь отписаться. Покажи использование. Бонус: объясни, какую проблему решает этот паттерн и чем отличается от прямого колбэка.</p>
+            <p class="task-problem"><strong>Задача 3.</strong> Реализуйте паттерн <strong>Observer</strong> вручную (без <code>Flow</code> и <code>LiveData</code>): есть источник событий <code>EventBus</code> и несколько подписчиков. Подписчик должен уметь отписаться. Покажите использование. Бонус: объясните, какую проблему решает этот паттерн и чем отличается от прямого колбэка.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -679,7 +679,7 @@ fun main() {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 4.</strong> Реализуй паттерн <strong>Decorator</strong>: базовый <code>ApiClient</code> с методом <code>suspend fun get(url: String): String</code> и два декоратора поверх него — <code>LoggingApiClient</code> (логирует запрос/ответ) и <code>RetryingApiClient</code> (повторяет до N раз при исключении). Покажи, что декораторы комбинируются в любом порядке и оба реализуют тот же интерфейс. Объясни, почему это лучше иерархии подклассов.</p>
+            <p class="task-problem"><strong>Задача 4.</strong> Реализуйте паттерн <strong>Decorator</strong>: базовый <code>ApiClient</code> с методом <code>suspend fun get(url: String): String</code> и два декоратора поверх него — <code>LoggingApiClient</code> (логирует запрос/ответ) и <code>RetryingApiClient</code> (повторяет до N раз при исключении). Покажите, что декораторы комбинируются в любом порядке и оба реализуют тот же интерфейс. Объясните, почему это лучше иерархии подклассов.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -722,7 +722,7 @@ val client: ApiClient = RetryingApiClient(LoggingApiClient(RealApiClient()))</co
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 5.</strong> Дан тип <code>Bird</code> с методом <code>fly()</code>. В иерархии появляется <code>Penguin</code>, который не летает, и его <code>fly()</code> бросает <code>UnsupportedOperationException</code>. Покажи клиент, который из-за этого ломается (нарушение LSP), и перепроектируй иерархию так, чтобы нарушения не было.</p>
+            <p class="task-problem"><strong>Задача 5.</strong> Дан тип <code>Bird</code> с методом <code>fly()</code>. В иерархии появляется <code>Penguin</code>, который не летает, и его <code>fly()</code> бросает <code>UnsupportedOperationException</code>. Покажите клиент, который из-за этого ломается (нарушение LSP), и перепроектируйте иерархию так, чтобы нарушения не было.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">

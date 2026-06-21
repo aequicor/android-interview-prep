@@ -263,7 +263,7 @@ fun Screen(userId: String, onTimeout: () -&gt; Unit) {
 }</code></pre>
           <div class="callout warn">
             <div class="ic">⚠️</div>
-            <div class="bd"><code>LaunchedEffect(Unit)</code> + захват изменяющегося параметра = <strong>устаревший захват</strong>: внутри останется первое значение. Либо добавь параметр в ключи (перезапуск), либо оберни в <code>rememberUpdatedState</code> (без перезапуска). Это любимый «caveat»-вопрос.</div>
+            <div class="bd"><code>LaunchedEffect(Unit)</code> + захват изменяющегося параметра = <strong>устаревший захват</strong>: внутри останется первое значение. Либо добавьте параметр в ключи (перезапуск), либо оберните в <code>rememberUpdatedState</code> (без перезапуска). Это любимый «caveat»-вопрос.</div>
           </div>
           <details class="qa"><summary><code>LaunchedEffect</code> и <code>rememberCoroutineScope</code> оба дают корутины — на каком scope и dispatcher они стартуют и почему это важно? <span class="q-badge">★</span></summary><div class="ans"><p>Оба завязаны на <code>CoroutineScope</code>, привязанный к месту в композиции, и оба наследуют контекст с эффективным диспетчером <code>AndroidUiDispatcher.Main</code> — то есть стартуют на главном потоке. Значит, блокирующую или тяжёлую работу внутри надо явно увести через <code>withContext(Dispatchers.IO/Default)</code>, иначе фризнете UI.</p><p>Разница — в жизненном цикле. Корутина <code>LaunchedEffect</code> отменяется, когда эффект покидает композицию или меняется ключ. Scope от <code>rememberCoroutineScope</code> живёт, пока сам composable в дереве, и его корутины не привязаны к ключам — поэтому он годится для запусков из коллбэков. Запустить <code>suspend</code> прямо в <code>onClick</code> нельзя: <code>onClick</code> не suspend-контекст, отсюда и нужен заранее запомненный scope.</p></div></details>
         </section>
@@ -344,7 +344,7 @@ Box(Modifier.padding(start = offsetX))
 Box(Modifier.offset { IntOffset(offsetX.roundToPx(), 0) })</code></pre>
 
           <p class="subhead">Кастомный Layout, Constraints и кастомный Modifier</p>
-          <p>Composable <code>Layout</code> даёт список <code>measurables</code> и <code>Constraints</code> от родителя. Ты <strong>измеряешь</strong> детей (получая <code>Placeable</code>), задаёшь свой размер и <strong>размещаешь</strong> их. <code>Constraints</code> — это min/max ширины и высоты, спускаемые сверху.</p>
+          <p>Composable <code>Layout</code> даёт список <code>measurables</code> и <code>Constraints</code> от родителя. Сначала вы <strong>измеряете</strong> детей (получая <code>Placeable</code>), затем задаёте свой размер и <strong>размещаете</strong> их. <code>Constraints</code> — это min/max ширины и высоты, спускаемые сверху.</p>
           <div class="code-label">CustomLayout.kt</div>
 <pre><code class="language-kotlin">@Composable
 fun Column2(content: @Composable () -&gt; Unit) {
@@ -407,13 +407,13 @@ fun App(analytics: Analytics) {
           <p class="subhead">Чек-лист производительности</p>
           <ul>
             <li><strong>Откладывай чтение state</strong> на фазу layout/draw (лямбда-модификаторы <code>offset { }</code>, <code>drawBehind { }</code>) вместо чтения в composition.</li>
-            <li><strong>Делай типы стабильными</strong> (<code>@Immutable</code>, <code>ImmutableList</code>) — больше skippable composable, меньше лишних рекомпозиций.</li>
+            <li><strong>Делайте типы стабильными</strong> (<code>@Immutable</code>, <code>ImmutableList</code>) — больше skippable composable, меньше лишних рекомпозиций.</li>
             <li><strong>key в lazy-списках</strong> по стабильному id; <code>derivedStateOf</code> для производных флагов.</li>
             <li><strong>Диагностика:</strong> Layout Inspector показывает счётчики recomposition/skip; <strong>Compose compiler metrics/reports</strong> покажут, какие composable не-restartable/не-skippable и какие классы нестабильны.</li>
           </ul>
           <div class="callout tip">
             <div class="ic">💡</div>
-            <div class="bd"><strong>Compose compiler metrics.</strong> Подключив отчёты компилятора, получаешь <code>*-classes.txt</code> и <code>*-composables.txt</code>: видно <code>unstable class Foo</code> и <code>restartable skippable fun Bar</code>. Это объективный способ найти источник лишних рекомпозиций — называй это на собесе, когда спрашивают «как искал перформанс-проблему».</div>
+            <div class="bd"><strong>Compose compiler metrics.</strong> Подключив отчёты компилятора, вы получаете <code>*-classes.txt</code> и <code>*-composables.txt</code>: видно <code>unstable class Foo</code> и <code>restartable skippable fun Bar</code>. Это объективный способ найти источник лишних рекомпозиций — называйте это на собесе, когда спрашивают «как искали перформанс-проблему».</div>
           </div>
           <details class="qa"><summary>Чем <code>staticCompositionLocalOf</code> отличается от <code>compositionLocalOf</code> по механике инвалидации и почему неверный выбор бьёт по производительности? <span class="q-badge">★</span></summary><div class="ans"><p><code>compositionLocalOf</code> отслеживает чтения: значение хранится в snapshot-state, и при смене значения рекомпозируются только те scope, что реально читали <code>.current</code>. <code>staticCompositionLocalOf</code> чтения не отслеживает — за это он дешевле на чтение, но при смене значения рантайм рекомпозирует <strong>всё</strong> содержимое лямбды <code>CompositionLocalProvider</code> целиком, а не только читателей.</p><p>Правило: для значений, которые меняются в рантайме (тема при переключении день/ночь, конфигурация), берут <code>compositionLocalOf</code> ради точечной инвалидации; для практически неизменяемых зависимостей (ссылка на <code>Analytics</code>, синглтоны вроде <code>LocalContext</code>) — <code>staticCompositionLocalOf</code> ради экономии на чтении. Ошибка в выборе либо рекомпозирует пол-экрана на каждое изменение, либо тратится на трекинг там, где значение не меняется.</p></div></details>
         </section>
@@ -570,7 +570,7 @@ Modifier.semantics {
           <h2>Задачи</h2>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 1.</strong> В компоненте ниже пользователь жалуется, что кнопка «Прокрутить вверх» появляется с задержкой или мигает при быстром скролле. Найди причину и исправь код.</p>
+            <p class="task-problem"><strong>Задача 1.</strong> В компоненте ниже пользователь жалуется, что кнопка «Прокрутить вверх» появляется с задержкой или мигает при быстром скролле. Найдите причину и исправьте код.</p>
 <pre><code class="language-kotlin">@Composable
 fun ChatScreen(messages: List&lt;Message&gt;) {
     val listState = rememberLazyListState()
@@ -623,7 +623,7 @@ fun ChatScreen(messages: List&lt;Message&gt;) {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 2.</strong> Реализуй composable <code>TimerScreen</code>, который при появлении на экране запускает таймер (каждую секунду увеличивает счётчик), а при исчезновении останавливает его. При смене параметра <code>startFrom</code> таймер должен сброситься и считать заново с нового значения. Использование побочных эффектов — обязательная часть решения.</p>
+            <p class="task-problem"><strong>Задача 2.</strong> Реализуйте composable <code>TimerScreen</code>, который при появлении на экране запускает таймер (каждую секунду увеличивает счётчик), а при исчезновении останавливает его. При смене параметра <code>startFrom</code> таймер должен сброситься и считать заново с нового значения. Использование побочных эффектов — обязательная часть решения.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -651,7 +651,7 @@ fun TimerScreen(startFrom: Int) {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 3.</strong> Команда жалуется, что экран со списком пользователей тормозит при прокрутке. Профайлер показывает постоянную рекомпозицию <code>UserFeed</code>. Найди все проблемы и исправь.</p>
+            <p class="task-problem"><strong>Задача 3.</strong> Команда жалуется, что экран со списком пользователей тормозит при прокрутке. Профайлер показывает постоянную рекомпозицию <code>UserFeed</code>. Найдите все проблемы и исправьте.</p>
 <pre><code class="language-kotlin">data class User(val id: Long, val name: String, val bio: String)
 
 @Composable
@@ -712,7 +712,7 @@ fun UserCard(user: User, onFollow: () -&gt; Unit) {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 4.</strong> Тема приложения переключается день/ночь через <code>CompositionLocal</code>, объявленный как <code>staticCompositionLocalOf</code>. Пользователи жалуются, что при переключении темы заметно фризит весь экран. Объясни причину и исправь объявление.</p>
+            <p class="task-problem"><strong>Задача 4.</strong> Тема приложения переключается день/ночь через <code>CompositionLocal</code>, объявленный как <code>staticCompositionLocalOf</code>. Пользователи жалуются, что при переключении темы заметно фризит весь экран. Объясните причину и исправьте объявление.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -729,7 +729,7 @@ val LocalTheme = compositionLocalOf { LightTheme }</code></pre>
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 5.</strong> Composable показывает деталь товара. Внутри <code>LaunchedEffect(Unit)</code> запускается опрос наличия каждые 10 секунд и вызывается переданная лямбда <code>onStockChanged(stock)</code>. При навигации между товарами без выхода с экрана (меняется только параметр <code>productId</code>) пользователь видит уведомления о наличии от ПРЕДЫДУЩЕГО товара. Найди баг и предложи два варианта починки.</p>
+            <p class="task-problem"><strong>Задача 5.</strong> Composable показывает деталь товара. Внутри <code>LaunchedEffect(Unit)</code> запускается опрос наличия каждые 10 секунд и вызывается переданная лямбда <code>onStockChanged(stock)</code>. При навигации между товарами без выхода с экрана (меняется только параметр <code>productId</code>) пользователь видит уведомления о наличии от ПРЕДЫДУЩЕГО товара. Найдите баг и предложите два варианта починки.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">

@@ -83,7 +83,7 @@ flowchart LR
             </table>
           </div>
           <p style="font-size:.86rem;opacity:.75">* — амортизированно (с учётом редких расширений). «сред.» — средний случай при равномерном хешировании.</p>
-          <details class="qa"><summary>В таблице у <code>HashMap</code> стоит средний <code>O(1)</code> — но почему даже без коллизий это не настоящий <code>O(1)</code>, и от чего реально зависит константа? <span class="q-badge">★</span></summary><div class="ans"><p>«Средний <code>O(1)</code>» опирается на гипотезу простого равномерного хеширования: ключи раскладываются по бакетам ровно, средняя длина цепочки <code>n/capacity</code> (это и есть load factor) держится около константы. Слово «средний» тут несёт всю нагрузку — это ожидание при допущениях, а не гарантия худшего случая.</p><p>Что ломает эти допущения на практике: плохой <code>hashCode</code> сваливает всё в один бакет — и ты получаешь <code>O(n)</code> (или <code>O(log n)</code> после treeify). Сам вызов <code>hashCode</code> и <code>equals</code> для длинного ключа уже <code>O(длины ключа)</code>, а не <code>O(1)</code> — для строки на сотню символов это заметно. Плюс амортизированная цена rehash при росте. Поэтому строгая формулировка — <em>amortized expected <code>O(1)</code> при равномерном хешировании</em>. Подвох на собесе именно в этом «среднем»: злонамеренный или просто кривой <code>hashCode</code> превращает мапу в список.</p></div></details>
+          <details class="qa"><summary>В таблице у <code>HashMap</code> стоит средний <code>O(1)</code> — но почему даже без коллизий это не настоящий <code>O(1)</code>, и от чего реально зависит константа? <span class="q-badge">★</span></summary><div class="ans"><p>«Средний <code>O(1)</code>» опирается на гипотезу простого равномерного хеширования: ключи раскладываются по бакетам ровно, средняя длина цепочки <code>n/capacity</code> (это и есть load factor) держится около константы. Слово «средний» тут несёт всю нагрузку — это ожидание при допущениях, а не гарантия худшего случая.</p><p>Что ломает эти допущения на практике: плохой <code>hashCode</code> сваливает всё в один бакет — и получается <code>O(n)</code> (или <code>O(log n)</code> после treeify). Сам вызов <code>hashCode</code> и <code>equals</code> для длинного ключа уже <code>O(длины ключа)</code>, а не <code>O(1)</code> — для строки на сотню символов это заметно. Плюс амортизированная цена rehash при росте. Поэтому строгая формулировка — <em>amortized expected <code>O(1)</code> при равномерном хешировании</em>. Подвох на собесе именно в этом «среднем»: злонамеренный или просто кривой <code>hashCode</code> превращает мапу в список.</p></div></details>
         </section>
 
         <section class="section" id="list">
@@ -91,7 +91,7 @@ flowchart LR
           <p class="subhead">ArrayList — динамический массив</p>
           <p><code>ArrayList</code> хранит элементы в обычном массиве <code>Object[]</code>. Доступ по индексу — <code>O(1)</code> (арифметика смещения, отличная локальность кэша). Главный механизм — <strong>рост ёмкости</strong>: когда массив заполнен, создаётся новый размером <code>oldCapacity + (oldCapacity >> 1)</code> — то есть в <strong>1.5 раза</strong> (в Java; в Kotlin под капотом тот же <code>java.util.ArrayList</code>), и все элементы копируются через <code>Arrays.copyOf</code>. Это и даёт амортизированные <code>O(1)</code> на <code>add()</code> в конец, но <code>O(n)</code> на вставку/удаление в середину (нужен сдвиг хвоста).</p>
           <div class="code-label">CapacityDemo.kt</div>
-<pre><code class="language-kotlin">// Если знаешь итоговый размер — задай ёмкость сразу, избежишь N расширений
+<pre><code class="language-kotlin">// Если итоговый размер известен — задайте ёмкость сразу, чтобы избежать N расширений
 val list = ArrayList&lt;Int&gt;(10_000)        // не будет рекопирований
 repeat(10_000) { list.add(it) }
 
@@ -100,7 +100,7 @@ list.add(42)
 // вставка в середину — O(n): сдвигаются все элементы правее
 list.add(0, -1)                          // дорого: сдвиг всего массива</code></pre>
           <p class="subhead">LinkedList — двусвязный список</p>
-          <p><code>LinkedList</code> — узлы <code>Node</code>, каждый хранит <code>value</code>, <code>prev</code> и <code>next</code>. Вставка/удаление по <em>уже имеющемуся</em> итератору — <code>O(1)</code> (перецепил две ссылки). Но доступ по индексу — <code>O(n)</code>: нужно идти от головы или хвоста. На практике в Android <code>LinkedList</code> почти всегда проигрывает <code>ArrayList</code>: ссылки разбросаны по куче, кэш-промахи убивают производительность, а память больше (два указателя на узел). Для очереди/дека бери <code>ArrayDeque</code>, а не <code>LinkedList</code>.</p>
+          <p><code>LinkedList</code> — узлы <code>Node</code>, каждый хранит <code>value</code>, <code>prev</code> и <code>next</code>. Вставка/удаление по <em>уже имеющемуся</em> итератору — <code>O(1)</code> (достаточно перецепить две ссылки). Но доступ по индексу — <code>O(n)</code>: нужно идти от головы или хвоста. На практике в Android <code>LinkedList</code> почти всегда проигрывает <code>ArrayList</code>: ссылки разбросаны по куче, кэш-промахи убивают производительность, а память больше (два указателя на узел). Для очереди/дека лучше брать <code>ArrayDeque</code>, а не <code>LinkedList</code>.</p>
           <div class="diagram">
           <div class="mermaid">
 flowchart LR
@@ -130,7 +130,7 @@ flowchart LR
             </table>
           </div>
           <p style="font-size:.86rem;opacity:.75">Big-O полного обхода у обоих — <code>O(n)</code>, но на практике <code>ArrayList</code> уходит вперёд: процессор тянет соседние элементы одной cache line, тогда как у <code>LinkedList</code> каждый <code>next</code> — прыжок в случайное место кучи.</p>
-          <details class="qa"><summary>Почему удаление по итератору в <code>LinkedList</code> — это <code>O(1)</code>, а <code>remove(index)</code> и <code>remove(value)</code> — <code>O(n)</code>, хотя структура одна и та же? <span class="q-badge">★</span></summary><div class="ans"><p>Сама перецепка ссылок (<code>prev.next = next; next.prev = prev</code>) и правда <code>O(1)</code> — но только когда ссылка на нужный узел уже у тебя в руках. У итератора она есть: он стоит на узле, который удаляет, поиск не нужен.</p><p>А <code>remove(index)</code> сначала тратит <code>O(n)</code> на проход до узла (<code>LinkedList</code>, правда, идёт с ближнего конца — смотрит, <code>index &lt; size/2</code> или нет, но это всё равно <code>O(n)</code>). <code>remove(value)</code> — <code>O(n)</code> на линейный поиск по <code>equals</code>. Тот же нюанс с <code>add(index, e)</code>: по итератору <code>O(1)</code>, по индексу <code>O(n)</code>. Классический подвох: кандидат говорит «<code>LinkedList</code> — <code>O(1)</code> на удаление», а интервьюер уточняет «по индексу или по итератору?» — и без второго ответа фраза неверна.</p></div></details>
+          <details class="qa"><summary>Почему удаление по итератору в <code>LinkedList</code> — это <code>O(1)</code>, а <code>remove(index)</code> и <code>remove(value)</code> — <code>O(n)</code>, хотя структура одна и та же? <span class="q-badge">★</span></summary><div class="ans"><p>Сама перецепка ссылок (<code>prev.next = next; next.prev = prev</code>) и правда <code>O(1)</code> — но только когда ссылка на нужный узел уже есть. У итератора она есть: он стоит на узле, который удаляет, поиск не нужен.</p><p>А <code>remove(index)</code> сначала тратит <code>O(n)</code> на проход до узла (<code>LinkedList</code>, правда, идёт с ближнего конца — смотрит, <code>index &lt; size/2</code> или нет, но это всё равно <code>O(n)</code>). <code>remove(value)</code> — <code>O(n)</code> на линейный поиск по <code>equals</code>. Тот же нюанс с <code>add(index, e)</code>: по итератору <code>O(1)</code>, по индексу <code>O(n)</code>. Классический подвох: кандидат говорит «<code>LinkedList</code> — <code>O(1)</code> на удаление», а интервьюер уточняет «по индексу или по итератору?» — и без второго ответа фраза неверна.</p></div></details>
         </section>
 
         <section class="section" id="hashmap">
@@ -157,7 +157,7 @@ flowchart TB
           <p class="subhead">Контракт hashCode / equals</p>
           <div class="callout danger">
             <div class="ic">🛑</div>
-            <div class="bd"><strong>Контракт, который ломают чаще всего.</strong> Если <code>a.equals(b)</code>, то обязательно <code>a.hashCode() == b.hashCode()</code>. Нарушишь — объект «потеряется» в <code>HashMap</code>: положили по одному хешу, ищем по другому. Обратное не требуется (равные хеши у неравных объектов = допустимая коллизия). И ещё: <strong>ключ должен быть иммутабельным</strong> по полям, входящим в <code>hashCode</code> — иначе после мутации он окажется «не в том бакете».</div>
+            <div class="bd"><strong>Контракт, который ломают чаще всего.</strong> Если <code>a.equals(b)</code>, то обязательно <code>a.hashCode() == b.hashCode()</code>. При нарушении объект «потеряется» в <code>HashMap</code>: положили по одному хешу, ищем по другому. Обратное не требуется (равные хеши у неравных объектов = допустимая коллизия). И ещё: <strong>ключ должен быть иммутабельным</strong> по полям, входящим в <code>hashCode</code> — иначе после мутации он окажется «не в том бакете».</div>
           </div>
           <div class="code-label">UserKey.kt</div>
 <pre><code class="language-kotlin">// data class генерирует корректные equals/hashCode по полям в конструкторе
@@ -185,7 +185,7 @@ fun &lt;K, V&gt; lruCache(capacity: Int): LinkedHashMap&lt;K, V&gt; =
             size &gt; capacity     // как только переполнились — выкидываем самый старый
     }</code></pre>
           <p class="subhead">TreeMap — красно-чёрное дерево</p>
-          <p><code>TreeMap</code> хранит ключи в <strong>самобалансирующемся красно-чёрном дереве</strong>, всегда отсортированными по <code>Comparable</code>/<code>Comparator</code>. Все основные операции — <code>O(log n)</code> (медленнее <code>HashMap</code>), но взамен ты получаешь <strong>упорядоченный обход</strong> и навигационные методы: <code>firstKey()</code>, <code>ceilingKey()</code>, <code>floorKey()</code>, <code>headMap()</code>, <code>subMap()</code>. Бери его, когда нужны диапазонные запросы или «ближайший ключ ≥ x».</p>
+          <p><code>TreeMap</code> хранит ключи в <strong>самобалансирующемся красно-чёрном дереве</strong>, всегда отсортированными по <code>Comparable</code>/<code>Comparator</code>. Все основные операции — <code>O(log n)</code> (медленнее <code>HashMap</code>), но взамен вы получаете <strong>упорядоченный обход</strong> и навигационные методы: <code>firstKey()</code>, <code>ceilingKey()</code>, <code>floorKey()</code>, <code>headMap()</code>, <code>subMap()</code>. Берите его, когда нужны диапазонные запросы или «ближайший ключ ≥ x».</p>
           <div class="table-wrap">
             <table>
               <thead><tr><th>Карта</th><th>Порядок</th><th>Сложность</th><th>Когда брать</th></tr></thead>
@@ -233,7 +233,7 @@ flowchart TB
           </div>
           <div class="callout warn">
             <div class="ic">⚠️</div>
-            <div class="bd"><strong>Нюанс ConcurrentHashMap.</strong> Атомарны только отдельные операции. Связка «проверил-потом-положил» (<code>if (!map.containsKey(k)) map.put(k, v)</code>) — это гонка. Используй атомарные методы: <code>putIfAbsent()</code>, <code>computeIfAbsent()</code>, <code>merge()</code>. И помни: ключи/значения в нём <strong>не могут быть null</strong>.</div>
+            <div class="bd"><strong>Нюанс ConcurrentHashMap.</strong> Атомарны только отдельные операции. Связка «проверил-потом-положил» (<code>if (!map.containsKey(k)) map.put(k, v)</code>) — это гонка. Здесь нужны атомарные методы: <code>putIfAbsent()</code>, <code>computeIfAbsent()</code>, <code>merge()</code>. Ещё важная деталь: ключи/значения в нём <strong>не могут быть null</strong>.</div>
           </div>
           <details class="qa"><summary>Почему итератор <code>ConcurrentHashMap</code> не бросает <code>ConcurrentModificationException</code> и зовётся weakly consistent, а итератор обычного <code>HashMap</code> — fail-fast? Что это значит на практике? <span class="q-badge">★</span></summary><div class="ans"><p>Итераторы <code>HashMap</code>/<code>ArrayList</code> — fail-fast: они держат счётчик структурных изменений <code>modCount</code> и на каждом <code>next()</code> сверяют его с ожидаемым. Любое изменение коллекции мимо самого итератора — даже из того же потока — ломает сверку и кидает <code>ConcurrentModificationException</code>. Это не гарантия безопасности, а ранний детектор багов; документация так и пишет — best-effort.</p><p>Итератор <code>ConcurrentHashMap</code> — weakly consistent: он обходит состояние на момент создания и <code>CME</code> не бросает никогда, но изменения, внесённые после старта итерации, может увидеть, а может и нет — формальной гарантии нет. На практике: <code>HashMap</code> нельзя трогать в обычном for-each (только через <code>iterator.remove()</code>, см. отдельный параграф ниже), а <code>ConcurrentHashMap</code> можно итерировать параллельно с записями и не ловить исключение — ценой того, что итерация видит «примерно текущее» состояние.</p></div></details>
         </section>
@@ -241,7 +241,7 @@ flowchart TB
         <section class="section" id="algorithms">
           <h2>Типовые алгоритмы для интервью</h2>
           <p class="subhead">Бинарный поиск — O(log n)</p>
-          <p>Работает только на <strong>отсортированном</strong> массиве: на каждом шаге отбрасываем половину диапазона. Классическая ловушка — переполнение при <code>(lo + hi) / 2</code>; пиши <code>lo + (hi - lo) / 2</code>.</p>
+          <p>Работает только на <strong>отсортированном</strong> массиве: на каждом шаге отбрасываем половину диапазона. Классическая ловушка — переполнение при <code>(lo + hi) / 2</code>; безопасная форма — <code>lo + (hi - lo) / 2</code>.</p>
           <div class="code-label">BinarySearch.kt</div>
 <pre><code class="language-kotlin">fun binarySearch(a: IntArray, target: Int): Int {
     var lo = 0; var hi = a.size - 1
@@ -269,7 +269,7 @@ fun maxSum(a: IntArray, k: Int): Int {
     return best
 }</code></pre>
           <p class="subhead">Стек, очередь, деревья, графы</p>
-          <p><strong>Стек</strong> (LIFO) — проверка скобок, обход в глубину без рекурсии, undo. <strong>Очередь</strong> (FIFO) — обход в ширину, планировщики. Для обоих в Kotlin/JVM бери <code>ArrayDeque</code>. Обходы дерева: <strong>DFS</strong> (in/pre/post-order, через рекурсию или стек) и <strong>BFS</strong> (по уровням, через очередь).</p>
+          <p><strong>Стек</strong> (LIFO) — проверка скобок, обход в глубину без рекурсии, undo. <strong>Очередь</strong> (FIFO) — обход в ширину, планировщики. Для обоих в Kotlin/JVM подходит <code>ArrayDeque</code>. Обходы дерева: <strong>DFS</strong> (in/pre/post-order, через рекурсию или стек) и <strong>BFS</strong> (по уровням, через очередь).</p>
           <div class="code-label">TreeTraversal.kt</div>
 <pre><code class="language-kotlin">class TreeNode(val v: Int, val left: TreeNode? = null, val right: TreeNode? = null)
 
@@ -410,7 +410,7 @@ fun dailyTemperatures(t: IntArray): IntArray {
     }
     return res                              // не дождавшиеся остаются 0
 }</code></pre>
-          <p>Каждый индекс кладётся и снимается со стека не более одного раза — отсюда <code>O(n)</code>, несмотря на вложенный <code>while</code>. Это тот же приём, что в задаче «Sliding Window Maximum» из блока задач выше: там монотонная <em>дека</em> (двусторонний вариант) держит индексы кандидатов на максимум окна. Узнаёшь паттерн «ближайший больший/меньший» или «максимум на отрезке за один проход» — почти наверняка это монотонный стек или дека.</p>
+          <p>Каждый индекс кладётся и снимается со стека не более одного раза — отсюда <code>O(n)</code>, несмотря на вложенный <code>while</code>. Это тот же приём, что в задаче «Sliding Window Maximum» из блока задач выше: там монотонная <em>дека</em> (двусторонний вариант) держит индексы кандидатов на максимум окна. Если видите паттерн «ближайший больший/меньший» или «максимум на отрезке за один проход», почти наверняка нужен монотонный стек или дека.</p>
           <details class="qa"><summary>Почему монотонный стек даёт <code>O(n)</code>, хотя внутри основного цикла стоит ещё один <code>while</code>, который вроде бы добавляет вложенность? <span class="q-badge">★</span></summary><div class="ans"><p>Считать сложность по «цикл в цикле = <code>O(n²)</code>» здесь нельзя — это ловушка поверхностного анализа. Нужен <strong>амортизированный</strong> учёт по элементам, а не по итерациям внутреннего цикла.</p><p>Каждый индекс попадает на стек ровно один раз (внешний цикл, один <code>addLast</code> на шаг) и снимается с него тоже не более одного раза (внутренний <code>while</code>, <code>removeLast</code>). Снятый элемент назад не возвращается. Значит суммарное число операций <code>removeLast</code> по всему алгоритму ограничено <code>n</code> — независимо от того, что на отдельном шаге внутренний <code>while</code> может крутануться несколько раз. Итого <code>2n</code> операций со стеком, то есть <code>O(n)</code>. Это та же логика, что у амортизированного <code>O(1)</code> у <code>ArrayList.add</code>: дорогие шаги редки и «оплачены» дешёвыми.</p></div></details>
         </section>
 
@@ -428,7 +428,7 @@ println(readOnly)                    // [1, 2, 3, 4] — read-only «не убе
           <p class="subhead">Sequence против Iterable</p>
           <p>Операции над <code>List</code>/<code>Iterable</code> — <strong>eager</strong>: каждый <code>map</code>/<code>filter</code> создаёт новый промежуточный список и проходит коллекцию целиком на каждом шаге. <code>Sequence</code> <strong>ленив</strong>: элементы текут по всей цепочке по одному, без промежуточных списков, а вычисление стартует только терминальной операцией (<code>toList</code>, <code>first</code>, <code>sum</code>). Выигрыш — на длинных цепочках над большими коллекциями и при коротком замыкании (<code>find</code>, <code>first</code>, <code>take</code> обрывают обход рано). На маленьких коллекциях <code>Sequence</code> проигрывает: ленивость добавляет накладные расходы, а экономия на промежуточных списках ничтожна. Правило: <em>большой объём + много операций + ранний выход → <code>Sequence</code></em>; иначе обычная коллекция.</p>
           <p class="subhead">ArrayDeque и ArrayDeque</p>
-          <p>В Kotlin stdlib (с 1.4) есть свой <code>kotlin.collections.ArrayDeque</code> — кольцевой буфер на массиве, удобный и как стек (<code>addLast</code>/<code>removeLast</code>), и как очередь (<code>addLast</code>/<code>removeFirst</code>), с амортизированным <code>O(1)</code> с обоих концов. В отличие от <code>java.util.ArrayDeque</code>, он допускает <code>null</code>. Для LIFO/FIFO бери именно дек, а не устаревший <code>Stack</code> или <code>LinkedList</code> (почему — см. вопрос в FAQ).</p>
+          <p>В Kotlin stdlib (с 1.4) есть свой <code>kotlin.collections.ArrayDeque</code> — кольцевой буфер на массиве, удобный и как стек (<code>addLast</code>/<code>removeLast</code>), и как очередь (<code>addLast</code>/<code>removeFirst</code>), с амортизированным <code>O(1)</code> с обоих концов. В отличие от <code>java.util.ArrayDeque</code>, он допускает <code>null</code>. Для LIFO/FIFO лучше брать именно дек, а не устаревший <code>Stack</code> или <code>LinkedList</code> (почему — см. вопрос в FAQ).</p>
           <details class="qa"><summary>Цепочка <code>asSequence().map{}.filter{}.first()</code> и та же цепочка без <code>asSequence()</code> на списке из миллиона элементов — в чём разница по числу проходов и аллокаций? <span class="q-badge">★</span></summary><div class="ans"><p>Без <code>asSequence()</code> всё eager: <code>map</code> пройдёт весь миллион и создаст новый список на миллион, <code>filter</code> пройдёт его снова и создаст ещё один список, и только потом <code>first</code> возьмёт нулевой элемент. Два полных прохода и две аллокации списков на миллион — притом что нужен был один-единственный элемент.</p><p>С <code>asSequence()</code> цепочка ленивая и работает «по вертикали»: первый элемент проходит <code>map</code>, затем <code>filter</code>; если предикат прошёл, <code>first</code> сразу возвращает результат — и обход обрывается. В лучшем случае это один элемент через всю цепочку, ноль промежуточных списков. Вот почему <code>Sequence</code> особенно выигрывает там, где терминальная операция способна замкнуться рано (<code>first</code>, <code>find</code>, <code>take</code>): eager-версия всё равно материализует промежуточные коллекции целиком, ленивая — нет.</p></div></details>
         </section>
 
@@ -453,12 +453,12 @@ list.removeAll { it % 2 == 0 }
 // 3) Идти по копии, удалять из оригинала
 for (x in list.toList()) { if (x % 2 == 0) list.remove(x) }</code></pre>
           <p>Для конкурентного случая — <code>ConcurrentHashMap</code> и <code>CopyOnWriteArrayList</code>: их итераторы weakly consistent / снапшотные и <code>CME</code> не бросают (см. параграф про потокобезопасность). Но это другая гарантия: они дают безопасность при параллельных потоках, а не «можно как угодно менять в for-each».</p>
-          <details class="qa"><summary>Почему <code>CME</code> может прилететь даже в однопоточном коде без всякой конкуренции, и почему на него нельзя полагаться как на гарантию обнаружения багов? <span class="q-badge">★</span></summary><div class="ans"><p>Слово «concurrent» в имени вводит в заблуждение: <code>CME</code> — про <em>структурную модификацию во время итерации</em>, а не про потоки. Один поток, один for-each, внутри <code>list.add(...)</code> — и <code>modCount</code> разъехался с ожидаемым в итераторе, ловишь исключение на следующем <code>next()</code>. Никакой второй поток не нужен.</p><p>А «нельзя полагаться» — потому что проверка best-effort: <code>modCount</code> сверяется только на <code>next()</code>/<code>remove()</code>, не атомарно и не на каждое чтение. Есть сценарии, где модификация остаётся незамеченной — например, изменил и тут же вернул структуру к прежнему числу элементов, или последняя модификация пришлась так, что итератор до сверки не дошёл. Документация прямо просит не строить логику на факте броска <code>CME</code>: это диагностика, помогающая ловить баги в разработке, а не контрактная гарантия.</p></div></details>
+          <details class="qa"><summary>Почему <code>CME</code> может прилететь даже в однопоточном коде без всякой конкуренции, и почему на него нельзя полагаться как на гарантию обнаружения багов? <span class="q-badge">★</span></summary><div class="ans"><p>Слово «concurrent» в имени вводит в заблуждение: <code>CME</code> — про <em>структурную модификацию во время итерации</em>, а не про потоки. Один поток, один for-each, внутри <code>list.add(...)</code> — и <code>modCount</code> разъехался с ожидаемым в итераторе; исключение прилетит на следующем <code>next()</code>. Никакой второй поток не нужен.</p><p>А «нельзя полагаться» — потому что проверка best-effort: <code>modCount</code> сверяется только на <code>next()</code>/<code>remove()</code>, не атомарно и не на каждое чтение. Есть сценарии, где модификация остаётся незамеченной — например, изменил и тут же вернул структуру к прежнему числу элементов, или последняя модификация пришлась так, что итератор до сверки не дошёл. Документация прямо просит не строить логику на факте броска <code>CME</code>: это диагностика, помогающая ловить баги в разработке, а не контрактная гарантия.</p></div></details>
         </section>
 
         <section class="section" id="lru">
           <h2>Реализация LRU-кэша на Kotlin</h2>
-          <p>«Напиши LRU-кэш» — один из самых частых live-coding вопросов. Ключевая идея: чтобы и <code>get</code>, и <code>put</code> были <code>O(1)</code>, нужна <strong>связка</strong> <code>HashMap</code> (доступ по ключу за <code>O(1)</code>) + <strong>двусвязный список</strong> (порядок использования, перемещение узла в начало за <code>O(1)</code>). Самый недавно использованный — в голове, кандидат на вытеснение — в хвосте.</p>
+          <p>Задача «написать LRU-кэш» — один из самых частых live-coding вопросов. Ключевая идея: чтобы и <code>get</code>, и <code>put</code> были <code>O(1)</code>, нужна <strong>связка</strong> <code>HashMap</code> (доступ по ключу за <code>O(1)</code>) + <strong>двусвязный список</strong> (порядок использования, перемещение узла в начало за <code>O(1)</code>). Самый недавно использованный — в голове, кандидат на вытеснение — в хвосте.</p>
           <div class="code-label">LruCache.kt</div>
 <pre><code class="language-kotlin">class LruCache&lt;K, V&gt;(private val capacity: Int) {
 
@@ -501,9 +501,9 @@ for (x in list.toList()) { if (x % 2 == 0) list.remove(x) }</code></pre>
 }</code></pre>
           <div class="callout tip">
             <div class="ic">💡</div>
-            <div class="bd"><strong>Что сказать после реализации.</strong> Упомяни, что в Android уже есть готовый <code>androidx.collection.LruCache</code> (и <code>DiskLruCache</code>), а «ручной» вариант с <code>LinkedHashMap(accessOrder = true)</code> короче (см. раздел выше). Понимание ручной реализации показывает, что ты знаешь <em>почему</em> это <code>O(1)</code>, а не просто дёргаешь библиотеку.</div>
+            <div class="bd"><strong>Что сказать после реализации.</strong> Упомяните, что в Android уже есть готовый <code>androidx.collection.LruCache</code> (и <code>DiskLruCache</code>), а «ручной» вариант с <code>LinkedHashMap(accessOrder = true)</code> короче (см. раздел выше). Понимание ручной реализации показывает, что вы можете объяснить, <em>почему</em> это <code>O(1)</code>, а не просто вызываете библиотеку.</div>
           </div>
-          <details class="qa"><summary>Почему в LRU на голом <code>LinkedHashMap(accessOrder = true)</code> даже один <code>get</code> из нескольких потоков без синхронизации опасен — ведь «мы просто читаем»? <span class="q-badge">★</span></summary><div class="ans"><p>При <code>accessOrder = true</code> <code>get</code> — это <strong>структурная модификация</strong>: он перемещает обращённую запись в хвост двусвязного списка порядка доступа, то есть меняет внутренние ссылки. Документация <code>LinkedHashMap</code> прямо это отмечает.</p><p>Значит конкурентные <code>get</code> из разных потоков — гонка <em>записи</em>, а не безобидное чтение: можно порвать связи списка или поймать <code>ConcurrentModificationException</code>, как при параллельной модификации обычного <code>HashMap</code>. Тонкость для задачи 3 этой главы: <code>ReentrantReadWriteLock</code> там недостаточно защищает <code>get</code> через read-лок — раз <code>get</code> мутирует, ему нужен <em>write</em>-лок, иначе несколько «читающих» потоков войдут под read-лок одновременно и подерутся за список. Либо честно бери готовый <code>androidx.collection.LruCache</code>, синхронизированный внутри.</p></div></details>
+          <details class="qa"><summary>Почему в LRU на голом <code>LinkedHashMap(accessOrder = true)</code> даже один <code>get</code> из нескольких потоков без синхронизации опасен — ведь «мы просто читаем»? <span class="q-badge">★</span></summary><div class="ans"><p>При <code>accessOrder = true</code> <code>get</code> — это <strong>структурная модификация</strong>: он перемещает обращённую запись в хвост двусвязного списка порядка доступа, то есть меняет внутренние ссылки. Документация <code>LinkedHashMap</code> прямо это отмечает.</p><p>Значит конкурентные <code>get</code> из разных потоков — гонка <em>записи</em>, а не безобидное чтение: можно порвать связи списка или поймать <code>ConcurrentModificationException</code>, как при параллельной модификации обычного <code>HashMap</code>. Тонкость для задачи 3 этой главы: <code>ReentrantReadWriteLock</code> там недостаточно защищает <code>get</code> через read-лок — раз <code>get</code> мутирует, ему нужен <em>write</em>-лок, иначе несколько «читающих» потоков войдут под read-лок одновременно и подерутся за список. Либо используйте готовый <code>androidx.collection.LruCache</code>, синхронизированный внутри.</p></div></details>
         </section>
 
         <section class="section" id="video">
@@ -551,7 +551,7 @@ for (x in list.toList()) { if (x % 2 == 0) list.remove(x) }</code></pre>
 
           <details class="qa">
             <summary>ArrayList или LinkedList — что выбрать? <span class="q-badge">Middle</span></summary>
-            <div class="ans"><p>В подавляющем большинстве случаев — <code>ArrayList</code>: доступ по индексу <code>O(1)</code> и отличная локальность кэша (данные лежат подряд). <code>LinkedList</code> теоретически даёт <code>O(1)</code> вставку/удаление, но только по уже имеющемуся итератору, а доступ по индексу — <code>O(n)</code>; на практике кэш-промахи и накладные расходы на узлы делают его медленнее почти всегда. Для очереди или дека бери <code>ArrayDeque</code>, а не <code>LinkedList</code>.</p></div>
+            <div class="ans"><p>В подавляющем большинстве случаев — <code>ArrayList</code>: доступ по индексу <code>O(1)</code> и отличная локальность кэша (данные лежат подряд). <code>LinkedList</code> теоретически даёт <code>O(1)</code> вставку/удаление, но только по уже имеющемуся итератору, а доступ по индексу — <code>O(n)</code>; на практике кэш-промахи и накладные расходы на узлы делают его медленнее почти всегда. Для очереди или дека лучше брать <code>ArrayDeque</code>, а не <code>LinkedList</code>.</p></div>
           </details>
 
           <details class="qa">
@@ -595,7 +595,7 @@ for (x in list.toList()) { if (x % 2 == 0) list.remove(x) }</code></pre>
           <h2>Задачи</h2>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 1.</strong> Реализуй функцию, которая находит два числа в массиве <code>nums</code>, дающих в сумме <code>target</code>. Верни их индексы. Предполагай, что ровно одно решение существует, один элемент не использовать дважды. Сложность — лучше <code>O(n²)</code>.</p>
+            <p class="task-problem"><strong>Задача 1.</strong> Реализуйте функцию, которая находит два числа в массиве <code>nums</code>, дающих в сумме <code>target</code>. Верните их индексы. Предполагайте, что ровно одно решение существует, один элемент не использовать дважды. Сложность — лучше <code>O(n²)</code>.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -614,7 +614,7 @@ for (x in list.toList()) { if (x % 2 == 0) list.remove(x) }</code></pre>
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 2.</strong> Дан список целых чисел. Реализуй функцию <code>maxSlidingWindow(a: IntArray, k: Int): IntArray</code>, которая возвращает массив максимумов для каждого скользящего окна размера <code>k</code>. Вход: <code>[1, 3, -1, -3, 5, 3, 6, 7]</code>, <code>k = 3</code>; ожидаемый выход: <code>[3, 3, 5, 5, 6, 7]</code>. Сложность — лучше <code>O(n·k)</code>.</p>
+            <p class="task-problem"><strong>Задача 2.</strong> Дан список целых чисел. Реализуйте функцию <code>maxSlidingWindow(a: IntArray, k: Int): IntArray</code>, которая возвращает массив максимумов для каждого скользящего окна размера <code>k</code>. Вход: <code>[1, 3, -1, -3, 5, 3, 6, 7]</code>, <code>k = 3</code>; ожидаемый выход: <code>[3, 3, 5, 5, 6, 7]</code>. Сложность — лучше <code>O(n·k)</code>.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -644,7 +644,7 @@ for (x in list.toList()) { if (x % 2 == 0) list.remove(x) }</code></pre>
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 3.</strong> Реализуй потокобезопасный LRU-кэш с ёмкостью <code>capacity</code>. Методы <code>get(key)</code> и <code>put(key, value)</code> должны работать за <code>O(1)</code> и безопасно вызываться из нескольких потоков одновременно. Покажи минимальный рабочий вариант на Kotlin.</p>
+            <p class="task-problem"><strong>Задача 3.</strong> Реализуйте потокобезопасный LRU-кэш с ёмкостью <code>capacity</code>. Методы <code>get(key)</code> и <code>put(key, value)</code> должны работать за <code>O(1)</code> и безопасно вызываться из нескольких потоков одновременно. Покажите минимальный рабочий вариант на Kotlin.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -672,7 +672,7 @@ class ThreadSafeLruCache&lt;K, V&gt;(capacity: Int) {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 4.</strong> Дан массив <code>nums</code> и число <code>k</code>. Верни <code>k</code> самых часто встречающихся элементов. Сложность — лучше <code>O(n log n)</code> полной сортировки. Вход: <code>nums = [1,1,1,2,2,3]</code>, <code>k = 2</code>; выход: <code>[1, 2]</code> (в любом порядке).</p>
+            <p class="task-problem"><strong>Задача 4.</strong> Дан массив <code>nums</code> и число <code>k</code>. Верните <code>k</code> самых часто встречающихся элементов. Сложность — лучше <code>O(n log n)</code> полной сортировки. Вход: <code>nums = [1,1,1,2,2,3]</code>, <code>k = 2</code>; выход: <code>[1, 2]</code> (в любом порядке).</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -693,7 +693,7 @@ class ThreadSafeLruCache&lt;K, V&gt;(capacity: Int) {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 5.</strong> Реализуй <code>mergeKLists(lists: List&lt;ListNode?&gt;): ListNode?</code> — слияние <code>k</code> отсортированных связных списков в один отсортированный. Сложность — лучше наивного слияния по одному за <code>O(k·N)</code>.</p>
+            <p class="task-problem"><strong>Задача 5.</strong> Реализуйте <code>mergeKLists(lists: List&lt;ListNode?&gt;): ListNode?</code> — слияние <code>k</code> отсортированных связных списков в один отсортированный. Сложность — лучше наивного слияния по одному за <code>O(k·N)</code>.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -719,7 +719,7 @@ fun mergeKLists(lists: List&lt;ListNode?&gt;): ListNode? {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 6.</strong> Реализуй <code>quickSort(a: IntArray)</code> на месте (in-place) и объясни, как выбор pivot влияет на сложность. Покажи вход, при котором наивный pivot = последний элемент даёт <code>O(n²)</code>.</p>
+            <p class="task-problem"><strong>Задача 6.</strong> Реализуйте <code>quickSort(a: IntArray)</code> на месте (in-place) и объясните, как выбор pivot влияет на сложность. Покажите вход, при котором наивный pivot = последний элемент даёт <code>O(n²)</code>.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -741,7 +741,7 @@ fun quickSort(a: IntArray, lo: Int = 0, hi: Int = a.size - 1) {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 7.</strong> Дан набор номиналов монет <code>coins</code> и сумма <code>amount</code>. Верни минимальное число монет, которым можно набрать сумму, или <code>-1</code>, если нельзя. Монет каждого номинала — неограниченно. Вход: <code>coins = [1,2,5]</code>, <code>amount = 11</code>; выход: <code>3</code> (<code>5+5+1</code>).</p>
+            <p class="task-problem"><strong>Задача 7.</strong> Дан набор номиналов монет <code>coins</code> и сумма <code>amount</code>. Верните минимальное число монет, которым можно набрать сумму, или <code>-1</code>, если нельзя. Монет каждого номинала — неограниченно. Вход: <code>coins = [1,2,5]</code>, <code>amount = 11</code>; выход: <code>3</code> (<code>5+5+1</code>).</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -762,7 +762,7 @@ fun coinChange(coins: IntArray, amount: Int): Int {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 8.</strong> Найди длину наибольшей общей подпоследовательности (Longest Common Subsequence) двух строк. Подпоследовательность — символы в исходном порядке, но не обязательно подряд. Вход: <code>"abcde"</code>, <code>"ace"</code>; выход: <code>3</code> (<code>"ace"</code>).</p>
+            <p class="task-problem"><strong>Задача 8.</strong> Найдите длину наибольшей общей подпоследовательности (Longest Common Subsequence) двух строк. Подпоследовательность — символы в исходном порядке, но не обязательно подряд. Вход: <code>"abcde"</code>, <code>"ace"</code>; выход: <code>3</code> (<code>"ace"</code>).</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -812,7 +812,7 @@ fun numIslands(grid: Array&lt;CharArray&gt;): Int {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 10.</strong> Коко ест бананы из <code>piles</code> кучек, за <code>h</code> часов. За час она съедает до <code>speed</code> бананов из одной кучки (если в кучке меньше — доедает и ждёт следующего часа). Найди минимальную целую <code>speed</code>, при которой она успеет за <code>h</code> часов. Вход: <code>piles = [3,6,7,11]</code>, <code>h = 8</code>; выход: <code>4</code>.</p>
+            <p class="task-problem"><strong>Задача 10.</strong> Коко ест бананы из <code>piles</code> кучек, за <code>h</code> часов. За час она съедает до <code>speed</code> бананов из одной кучки (если в кучке меньше — доедает и ждёт следующего часа). Найдите минимальную целую <code>speed</code>, при которой она успеет за <code>h</code> часов. Вход: <code>piles = [3,6,7,11]</code>, <code>h = 8</code>; выход: <code>4</code>.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">

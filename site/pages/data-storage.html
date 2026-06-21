@@ -136,7 +136,7 @@ val Context.userPrefs: DataStore&lt;UserPrefs&gt; by dataStore(
 )</code></pre>
           <div class="callout tip">
             <div class="ic">💡</div>
-            <div class="bd"><strong>Транзакционность на деле.</strong> Блок <code>edit { }</code> (или <code>updateData { }</code> у Proto) выполняется атомарно: DataStore читает текущее значение, применяет твою трансформацию и сериализует результат под единой блокировкой. Параллельные записи сериализуются, что исключает гонки и «потерянные обновления», которых не избежать в SharedPreferences.</div>
+            <div class="bd"><strong>Транзакционность на деле.</strong> Блок <code>edit { }</code> (или <code>updateData { }</code> у Proto) выполняется атомарно: DataStore читает текущее значение, применяет переданную трансформацию и сериализует результат под единой блокировкой. Параллельные записи сериализуются, что исключает гонки и «потерянные обновления», которых не избежать в SharedPreferences.</div>
           </div>
 
           <p class="subhead">Миграция со SharedPreferences</p>
@@ -178,7 +178,7 @@ val securePrefs = EncryptedSharedPreferences.create(
 securePrefs.edit().putString("auth_token", token).apply()</code></pre>
           <div class="callout danger">
             <div class="ic">🛑</div>
-            <div class="bd"><strong>Jetpack Security в maintenance, EncryptedSharedPreferences deprecated.</strong> <code>EncryptedSharedPreferences</code> (и весь <code>androidx.security:security-crypto</code>) помечен deprecated начиная с <code>1.1.0-alpha07</code> (апрель 2025) — статус закреплён и в стабильной <code>1.1.0</code>. Известные проблемы: StrictMode-violations на main-потоке (синхронный init) и «keyset corruption» на некоторых OEM. Для новых проектов используй альтернативы — см. ниже.</div>
+            <div class="bd"><strong>Jetpack Security в maintenance, EncryptedSharedPreferences deprecated.</strong> <code>EncryptedSharedPreferences</code> (и весь <code>androidx.security:security-crypto</code>) помечен deprecated начиная с <code>1.1.0-alpha07</code> (апрель 2025) — статус закреплён и в стабильной <code>1.1.0</code>. Известные проблемы: StrictMode-violations на main-потоке (синхронный init) и «keyset corruption» на некоторых OEM. Для новых проектов лучше выбирать альтернативы — см. ниже.</div>
           </div>
 
           <p class="subhead">Чем заменить: шифрованный DataStore (Tink) и Keystore напрямую</p>
@@ -212,7 +212,7 @@ val db = Room.databaseBuilder(context, AppDatabase::class.java, "encrypted.db")
     .build()</code></pre>
           <div class="callout warn">
             <div class="ic">⚠️</div>
-            <div class="bd"><strong>Ключ — слабое звено.</strong> Шифрование бесполезно, если passphrase зашит в коде или лежит в обычных prefs. Храни его как ключ в Android Keystore (или производи из биометрии/PIN). И помни: шифрование защищает <em>от извлечения файла</em>, но не от рантайм-доступа на скомпрометированном (rooted) устройстве, где процесс держит ключ в памяти.</div>
+            <div class="bd"><strong>Ключ — слабое звено.</strong> Шифрование бесполезно, если passphrase зашит в коде или лежит в обычных prefs. Его хранят как ключ в Android Keystore или производят из биометрии/PIN. Важно помнить: шифрование защищает <em>от извлечения файла</em>, но не от рантайм-доступа на скомпрометированном (rooted) устройстве, где процесс держит ключ в памяти.</div>
           </div>
 
           <p class="subhead">Когда ключ Keystore внезапно «протухает»</p>
@@ -232,7 +232,7 @@ stateDiagram-v2
           </div>
           <div class="callout warn">
             <div class="ic">⚠️</div>
-            <div class="bd"><strong>Лови <code>KeyPermanentlyInvalidatedException</code>.</strong> При init <code>Cipher</code> или использовании ключа поймай это исключение, удали старый алиас (<code>keyStore.deleteEntry</code>), сгенерируй новый ключ и считай ранее зашифрованные им данные безвозвратно потерянными — пользователя придётся пере-аутентифицировать. Для аппаратной изоляции есть <code>setIsStrongBoxBacked(true)</code>: ключ живёт в отдельном Secure Element (API 28+), наличие StrongBox проверяют через <code>FEATURE_STRONGBOX_KEYSTORE</code> с фолбэком.</div>
+            <div class="bd"><strong>Ловите <code>KeyPermanentlyInvalidatedException</code>.</strong> При init <code>Cipher</code> или использовании ключа поймайте это исключение, удалите старый алиас (<code>keyStore.deleteEntry</code>), сгенерируйте новый ключ и считайте ранее зашифрованные им данные безвозвратно потерянными — пользователя придётся пере-аутентифицировать. Для аппаратной изоляции есть <code>setIsStrongBoxBacked(true)</code>: ключ живёт в отдельном Secure Element (API 28+), наличие StrongBox проверяют через <code>FEATURE_STRONGBOX_KEYSTORE</code> с фолбэком.</div>
           </div>
 
           <details class="qa"><summary>Почему ключ Android Keystore вдруг становится невалидным и как это связано с биометрией? Что делают <code>setUserAuthenticationRequired</code> и <code>setInvalidatedByBiometricEnrollment</code>? <span class="q-badge">★</span></summary>
@@ -250,7 +250,7 @@ stateDiagram-v2
             <table>
               <thead><tr><th>Аспект</th><th>Голый SQLite</th><th>Room</th></tr></thead>
               <tbody>
-                <tr><td>Проверка SQL</td><td>В рантайме (упадёт у пользователя)</td><td>Compile-time (упадёт у тебя)</td></tr>
+                <tr><td>Проверка SQL</td><td>В рантайме (упадёт у пользователя)</td><td>Compile-time (упадёт у разработчика)</td></tr>
                 <tr><td>Маппинг строк</td><td>Вручную через <code>Cursor</code></td><td>Автоматически в объекты</td></tr>
                 <tr><td>Реактивность</td><td>Нет</td><td><code>Flow</code>/<code>LiveData</code>-запросы</td></tr>
                 <tr><td>Корутины</td><td>Нет</td><td><code>suspend</code>-функции в DAO</td></tr>
@@ -337,7 +337,7 @@ Room.databaseBuilder(context, AppDatabase::class.java, "app.db")
           </div>
 
           <p class="subhead">FTS, отношения и тестирование</p>
-          <p>Для полнотекстового поиска — <code>@Fts4</code>-сущности (виртуальная таблица FTS, поиск по <code>MATCH</code> вместо <code>LIKE %...%</code>). Связи описывают через <code>@Relation</code>/<code>@Embedded</code> и читают в <code>@Transaction</code>-методах. Миграции тестируют через <code>MigrationTestHelper</code>: создаёшь БД на старой версии, вставляешь данные сырым SQL, открываешь с новой версией и валидируешь, что данные на месте и схема совпала.</p>
+          <p>Для полнотекстового поиска — <code>@Fts4</code>-сущности (виртуальная таблица FTS, поиск по <code>MATCH</code> вместо <code>LIKE %...%</code>). Связи описывают через <code>@Relation</code>/<code>@Embedded</code> и читают в <code>@Transaction</code>-методах. Миграции тестируют через <code>MigrationTestHelper</code>: создают БД на старой версии, вставляют данные сырым SQL, открывают с новой версией и валидируют, что данные на месте и схема совпала.</p>
           <div class="code-label">MigrationTest.kt</div>
 <pre><code class="language-kotlin">@get:Rule val helper = MigrationTestHelper(
     InstrumentationRegistry.getInstrumentation(),
@@ -593,7 +593,7 @@ flowchart LR
           <p>Android <strong>Auto Backup</strong> по умолчанию (для targetSdk ≥ 23) сохраняет до 25 МБ данных приложения (включая SharedPreferences, файлы, БД) в облако пользователя и восстанавливает при переустановке. На собесе важно знать: бэкап может «утащить» чувствительные данные — управляй этим через <code>android:fullBackupContent</code>/<code>android:dataExtractionRules</code> (Android 12+), исключая токены и шифрованные хранилища, либо отключай <code>android:allowBackup="false"</code> для секретов.</p>
           <div class="callout tip">
             <div class="ic">💡</div>
-            <div class="bd"><strong>Принцип «защита в покое».</strong> Любые секреты — только в шифрованном виде с ключом из Keystore; индексы и БД с PII — через SQLCipher; в правилах бэкапа явно исключай чувствительные файлы. Шифрование защищает извлечённый файл, но не рантайм на rooted-устройстве — поэтому не храни больше, чем нужно (data minimization).</div>
+            <div class="bd"><strong>Принцип «защита в покое».</strong> Любые секреты — только в шифрованном виде с ключом из Keystore; индексы и БД с PII — через SQLCipher; в правилах бэкапа явно исключают чувствительные файлы. Шифрование защищает извлечённый файл, но не рантайм на rooted-устройстве — поэтому не стоит хранить больше, чем нужно (data minimization).</div>
           </div>
 
           <p class="subhead">Auto Backup vs Key/Value Backup и перенос между устройствами</p>
@@ -610,7 +610,7 @@ flowchart LR
 &lt;/data-extraction-rules&gt;</code></pre>
           <div class="callout warn">
             <div class="ic">⚠️</div>
-            <div class="bd"><strong>Ключи Keystore не переносятся.</strong> Аппаратные ключи привязаны к железу и при переносе на новое устройство теряются — а значит, зашифрованные ими данные на новом устройстве не расшифровать. Вывод: чувствительные файлы исключай из <code>cloud-backup</code>, а зашифрованные данные проектируй так, чтобы их можно было регенерировать (повторный логин, повторная синхронизация). <code>android:allowBackup="false"</code> — грубый выключатель сразу для всего.</div>
+            <div class="bd"><strong>Ключи Keystore не переносятся.</strong> Аппаратные ключи привязаны к железу и при переносе на новое устройство теряются — а значит, зашифрованные ими данные на новом устройстве не расшифровать. Вывод: чувствительные файлы исключают из <code>cloud-backup</code>, а зашифрованные данные проектируют так, чтобы их можно было регенерировать (повторный логин, повторная синхронизация). <code>android:allowBackup="false"</code> — грубый выключатель сразу для всего.</div>
           </div>
 
           <details class="qa"><summary>Чем Auto Backup отличается от Key/Value Backup и почему важно различать D2D-перенос и облачный бэкап при обращении с секретами? <span class="q-badge">★</span></summary>
@@ -661,7 +661,7 @@ flowchart LR
 
           <details class="qa">
             <summary>Как зашифровать SQLite/Room без переписывания запросов? <span class="q-badge">Senior</span></summary>
-            <div class="ans"><p>Через <strong>SQLCipher</strong> — он прозрачно шифрует весь файл БД (AES-256) по парольной фразе. В Room подключается одной строкой: создаёшь <code>SupportFactory(passphrase)</code> и передаёшь в <code>openHelperFactory()</code>. DAO, сущности и запросы не меняются. Критично: passphrase нельзя зашивать в коде или класть в обычные prefs — храни его как ключ в Keystore (или производи из биометрии/PIN). Шифрование защищает от извлечения файла, но не от рантайм-доступа на rooted-устройстве.</p></div>
+            <div class="ans"><p>Через <strong>SQLCipher</strong> — он прозрачно шифрует весь файл БД (AES-256) по парольной фразе. В Room подключается одной строкой: создаётся <code>SupportFactory(passphrase)</code> и передаётся в <code>openHelperFactory()</code>. DAO, сущности и запросы не меняются. Критично: passphrase нельзя зашивать в коде или класть в обычные prefs — его хранят как ключ в Keystore или производят из биометрии/PIN. Шифрование защищает от извлечения файла, но не от рантайм-доступа на rooted-устройстве.</p></div>
           </details>
 
           <details class="qa">
@@ -676,7 +676,7 @@ flowchart LR
 
           <details class="qa">
             <summary>Зачем FileProvider и почему нельзя отдать file:// напрямую? <span class="q-badge">Middle</span></summary>
-            <div class="ans"><p>С Android 7 (API 24) передача <code>file://</code>-URI другому приложению кидает <code>FileUriExposedException</code>: чужой процесс не имеет прав на твою песочницу, а голый путь — это утечка деталей файловой системы. <code>FileProvider</code> (наследник <code>ContentProvider</code>) выдаёт <code>content://</code>-URI и через флаг <code>FLAG_GRANT_READ_URI_PERMISSION</code> даёт получателю временный доступ ровно к этому файлу. Безопасный способ делиться файлами с камерой, «Поделиться» и т.п.</p></div>
+            <div class="ans"><p>С Android 7 (API 24) передача <code>file://</code>-URI другому приложению кидает <code>FileUriExposedException</code>: чужой процесс не имеет прав на песочницу приложения, а голый путь — это утечка деталей файловой системы. <code>FileProvider</code> (наследник <code>ContentProvider</code>) выдаёт <code>content://</code>-URI и через флаг <code>FLAG_GRANT_READ_URI_PERMISSION</code> даёт получателю временный доступ ровно к этому файлу. Безопасный способ делиться файлами с камерой, «Поделиться» и т.п.</p></div>
           </details>
 
           <details class="qa">
@@ -710,7 +710,7 @@ flowchart LR
           <h2>Задачи</h2>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 1.</strong> У тебя есть Room-база v1 с таблицей <code>notes(id INTEGER, text TEXT)</code>. В v2 нужно добавить колонку <code>created_at INTEGER NOT NULL</code> с дефолтом 0 и создать индекс по ней. Напиши объект <code>Migration(1, 2)</code> и подключи его в базу. После этого в тесте через <code>MigrationTestHelper</code> проверь, что строка, вставленная в v1, не потерялась.</p>
+            <p class="task-problem"><strong>Задача 1.</strong> У вас есть Room-база v1 с таблицей <code>notes(id INTEGER, text TEXT)</code>. В v2 нужно добавить колонку <code>created_at INTEGER NOT NULL</code> с дефолтом 0 и создать индекс по ней. Напишите объект <code>Migration(1, 2)</code> и подключите его в базу. После этого в тесте через <code>MigrationTestHelper</code> проверьте, что строка, вставленная в v1, не потерялась.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -762,7 +762,7 @@ val helper = MigrationTestHelper(
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 2.</strong> В коде ниже есть три ошибки, из-за которых либо текут данные, либо возникает ANR, либо приложение падает на Android 7+. Найди и исправь каждую.</p>
+            <p class="task-problem"><strong>Задача 2.</strong> В коде ниже есть три ошибки, из-за которых либо текут данные, либо возникает ANR, либо приложение падает на Android 7+. Найдите и исправьте каждую.</p>
 <pre><code class="language-kotlin">// AuthManager.kt
 class AuthManager(private val context: Context) {
 
@@ -831,7 +831,7 @@ class AuthManager(private val context: Context) {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 3.</strong> Реализуй DAO-метод, который <strong>атомарно</strong> заменяет весь список задач в таблице <code>todos</code>: удаляет старые и вставляет новые так, чтобы при сбое посередине база не осталась в промежуточном состоянии (ни пустой, ни с половиной строк). Также добавь реактивный запрос, который отдаёт список незавершённых задач как <code>Flow</code>.</p>
+            <p class="task-problem"><strong>Задача 3.</strong> Реализуйте DAO-метод, который <strong>атомарно</strong> заменяет весь список задач в таблице <code>todos</code>: удаляет старые и вставляет новые так, чтобы при сбое посередине база не осталась в промежуточном состоянии (ни пустой, ни с половиной строк). Также добавьте реактивный запрос, который отдаёт список незавершённых задач как <code>Flow</code>.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -869,7 +869,7 @@ interface TodoDao {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 4.</strong> Есть реактивный запрос <code>val items: Flow&lt;List&lt;Item&gt;&gt; = dao.observeAll()</code>, и UI дёргается лишний раз: список перерисовывается даже при изменении поля, которое не относится к выбранным строкам. Объясни причину и приведи минимальную правку, чтобы лишних перерисовок не было.</p>
+            <p class="task-problem"><strong>Задача 4.</strong> Есть реактивный запрос <code>val items: Flow&lt;List&lt;Item&gt;&gt; = dao.observeAll()</code>, и UI дёргается лишний раз: список перерисовывается даже при изменении поля, которое не относится к выбранным строкам. Объясните причину и приведите минимальную правку, чтобы лишних перерисовок не было.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -891,7 +891,7 @@ data class ItemSummary(val id: Long, val title: String)</code></pre>
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 5.</strong> Опиши <code>@Entity Order</code> со связью один-ко-многим к <code>OrderItem</code> и DAO-метод, который атомарно и согласованно читает заказ вместе со всеми его позициями. Объясни, почему здесь нужен <code>@Transaction</code> даже без записи.</p>
+            <p class="task-problem"><strong>Задача 5.</strong> Опишите <code>@Entity Order</code> со связью один-ко-многим к <code>OrderItem</code> и DAO-метод, который атомарно и согласованно читает заказ вместе со всеми его позициями. Объясните, почему здесь нужен <code>@Transaction</code> даже без записи.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -918,7 +918,7 @@ data class OrderWithItems(
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 6.</strong> Ключ Android Keystore с <code>setUserAuthenticationRequired(true)</code> используется для шифрования токена. После того как пользователь добавил новый отпечаток пальца, расшифровка падает с <code>KeyPermanentlyInvalidatedException</code>. Объясни причину и напиши корректную обработку.</p>
+            <p class="task-problem"><strong>Задача 6.</strong> Ключ Android Keystore с <code>setUserAuthenticationRequired(true)</code> используется для шифрования токена. После того как пользователь добавил новый отпечаток пальца, расшифровка падает с <code>KeyPermanentlyInvalidatedException</code>. Объясните причину и напишите корректную обработку.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">

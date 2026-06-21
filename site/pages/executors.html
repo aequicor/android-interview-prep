@@ -454,7 +454,7 @@ io.execute {
           <h2>Задачи</h2>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 1.</strong> Реализуй пул потоков, который принимает не более 100 задач в очередь, запускает до 4 потоков, а при перегрузке замедляет отправителя вместо выброса исключения. Продемонстрируй конфигурацию и объясни, почему <code>newFixedThreadPool(4)</code> здесь не подходит.</p>
+            <p class="task-problem"><strong>Задача 1.</strong> Реализуйте пул потоков, который принимает не более 100 задач в очередь, запускает до 4 потоков, а при перегрузке замедляет отправителя вместо выброса исключения. Продемонстрируйте конфигурацию и объясните, почему <code>newFixedThreadPool(4)</code> здесь не подходит.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -484,7 +484,7 @@ fun main() {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 2.</strong> Напиши код с <code>ScheduledExecutorService</code>, который раз в 5 секунд опрашивает некий ресурс. Внутри периодической задачи может выброситься исключение. Покажи, как не дать таймеру «тихо умереть», и поясни разницу между <code>scheduleAtFixedRate</code> и <code>scheduleWithFixedDelay</code> для задачи длиннее интервала.</p>
+            <p class="task-problem"><strong>Задача 2.</strong> Напишите код с <code>ScheduledExecutorService</code>, который раз в 5 секунд опрашивает некий ресурс. Внутри периодической задачи может выброситься исключение. Покажите, как не дать таймеру «тихо умереть», и поясните разницу между <code>scheduleAtFixedRate</code> и <code>scheduleWithFixedDelay</code> для задачи длиннее интервала.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -516,7 +516,7 @@ fun pollResource() {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 3.</strong> Дан список из N URL-адресов. Скачай содержимое каждого параллельно в пуле из 8 потоков, дождись всех результатов и верни список строк в исходном порядке. Обработай ситуацию, когда один из запросов упал с исключением: остальные должны завершиться, а в результирующем списке на месте сбойного URL должна стоять строка <code>"ERROR"</code>.</p>
+            <p class="task-problem"><strong>Задача 3.</strong> Дан список из N URL-адресов. Скачайте содержимое каждого параллельно в пуле из 8 потоков, дождитесь всех результатов и верните список строк в исходном порядке. Обработайте ситуацию, когда один из запросов упал с исключением: остальные должны завершиться, а в результирующем списке на месте сбойного URL должна стоять строка <code>"ERROR"</code>.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -560,7 +560,7 @@ fun main() {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 4.</strong> Реализуй функцию <code>runWithTimeout(task: () -&gt; T, timeoutMs: Long): T?</code>, которая выполняет блокирующую задачу в общем пуле и возвращает её результат, но если та не уложилась в <code>timeoutMs</code> — возвращает <code>null</code> и отменяет задачу, не давая ей утечь. Корректно обработай <code>ExecutionException</code>, <code>TimeoutException</code> и <code>InterruptedException</code>.</p>
+            <p class="task-problem"><strong>Задача 4.</strong> Реализуйте функцию <code>runWithTimeout(task: () -&gt; T, timeoutMs: Long): T?</code>, которая выполняет блокирующую задачу в общем пуле и возвращает её результат, но если та не уложилась в <code>timeoutMs</code> — возвращает <code>null</code> и отменяет задачу, не давая ей утечь. Корректно обработайте <code>ExecutionException</code>, <code>TimeoutException</code> и <code>InterruptedException</code>.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -589,7 +589,7 @@ fun &lt;T&gt; runWithTimeout(task: () -&gt; T, timeoutMs: Long): T? {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 5.</strong> Напиши простой пул потоков с нуля (без <code>ThreadPoolExecutor</code>): N worker-потоков, потокобезопасная очередь, метод <code>submit(Runnable)</code> и graceful <code>shutdown()</code>, дожидающийся доисполнения уже принятых задач. Объясни, как воркеры засыпают на пустой очереди без busy-wait.</p>
+            <p class="task-problem"><strong>Задача 5.</strong> Напишите простой пул потоков с нуля (без <code>ThreadPoolExecutor</code>): N worker-потоков, потокобезопасная очередь, метод <code>submit(Runnable)</code> и graceful <code>shutdown()</code>, дожидающийся доисполнения уже принятых задач. Объясните, как воркеры засыпают на пустой очереди без busy-wait.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">

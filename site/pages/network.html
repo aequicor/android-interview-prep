@@ -29,7 +29,7 @@
         <header class="page-head">
           <span class="eyebrow">Данные и сеть</span>
           <h1>Сеть</h1>
-          <p class="lead">HTTP (HyperText Transfer Protocol — протокол передачи гипертекста) и его семантика, TLS/HTTPS (Transport Layer Security и защищённый HTTP — шифрованное соединение), рукопожатие и доверие к сертификатам, стек OkHttp + Retrofit (HTTP-клиент и клиент API, программного интерфейса), обработка сетевых ошибок и сериализация. Один из самых частых блоков: интервьюер проверяет, понимаешь ли ты, что происходит «под капотом» между нажатием кнопки и появлением данных на экране.</p>
+          <p class="lead">HTTP (HyperText Transfer Protocol — протокол передачи гипертекста) и его семантика, TLS/HTTPS (Transport Layer Security и защищённый HTTP — шифрованное соединение), рукопожатие и доверие к сертификатам, стек OkHttp + Retrofit (HTTP-клиент и клиент API, программного интерфейса), обработка сетевых ошибок и сериализация. Один из самых частых блоков: интервьюер проверяет, понимаете ли вы, что происходит «под капотом» между нажатием кнопки и появлением данных на экране.</p>
           <div class="meta">
             <span class="tag lvl-mid">Middle</span>
             <span class="tag lvl-sen">Senior</span>
@@ -69,7 +69,7 @@
           </div>
           <div class="callout tip">
             <div class="ic">💡</div>
-            <div class="bd"><strong>401 vs 403.</strong> <code>401 Unauthorized</code> — «я не знаю, кто ты» (нет/протух токен → обнови и повтори). <code>403 Forbidden</code> — «я знаю, кто ты, но тебе сюда нельзя» (повтор бессмыслен). Разное поведение на клиенте.</div>
+            <div class="bd"><strong>401 vs 403.</strong> <code>401 Unauthorized</code> — «клиент не предъявил действительные учётные данные» (нет/протух токен → обновить и повторить). <code>403 Forbidden</code> — «клиент известен, но прав не хватает» (повтор бессмыслен). Разное поведение на клиенте.</div>
           </div>
 
           <p class="subhead">Кэширование: ETag и Cache-Control</p>
@@ -167,7 +167,7 @@ Inter -.подписывает.-> Leaf
               </tbody>
             </table>
           </div>
-          <p>OkHttp <code>CertificatePinner</code> на самом деле пинит именно <strong>SPKI-хэш</strong> (base64 SHA-256), несмотря на имя класса. Обязательно держи <strong>backup-пин</strong> (резервный ключ): иначе при экстренной смене ключа приложение потеряет связь до выката апдейта.</p>
+          <p>OkHttp <code>CertificatePinner</code> на самом деле пинит именно <strong>SPKI-хэш</strong> (base64 SHA-256), несмотря на имя класса. Обязательно нужен <strong>backup-пин</strong> (резервный ключ): иначе при экстренной смене ключа приложение потеряет связь до выката апдейта.</p>
 <pre><code class="language-kotlin">val pinner = CertificatePinner.Builder()
     .add("api.example.com", "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
     .add("api.example.com", "sha256/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=") // backup
@@ -291,7 +291,7 @@ val api = retrofit.create&lt;UserApi&gt;()</code></pre>
           <p>Голые исключения в data-слое неудобны. Два пути: (1) кастомный <strong>CallAdapter</strong>, чтобы интерфейс возвращал <code>ApiResult&lt;T&gt;</code> прямо из Retrofit; (2) обернуть вызов в репозитории через <code>runCatching</code>/<code>try-catch</code> и маппить в доменный sealed-тип. Второй проще и переносим между источниками — его и покажем в следующем разделе.</p>
           <div class="callout tip">
             <div class="ic">💡</div>
-            <div class="bd"><strong>DTO ≠ domain.</strong> Возвращай из API <code>*Dto</code> (поля как в JSON), а в репозитории маппь в доменную модель. Так контракт сервера не протекает в UI, а смена формата не ломает весь код.</div>
+            <div class="bd"><strong>DTO ≠ domain.</strong> Из API возвращайте <code>*Dto</code> (поля как в JSON), а в репозитории маппьте в доменную модель. Так контракт сервера не протекает в UI, а смена формата не ломает весь код.</div>
           </div>
 
           <details class="qa"><summary>Retrofit-метод объявлен suspend и вызывается из viewModelScope. Корутину отменяют (ушли с экрана). Что физически происходит с уже улетевшим HTTP-запросом и на чём именно подвешен механизм отмены? <span class="q-badge">★</span></summary><div class="ans"><p>Для suspend-функции Retrofit под капотом адаптирует <code>Call</code> в корутину через <code>suspendCancellableCoroutine</code> и регистрирует <code>invokeOnCancellation { call.cancel() }</code>. Когда родительский scope отменяет корутину, бросается <code>CancellationException</code>, отрабатывает этот колбэк, OkHttp вызывает <code>Call.cancel()</code> — сокет закрывается, текущий блокирующий ввод-вывод выбрасывает <code>IOException</code> внутри OkHttp. То есть отмена не «магическая»: запрос реально рвётся на транспортном уровне, а не просто игнорируется результат.</p><p>Нюанс, на котором ловят: сервер мог уже получить и обработать запрос (создать заказ) <em>до</em> разрыва. Отмена на клиенте не откатывает серверный эффект — для не-идемпотентных операций это не страховка. И ещё: <code>CancellationException</code> нельзя глотать в <code>safeApiCall</code>, иначе <code>ensureActive</code> и структурированный параллелизм сломаются.</p></div></details>
@@ -327,7 +327,7 @@ val api = retrofit.create&lt;UserApi&gt;()</code></pre>
     }</code></pre>
           <div class="callout danger">
             <div class="ic">🛑</div>
-            <div class="bd"><strong>Никогда не глотай <code>CancellationException</code>.</strong> При отмене корутины (ушли с экрана) исключение должно пробрасываться, иначе сломается структурированный параллелизм и корутина «зависнет». Лови его <em>первым</em> и делай <code>throw</code>.</div>
+            <div class="bd"><strong>Никогда не глотайте <code>CancellationException</code>.</strong> При отмене корутины (ушли с экрана) исключение должно пробрасываться, иначе сломается структурированный параллелизм и корутина «зависнет». Ловите его <em>первым</em> и делайте <code>throw</code>.</div>
           </div>
 
           <p class="subhead">Безопасный вызов в репозитории</p>
@@ -432,7 +432,7 @@ val json = Json {
             <div class="bd"><strong>Главный риск Gson.</strong> Он создаёт объект через <code>Unsafe</code>, минуя конструктор Kotlin: non-null поле может оказаться <code>null</code>, default-значение проигнорируется — и приложение упадёт с NPE в неожиданном месте. На new-проектах берут kotlinx.serialization или Moshi.</div>
           </div>
 
-          <details class="qa"><summary>В kotlinx.serialization у поля есть значение по умолчанию, и сервер это поле не прислал. Поле подставится из default. Но если поле пришло как явный null, а тип non-null с default — будет ли использован default? От чего это зависит? <span class="q-badge">★</span></summary><div class="ans"><p>Это два разных случая, и путать их — классическая ошибка. Если ключа в JSON <em>вообще нет</em> — kotlinx.serialization берёт значение по умолчанию из конструктора (декодер опирается на дефолты, и в отличие от Gson их нельзя выключить). А вот если ключ <em>присутствует</em>, но значение явный <code>null</code>, а свойство объявлено non-null с default — по умолчанию это ошибка десериализации (<code>MissingFieldException</code> / несоответствие типа), и default <strong>не</strong> применяется.</p><p>Чтобы <code>null</code> трактовался как «возьми default», нужен флаг <code>Json { coerceInputValues = true }</code> — он приводит недопустимый <code>null</code> (и неизвестные значения enum) к значению по умолчанию. Отсюда разделение: <code>ignoreUnknownKeys</code> спасает от лишних полей сервера, <code>coerceInputValues</code> — от «грязных» <code>null</code>'ов. Разные настройки под разные проблемы.</p></div></details>
+          <details class="qa"><summary>В kotlinx.serialization у поля есть значение по умолчанию, и сервер это поле не прислал. Поле подставится из default. Но если поле пришло как явный null, а тип non-null с default — будет ли использован default? От чего это зависит? <span class="q-badge">★</span></summary><div class="ans"><p>Это два разных случая, и путать их — классическая ошибка. Если ключа в JSON <em>вообще нет</em> — kotlinx.serialization берёт значение по умолчанию из конструктора (декодер опирается на дефолты, и в отличие от Gson их нельзя выключить). А вот если ключ <em>присутствует</em>, но значение явный <code>null</code>, а свойство объявлено non-null с default — по умолчанию это ошибка десериализации (<code>MissingFieldException</code> / несоответствие типа), и default <strong>не</strong> применяется.</p><p>Чтобы <code>null</code> трактовался как «использовать default», нужен флаг <code>Json { coerceInputValues = true }</code> — он приводит недопустимый <code>null</code> (и неизвестные значения enum) к значению по умолчанию. Отсюда разделение: <code>ignoreUnknownKeys</code> спасает от лишних полей сервера, <code>coerceInputValues</code> — от «грязных» <code>null</code>'ов. Разные настройки под разные проблемы.</p></div></details>
         </section>
 
         <section class="section" id="websockets">
@@ -542,7 +542,7 @@ val client = OkHttpClient.Builder()
             <div class="bd"><strong>Один кэш на клиент.</strong> <code>Cache</code> потокобезопасен, но один и тот же каталог нельзя делить между несколькими <code>OkHttpClient</code> — они затрут данные друг друга. Диагностика хита/мисса — через <code>response.cacheResponse</code> и <code>response.networkResponse</code>: хит = есть cacheResponse и нет networkResponse.</div>
           </div>
 
-          <details class="qa"><summary>Настроили Cache, сервер шлёт Cache-Control: max-age=60, но в офлайне OkHttp всё равно отдаёт ошибку вместо кэша. Почему, и что добавить? <span class="q-badge">★</span></summary><div class="ans"><p>Обычный <code>max-age=60</code> делает ответ «свежим» только 60 секунд. Через минуту запись в кэше есть, но считается устаревшей, и без сети OkHttp не имеет права её отдать — он попытается сходить на сервер, упрётся в отсутствие сети и вернёт <code>IOException</code>. Кэш не пустой, просто «протух» по правилам.</p><p>Чинит это application-интерсептор, который офлайн переписывает запрос на <code>CacheControl</code> с <code>onlyIfCached()</code> и <code>maxStale(...)</code>: «возьми из кэша, и мне ок устаревшее на N дней». Тогда OkHttp отдаёт старую запись вместо ошибки. Важно вешать это именно как application-интерсептор (он видит запрос до решения о сети) и проверять наличие сети самому — кэш сам по себе про офлайн-политику ничего не знает.</p></div></details>
+          <details class="qa"><summary>Настроили Cache, сервер шлёт Cache-Control: max-age=60, но в офлайне OkHttp всё равно отдаёт ошибку вместо кэша. Почему, и что добавить? <span class="q-badge">★</span></summary><div class="ans"><p>Обычный <code>max-age=60</code> делает ответ «свежим» только 60 секунд. Через минуту запись в кэше есть, но считается устаревшей, и без сети OkHttp не имеет права её отдать — он попытается сходить на сервер, упрётся в отсутствие сети и вернёт <code>IOException</code>. Кэш не пустой, просто «протух» по правилам.</p><p>Чинит это application-интерсептор, который офлайн переписывает запрос на <code>CacheControl</code> с <code>onlyIfCached()</code> и <code>maxStale(...)</code>: можно брать из кэша, даже если запись устарела на N дней. Тогда OkHttp отдаёт старую запись вместо ошибки. Важно вешать это именно как application-интерсептор (он видит запрос до решения о сети) и проверять наличие сети самому — кэш сам по себе про офлайн-политику ничего не знает.</p></div></details>
         </section>
 
         <section class="section" id="nsc">
@@ -726,7 +726,7 @@ imageView.load(url) {
           <h2>Задачи</h2>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 1.</strong> Напиши <code>Interceptor</code> для OkHttp, который при получении <code>401</code> однократно обновляет токен через <code>TokenRefresher.refresh(): String?</code> и повторяет запрос с новым токеном. Если <code>refresh()</code> вернул <code>null</code> — просто отдай оригинальный ответ 401. Параллельные запросы не должны вызывать <code>refresh()</code> несколько раз одновременно.</p>
+            <p class="task-problem"><strong>Задача 1.</strong> Напишите <code>Interceptor</code> для OkHttp, который при получении <code>401</code> однократно обновляет токен через <code>TokenRefresher.refresh(): String?</code> и повторяет запрос с новым токеном. Если <code>refresh()</code> вернул <code>null</code> — просто отдайте оригинальный ответ 401. Параллельные запросы не должны вызывать <code>refresh()</code> несколько раз одновременно.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -769,7 +769,7 @@ imageView.load(url) {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 2.</strong> Реализуй функцию <code>fetchWithRetry</code> для suspend-вызова Retrofit. Функция должна повторять запрос при <code>IOException</code> или HTTP-коде <code>429</code>/<code>5xx</code> — но не более 3 попыток. Между попытками — экспоненциальный backoff: 1 с → 2 с → 4 с. При любом другом HTTP-коде или при <code>CancellationException</code> — не ретраить, пробросить как есть.</p>
+            <p class="task-problem"><strong>Задача 2.</strong> Реализуйте функцию <code>fetchWithRetry</code> для suspend-вызова Retrofit. Функция должна повторять запрос при <code>IOException</code> или HTTP-коде <code>429</code>/<code>5xx</code> — но не более 3 попыток. Между попытками — экспоненциальный backoff: 1 с → 2 с → 4 с. При любом другом HTTP-коде или при <code>CancellationException</code> — не ретраить, пробросить как есть.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -806,7 +806,7 @@ imageView.load(url) {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 3.</strong> Определи интерфейс Retrofit, который умеет: (а) получить пользователя по id с возвратом <code>Response&lt;UserDto&gt;</code>; (б) создать пользователя через POST с телом <code>CreateUserRequest</code> и заголовком <code>X-Idempotency-Key</code>; (в) обновить частично профиль через PATCH с query-параметром <code>dryRun: Boolean = false</code>. Добавь настройку <code>Retrofit</code> с <code>kotlinx.serialization</code>-конвертером. Укажи, почему возврат <code>Response&lt;T&gt;</code> предпочтительнее голого <code>T</code> при обработке ошибок.</p>
+            <p class="task-problem"><strong>Задача 3.</strong> Определите интерфейс Retrofit, который умеет: (а) получить пользователя по id с возвратом <code>Response&lt;UserDto&gt;</code>; (б) создать пользователя через POST с телом <code>CreateUserRequest</code> и заголовком <code>X-Idempotency-Key</code>; (в) обновить частично профиль через PATCH с query-параметром <code>dryRun: Boolean = false</code>. Добавьте настройку <code>Retrofit</code> с <code>kotlinx.serialization</code>-конвертером. Укажите, почему возврат <code>Response&lt;T&gt;</code> предпочтительнее голого <code>T</code> при обработке ошибок.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -857,7 +857,7 @@ val api = retrofit.create(UserApi::class.java)</code></pre>
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 4.</strong> Реализуй OkHttp <code>Authenticator</code> для рефреша access-токена на <code>401</code>, устойчивый к гонке: при одновременном 401 от нескольких параллельных запросов <code>refresh()</code> должен вызваться ровно один раз, остальные — подхватить уже обновлённый токен. Если refresh не удался — верни <code>null</code> (сдаться). Защити от бесконечного цикла повторов.</p>
+            <p class="task-problem"><strong>Задача 4.</strong> Реализуйте OkHttp <code>Authenticator</code> для рефреша access-токена на <code>401</code>, устойчивый к гонке: при одновременном 401 от нескольких параллельных запросов <code>refresh()</code> должен вызваться ровно один раз, остальные — подхватить уже обновлённый токен. Если refresh не удался — верните <code>null</code> (сдаться). Защитите от бесконечного цикла повторов.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -904,7 +904,7 @@ val api = retrofit.create(UserApi::class.java)</code></pre>
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 5.</strong> Напиши на OkHttp WebSocket-клиент с авто-реконнектом: при <code>onFailure</code> или ненормальном закрытии (код ≠ 1000) переподключаться с экспоненциальным backoff (1с → 2с → 4с → … → макс 30с) и джиттером; при успешном <code>onOpen</code> счётчик backoff сбрасывается. При <code>close(1000)</code> — не реконнектить. Отдавай входящие сообщения через <code>Flow</code>.</p>
+            <p class="task-problem"><strong>Задача 5.</strong> Напишите на OkHttp WebSocket-клиент с авто-реконнектом: при <code>onFailure</code> или ненормальном закрытии (код ≠ 1000) переподключаться с экспоненциальным backoff (1с → 2с → 4с → … → макс 30с) и джиттером; при успешном <code>onOpen</code> счётчик backoff сбрасывается. При <code>close(1000)</code> — не реконнектить. Отдавайте входящие сообщения через <code>Flow</code>.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">

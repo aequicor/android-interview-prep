@@ -549,7 +549,7 @@ fun AppNavHost(navController: NavHostController) {
           <p>Multi-activity всё ещё оправдан для по-настоящему независимых частей: отдельный флоу логина, экран-«запуск по интенту» извне, изоляция тяжёлого legacy. Подвох на собесе: при single-activity конфиг-изменения переживает не Activity, а ViewModel и back stack — поэтому скоупы (например <code>ActivityRetained</code>) и записи back stack становятся центральными.</p>
 
           <p class="subhead">Scoping ViewModel на back stack entry</p>
-          <p>Каждая запись стека — <code>NavBackStackEntry</code> — сама является <code>ViewModelStoreOwner</code>. По умолчанию <code>hiltViewModel()</code> в <code>composable&lt;Route&gt;</code> скоупит ViewModel на запись этого destination: создаётся при входе, очищается (<code>onCleared</code>) при попе из стека. Чтобы ViewModel пережил несколько экранов одного флоу (мастер-визард), его скоупят на <em>родительский граф</em>:</p>
+          <p>Каждая запись стека — <code>NavBackStackEntry</code> — сама выступает <code>ViewModelStoreOwner</code>. По умолчанию <code>hiltViewModel()</code> в <code>composable&lt;Route&gt;</code> скоупит ViewModel на запись этого destination: создаётся при входе, очищается (<code>onCleared</code>) при попе из стека. Чтобы ViewModel пережил несколько экранов одного флоу (мастер-визард), его скоупят на <em>родительский граф</em>:</p>
           <div class="code-label">Расшаренный ViewModel на nested graph</div>
 <pre><code class="language-kotlin">@Composable
 fun WizardStep(navController: NavHostController) {
@@ -756,7 +756,7 @@ sealed interface DomainError {            // технические ошибки
           </details>
 
           <details class="qa">
-            <summary>Объясни правило зависимостей в Clean Architecture. <span class="q-badge">Middle+</span></summary>
+            <summary>Объясните правило зависимостей в Clean Architecture. <span class="q-badge">Middle+</span></summary>
             <div class="ans"><p>Зависимости направлены только внутрь — к более стабильной политике. presentation зависит от domain, data зависит от domain, но domain не знает ни о ком. Ключ — DIP: <code>domain</code> объявляет интерфейс <code>Repository</code>, а <code>data</code> его реализует; стрелка зависимости от реализации идёт к абстракции в домене. Поэтому domain — чистый Kotlin без Android/Retrofit/Room, его легко тестировать и переиспользовать. Каждый слой имеет свои модели (DTO/Entity/Domain/Ui) и мапперы между ними, чтобы изменения формата не протекали наружу.</p></div>
           </details>
 

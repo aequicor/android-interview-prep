@@ -39,7 +39,7 @@
 
         <section class="section" id="tools">
           <h2>Инструменты: что чем смотреть</h2>
-          <p>Ключ к ответу — соответствие «симптом → инструмент». Держи эту таблицу в голове.</p>
+          <p>Ключ к ответу — соответствие «симптом → инструмент». Эту таблицу стоит держать в голове.</p>
           <div class="table-wrap">
             <table>
               <thead><tr><th>Инструмент</th><th>Что показывает</th><th>Когда применять</th></tr></thead>
@@ -260,7 +260,7 @@ class StartupBenchmark {
 }</code></pre>
           <div class="callout tip">
             <div class="ic">💡</div>
-            <div class="bd"><strong>Связка для собеса.</strong> Macrobenchmark <em>измеряет</em> старт, Baseline Profile <em>ускоряет</em> его, а App Startup + отложенная инициализация <em>убирают лишнюю работу</em> с критического пути. Назвав все три вместе, ты показываешь системное понимание.</div>
+            <div class="bd"><strong>Связка для собеса.</strong> Macrobenchmark <em>измеряет</em> старт, Baseline Profile <em>ускоряет</em> его, а App Startup + отложенная инициализация <em>убирают лишнюю работу</em> с критического пути. Назвав все три вместе, вы показываете системное понимание.</div>
           </div>
           <details class="qa">
             <summary>Почему Baseline Profile ускоряет старт уже с первого запуска, а без него первые запуски медленные? <span class="q-badge">★</span></summary>
@@ -293,7 +293,7 @@ sequenceDiagram
           </div>
           <p class="subhead">Частые причины jank и фиксы</p>
           <ul>
-            <li><strong>Overdraw</strong> — один пиксель красится несколько раз (вложенные фоны). Включи <em>Debug GPU Overdraw</em>: цель — минимум красного. Убирай лишние <code>background</code>, плоскую иерархию.</li>
+            <li><strong>Overdraw</strong> — один пиксель красится несколько раз (вложенные фоны). Включите <em>Debug GPU Overdraw</em>: цель — минимум красного. Уберите лишние <code>background</code> и держите иерархию плоской.</li>
             <li><strong>Работа на main thread в момент кадра</strong> — парсинг, БД, аллокации в <code>onBindViewHolder</code>/composable. Выноси в фон, кэшируй.</li>
             <li><strong>RecyclerView</strong> — стабильные <code>id</code>, <code>DiffUtil</code> вместо <code>notifyDataSetChanged()</code>, лёгкий <code>onBindViewHolder</code>, нет вложенных скроллов без prefetch.</li>
             <li><strong>Compose</strong> — лишние перекомпозиции: стабильные типы и <code>key</code> в <code>LazyColumn</code>, чтение состояния как можно ниже по дереву, <code>derivedStateOf</code>, <code>remember</code> тяжёлых вычислений, <code>@Immutable/@Stable</code>.</li>
@@ -503,7 +503,7 @@ fun loadFeed(): List&lt;Item&gt; = trace("loadFeed") {
           <h2>Частые вопросы интервьюера</h2>
 
           <details class="qa">
-            <summary>Приложение долго стартует — твои действия по шагам? <span class="q-badge">Middle+</span></summary>
+            <summary>Приложение долго стартует — как вы будете разбирать проблему по шагам? <span class="q-badge">Middle+</span></summary>
             <div class="ans"><p>1) Замерить воспроизводимо: Macrobenchmark <code>StartupTimingMetric</code> в режиме COLD на release-сборке, плюс посмотреть Android Vitals. 2) Снять system trace в Profiler/Perfetto и разобрать критический путь: что тяжёлого в <code>Application.onCreate</code>, какие <code>ContentProvider</code>-ы инициализируются. 3) Фиксы: убрать с main thread синхронный I/O и прогрев SDK, перевести на ленивую инициализацию через App Startup, подключить Baseline Profile. 4) Перемерить тем же бенчмарком и сравнить TTID/TTFD. Ключевое — назвать cold/warm/hot и подтвердить эффект цифрой.</p></div>
           </details>
 
@@ -578,7 +578,7 @@ fun loadFeed(): List&lt;Item&gt; = trace("loadFeed") {
           <h2>Задачи</h2>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 1.</strong> Найди утечку памяти. Ниже — фрагмент кода, в котором Activity гарантированно течёт после поворота экрана. Назови причину и перепиши фрагмент так, чтобы утечки не было.</p>
+            <p class="task-problem"><strong>Задача 1.</strong> Найдите утечку памяти. Ниже — фрагмент кода, в котором Activity гарантированно течёт после поворота экрана. Назовите причину и перепишите фрагмент так, чтобы утечки не было.</p>
 <pre><code class="language-kotlin">class MapActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -624,7 +624,7 @@ object LocationManager {
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 2.</strong> Напиши реализацию <code>DiffUtil.ItemCallback</code> для класса <code>Product(id: Long, name: String, priceRub: Int)</code> и объясни, почему <code>notifyDataSetChanged()</code> вызывает jank, а <code>DiffUtil</code> — нет. Также объясни, что будет, если <code>areItemsTheSame</code> возвращает <code>true</code>, а <code>areContentsTheSame</code> — <code>false</code>.</p>
+            <p class="task-problem"><strong>Задача 2.</strong> Напишите реализацию <code>DiffUtil.ItemCallback</code> для класса <code>Product(id: Long, name: String, priceRub: Int)</code> и объясните, почему <code>notifyDataSetChanged()</code> вызывает jank, а <code>DiffUtil</code> — нет. Также объясните, что будет, если <code>areItemsTheSame</code> возвращает <code>true</code>, а <code>areContentsTheSame</code> — <code>false</code>.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -653,7 +653,7 @@ class ProductAdapter : ListAdapter&lt;Product, ProductAdapter.VH&gt;(PRODUCT_DIF
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 3.</strong> Напиши настройку <code>StrictMode</code> для debug-сборки, которая ловит чтение с диска и сетевые вызовы на main thread, а также утечки незакрытых <code>Closeable</code>-объектов. Объясни, какую политику наказания нельзя ставить в production и почему.</p>
+            <p class="task-problem"><strong>Задача 3.</strong> Напишите настройку <code>StrictMode</code> для debug-сборки, которая ловит чтение с диска и сетевые вызовы на main thread, а также утечки незакрытых <code>Closeable</code>-объектов. Объясните, какую политику наказания нельзя ставить в production и почему.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">
@@ -680,13 +680,13 @@ class ProductAdapter : ListAdapter&lt;Product, ProductAdapter.VH&gt;(PRODUCT_DIF
         // в release — ничего из StrictMode
     }
 }</code></pre>
-                <p>Объяснение: <code>penaltyDeath()</code> и <code>penaltyDeathOnNetwork()</code> в production крашат приложение у пользователя при любом нарушении, в том числе во внешних библиотеках, которые ты не контролируешь, — это неприемлемо. <code>penaltyLog()</code> безопасен: только пишет в logcat, не трогает пользователя. <code>StrictMode</code> — инструмент раннего детектирования «грехов» в процессе разработки; в release его вообще не включают. Обнаруженные им нарушения на main thread — прямой путь к ANR при медленном хранилище или сети.</p>
+                <p>Объяснение: <code>penaltyDeath()</code> и <code>penaltyDeathOnNetwork()</code> в production крашат приложение у пользователя при любом нарушении, в том числе во внешних библиотеках, которые вы не контролируете, — это неприемлемо. <code>penaltyLog()</code> безопасен: только пишет в logcat, не трогает пользователя. <code>StrictMode</code> — инструмент раннего детектирования «грехов» в процессе разработки; в release его вообще не включают. Обнаруженные им нарушения на main thread — прямой путь к ANR при медленном хранилище или сети.</p>
               </div>
             </details>
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 4.</strong> В горячем участке RecyclerView на каждом <code>onBindViewHolder</code> создаётся новый <code>SimpleDateFormat</code> и форматируется дата, а число форматируется через <code>String.format</code>. На длинном списке при скролле виден jank. Объясни, почему этот код создаёт GC pressure, и перепиши так, чтобы в <code>onBindViewHolder</code> не было лишних аллокаций.</p>
+            <p class="task-problem"><strong>Задача 4.</strong> В горячем участке RecyclerView на каждом <code>onBindViewHolder</code> создаётся новый <code>SimpleDateFormat</code> и форматируется дата, а число форматируется через <code>String.format</code>. На длинном списке при скролле виден jank. Объясните, почему этот код создаёт GC pressure, и перепишите так, чтобы в <code>onBindViewHolder</code> не было лишних аллокаций.</p>
 <pre><code class="language-kotlin">// ❌ десятки временных объектов на каждый бинд
 class EventAdapter(private val items: List&lt;Event&gt;) :
     RecyclerView.Adapter&lt;EventAdapter.VH&gt;() {
@@ -721,7 +721,7 @@ class EventAdapter(private val items: List&lt;EventUi&gt;) :
           </div>
 
           <div class="task-card">
-            <p class="task-problem"><strong>Задача 5.</strong> Напиши Macrobenchmark-тест, который сравнивает холодный старт <em>без</em> Baseline Profile и <em>с</em> ним, чтобы доказать выигрыш цифрой. Укажи, какие <code>CompilationMode</code> используются и почему нельзя сравнивать на debug-сборке.</p>
+            <p class="task-problem"><strong>Задача 5.</strong> Напишите Macrobenchmark-тест, который сравнивает холодный старт <em>без</em> Baseline Profile и <em>с</em> ним, чтобы доказать выигрыш цифрой. Укажите, какие <code>CompilationMode</code> используются и почему нельзя сравнивать на debug-сборке.</p>
             <details class="task-solution">
               <summary>Показать решение</summary>
               <div class="task-ans">

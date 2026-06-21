@@ -262,7 +262,7 @@ class OneCell&lt;T&gt; {
 
         <section class="section" id="cas">
           <h2>CAS и lock-free</h2>
-          <p>Блокировки дороги (переключение в ядро, парковка потоков). Альтернатива — <strong>неблокирующие</strong> алгоритмы поверх аппаратной инструкции <strong>CAS (Compare-And-Swap)</strong>. CPU предоставляет её как атомарную команду (<code>CMPXCHG</code> на x86, <code>LL/SC</code> на ARM): «сравни значение в памяти с ожидаемым; если совпало — запиши новое; верни признак успеха». Всё это — атомарно, без локов.</p>
+          <p>Блокировки дороги (переключение в ядро, парковка потоков). Альтернатива — <strong>неблокирующие</strong> алгоритмы поверх аппаратной инструкции <strong>CAS (Compare-And-Swap)</strong>. CPU предоставляет её как атомарную команду (<code>CMPXCHG</code> на x86, <code>LL/SC</code> на ARM): сравнить значение в памяти с ожидаемым, при совпадении записать новое и вернуть признак успеха. Всё это — атомарно, без локов.</p>
           <div class="diagram">
           <div class="mermaid">
 flowchart TB
@@ -453,7 +453,7 @@ val next = current.copy(retries = current.retries + 1)
 
           <details class="qa">
             <summary>Объясните CAS и ABA-проблему. <span class="q-badge">Senior</span></summary>
-            <div class="ans"><p>CAS (Compare-And-Swap) — атомарная инструкция CPU «сравни с ожидаемым и, если совпало, запиши новое». На ней строят lock-free структуры (атомики) с retry-циклом. ABA: поток прочитал <code>A</code>, другой успел <code>A→B→A</code>, и наш CAS ошибочно «успешен», хотя состояние менялось (опасно для стеков/очередей на ссылках). Решение — версионирование: <code>AtomicStampedReference</code> хранит марку-счётчик и сравнивает её вместе со значением.</p></div>
+            <div class="ans"><p>CAS (Compare-And-Swap) — атомарная инструкция CPU: сравнить с ожидаемым и, если совпало, записать новое. На ней строят lock-free структуры (атомики) с retry-циклом. ABA: поток прочитал <code>A</code>, другой успел <code>A→B→A</code>, и наш CAS ошибочно «успешен», хотя состояние менялось (опасно для стеков/очередей на ссылках). Решение — версионирование: <code>AtomicStampedReference</code> хранит марку-счётчик и сравнивает её вместе со значением.</p></div>
           </details>
 
           <details class="qa">
