@@ -19,7 +19,7 @@ A self-contained project for preparing for an **Android developer interview** (M
 
 | Path | What it is |
 | --- | --- |
-| `site/` | A build-less static website — the interactive study guide (HTML + one CSS + one JS file). The main deliverable. |
+| `site/` | A build-less static website — the interactive study guide (HTML + one CSS file + two JS files: `app.js` logic and `glossary.js` term-hint data). The main deliverable. |
 | `.claude/skills/interview-prep-author/` | A Codex **skill** (`SKILL.md` + `references/`) — the markup contract for authoring pages (HTML skeleton, styled components, nav wiring). |
 | `interview-prep-author.skill` | A zip-packaged copy of that skill (the distributable bundle). Keep it in sync with the `.claude/skills/interview-prep-author/` source if you edit the skill. |
 | `.claude/skills/tech-author/` | A Codex **skill** (`SKILL.md` + `references/`) — the text-quality contract: factual accuracy (no hallucinated APIs/versions/numbers) and prose free of AI markers. Governs *what the writing says and how it reads*, independent of markup. |
@@ -80,6 +80,7 @@ Edits to `.html`/`.css`/`.js` show up on reload (mind the cache-busting note bel
 - **Path resolution**: the `rel()` helper in `app.js` bridges `index.html` (at `site/` root) and глава pages (in `site/pages/`). Use it for cross-page links instead of hard-coding `../`.
 - **TOC + scrollspy**: `buildTOC` auto-generates the right-hand TOC from `.section > h2` headings — one link per **параграф** (single-level; no `<h3>` sub-level) — and tracks the active one via `IntersectionObserver`. Content only appears in the TOC if wrapped in `<section class="section">` with a real `<h2>`.
 - **Theming**: all colors are CSS custom properties on `:root` (dark) overridden by `[data-theme="light"]` in `site/assets/style.css`. Use the variables (`--accent`, `--panel`, `--text`, `--border`, …), never literal colors, so both themes stay correct.
+- **Glossary hints («как для Незнайки»)**: `site/assets/glossary.js` defines `window.GLOSSARY` (`[{ t:"term", a:["aliases"], d:"plain-language definition" }]`). On chapter pages `annotateGlossary()` in `app.js` underlines the **first occurrence per параграф** of each term — in prose and in exact-match inline `<code>` — and shows a floating hint (`#gloss-pop`) on hover / focus / tap. It deliberately skips code blocks, links, headings (`<h1>`/`<h2>`), summaries, diagrams and SVG, and matches with Unicode word boundaries (short ALL-CAPS abbreviations are case-sensitive to avoid false hits). `glossary.js` is its own `<script>` loaded **before** `app.js` on every page. To add/adjust a term, edit `glossary.js` only — no page markup changes.
 
 ## Authoring / extending content — use the skill
 
@@ -109,7 +110,7 @@ The hard rules from that skill that, if violated, break rendering:
 - **Videos use the `.ytcard` link card, never `<iframe>`** — some videos block embedding (error 153); the card always works and opens YouTube at a timestamp.
 - **Files must end at `</html>`** with no trailing junk/NUL bytes.
 
-After changing `app.js` or `style.css`, **bump the cache-busting version** `assets/app.js?v=YYYYMMDD-N` (currently `?v=20260621-1`) in **all** HTML files (root + every page in `site/pages/`) so browsers don't serve a stale copy.
+After changing `app.js`, `glossary.js`, or `style.css`, **bump the cache-busting version** (currently `?v=20260621-4`) in **all** HTML files (root + every page in `site/pages/`) so browsers don't serve a stale copy. All three runtime assets carry the `?v=` query and must move together: `assets/app.js?v=…`, `assets/glossary.js?v=…`, `assets/style.css?v=…`. (`style.css` is versioned too — without it, CSS-only changes silently serve stale.)
 
 If you edit a packaged skill (`.claude/skills/interview-prep-author/` or `.claude/skills/infographic-author/`), repackage its `.skill` bundle (a zip whose top-level folder is the skill name, containing `SKILL.md` + `references/`) so the bundled copy stays current.
 

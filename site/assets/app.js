@@ -61,6 +61,7 @@ const TOPICS = [
 ];
 
 const LS_KEY = "aip-progress-v1";
+const REVIEW_KEY = "aip-review-v1";
 const THEME_KEY = "aip-theme";
 const THEME_MEDIA = "(prefers-color-scheme: dark)";
 let watchingSystemTheme = false;
@@ -74,6 +75,38 @@ function setDone(id, val){
   try { localStorage.setItem(LS_KEY, JSON.stringify(p)); } catch(e){}
 }
 function progressCount(){ return Object.keys(getProgress()).length; }
+
+/* ---------- интервальное повторение ---------- */
+function getReviewState(){ try { return JSON.parse(localStorage.getItem(REVIEW_KEY)) || {}; } catch(e){ return {}; } }
+function setReviewState(state){ try { localStorage.setItem(REVIEW_KEY, JSON.stringify(state)); } catch(e){} }
+function localDateKey(date){
+  const d = date || new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+function dateKeyAfter(days){
+  const d = new Date();
+  d.setHours(0,0,0,0);
+  d.setDate(d.getDate() + days);
+  return localDateKey(d);
+}
+function parseDateKey(key){
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key || "");
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+}
+function formatReviewDate(key){
+  const due = parseDateKey(key);
+  if (!due) return "сегодня";
+  const today = parseDateKey(localDateKey());
+  const diff = Math.round((due - today) / 86400000);
+  if (diff <= 0) return "сегодня";
+  if (diff === 1) return "завтра";
+  return due.toLocaleDateString("ru-RU", { day:"2-digit", month:"2-digit" });
+}
+function isReviewDue(entry){ return !entry || !entry.due || entry.due <= localDateKey(); }
 
 /* ---------- theme ---------- */
 function getStoredTheme(){
@@ -373,6 +406,308 @@ function renderMermaid(){
   }
 }
 
+/* ---------- запускаемые примеры Kotlin (Kotlin Playground, ленивый монтаж) ---------- */
+// Скрипт грузим с CDN один раз и только если на странице есть <code class="kt-run">.
+// Карточки со звёздочкой свёрнуты, а CodeMirror не умеет монтироваться в скрытый блок —
+// поэтому монтируем редактор при первом раскрытии details, а не на загрузке.
+let kpLoading = null;
+function loadKotlinPlayground(){
+  if (window.KotlinPlayground) return Promise.resolve();
+  if (!kpLoading){
+    kpLoading = new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = "https://unpkg.com/kotlin-playground@1";
+      s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
+  }
+  return kpLoading;
+}
+function mountRunnable(code){
+  if (code.dataset.kpMounted) return;
+  code.dataset.kpMounted = "1";
+  code.setAttribute("theme", "darcula");   // редактор всегда тёмный — как блоки кода на сайте
+  loadKotlinPlayground().then(() => { try { window.KotlinPlayground("#" + code.id); } catch(e){} });
+}
+function setupRunnable(){
+  document.querySelectorAll("code.kt-run").forEach((code, i) => {
+    if (!code.id) code.id = "ktrun-" + i;
+    const det = code.closest("details");
+    if (det && !det.open){
+      const onToggle = () => { if (det.open){ mountRunnable(code); det.removeEventListener("toggle", onToggle); } };
+      det.addEventListener("toggle", onToggle);
+    } else {
+      mountRunnable(code);                  // вне свёрнутой карточки — монтируем сразу
+    }
+  });
+}
+
+/* ---------- учебные карточки и кейсы ---------- */
+const REVIEW_DELAYS = { again: 1, good: 3, easy: 7 };
+
+function setupStudyCards(){
+  const cards = [...document.querySelectorAll("[data-review-id]")];
+  if (!cards.length) return;
+
+  cards.forEach((card, i) => {
+    if (!card.id) card.id = `study-card-${i}`;
+    if (card.dataset.studyReady) return;
+    card.dataset.studyReady = "1";
+    card.querySelectorAll("[data-review-result]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const result = btn.dataset.reviewResult || "again";
+        const days = REVIEW_DELAYS[result] || REVIEW_DELAYS.again;
+        const state = getReviewState();
+        state[card.dataset.reviewId] = {
+          due: dateKeyAfter(days),
+          last: localDateKey(),
+          result
+        };
+        setReviewState(state);
+        updateStudyCards();
+      });
+    });
+  });
+
+  document.querySelectorAll("[data-study-scroll-due]").forEach(btn => {
+    if (btn.dataset.studyReady) return;
+    btn.dataset.studyReady = "1";
+    btn.addEventListener("click", () => {
+      const freshCards = [...document.querySelectorAll("[data-review-id]")];
+      const target = freshCards.find(card => card.classList.contains("study-due")) || freshCards[0];
+      if (target) target.scrollIntoView({ behavior:"smooth", block:"center" });
+    });
+  });
+
+  document.querySelectorAll("[data-study-reset]").forEach(btn => {
+    if (btn.dataset.studyReady) return;
+    btn.dataset.studyReady = "1";
+    btn.addEventListener("click", () => {
+      const state = getReviewState();
+      cards.forEach(card => delete state[card.dataset.reviewId]);
+      setReviewState(state);
+      updateStudyCards();
+    });
+  });
+
+  updateStudyCards();
+}
+
+function updateStudyCards(){
+  const cards = [...document.querySelectorAll("[data-review-id]")];
+  if (!cards.length) return;
+  const state = getReviewState();
+  let dueCount = 0;
+  let scheduledCount = 0;
+
+  cards.forEach(card => {
+    const entry = state[card.dataset.reviewId];
+    const due = isReviewDue(entry);
+    if (due) dueCount++;
+    else scheduledCount++;
+    card.classList.toggle("study-due", due);
+    card.classList.toggle("study-scheduled", !!entry && !due);
+    const status = card.querySelector("[data-study-state]");
+    if (status) status.textContent = due ? "к повторению сегодня" : `следующее: ${formatReviewDate(entry.due)}`;
+  });
+
+  document.querySelectorAll("[data-study-total]").forEach(el => el.textContent = String(cards.length));
+  document.querySelectorAll("[data-study-due]").forEach(el => el.textContent = String(dueCount));
+  document.querySelectorAll("[data-study-scheduled]").forEach(el => el.textContent = String(scheduledCount));
+}
+
+function setupCaseCards(){
+  document.querySelectorAll("[data-case]").forEach(card => {
+    if (card.dataset.caseReady) return;
+    card.dataset.caseReady = "1";
+    const feedback = card.querySelector("[data-case-feedback]");
+    card.querySelectorAll("[data-case-option]").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const ok = btn.dataset.correct === "true";
+        card.querySelectorAll("[data-case-option]").forEach(option => {
+          option.classList.toggle("is-correct", option.dataset.correct === "true");
+          option.classList.toggle("is-wrong", option === btn && !ok);
+        });
+        if (feedback){
+          feedback.hidden = false;
+          feedback.classList.toggle("ok", ok);
+          feedback.classList.toggle("bad", !ok);
+          feedback.textContent = btn.dataset.feedback || (ok ? "Верно." : "Не совсем.");
+        }
+      });
+    });
+  });
+}
+
+/* ---------- подсказки по терминам («как для Незнайки») ---------- */
+// Наводишь на термин / сокращение / английское слово — всплывает простое объяснение.
+// Словарь — в assets/glossary.js (window.GLOSSARY = [{t:"термин", a:["алиасы"], d:"объяснение"}]).
+// Подсвечиваем каждое вхождение известного термина (в тексте и в inline-коде),
+// не трогая блоки кода, ссылки, заголовки и диаграммы.
+let glossPop = null;
+const GLOSS_SKIP = new Set(["PRE","CODE","A","SCRIPT","STYLE","SVG","H1","H2","BUTTON","NOSCRIPT","SUMMARY"]);
+
+function normGloss(s){ return (s||"").toLowerCase().replace(/ё/g,"е").trim(); }
+
+function buildGlossIndex(){
+  const ci = new Map();   // ключи без учёта регистра
+  const cs = new Map();   // короткие латинские аббревиатуры — с учётом регистра
+  (window.GLOSSARY || []).forEach(entry => {
+    if (!entry || !entry.t || !entry.d) return;
+    const hit = { term: entry.t, def: entry.d };
+    [entry.t, ...(entry.a || [])].forEach(k => {
+      if (!k) return;
+      const key = String(k).trim();
+      if (key.length < 2) return;
+      const isAbbr = key.length <= 5 && /^[A-Za-z0-9][A-Za-z0-9.+/-]*$/.test(key) && key === key.toUpperCase() && /[A-Z]/.test(key);
+      if (isAbbr){ if (!cs.has(key)) cs.set(key, hit); }
+      else { const nk = normGloss(key); if (nk && !ci.has(nk)) ci.set(nk, hit); }
+    });
+  });
+  return { ci, cs };
+}
+
+function buildGlossRegex(keys, flags){
+  if (!keys.length) return null;
+  const esc = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const alt = keys.slice().sort((a,b) => b.length - a.length).map(esc).join("|");
+  try { return new RegExp("(?<![\\p{L}\\p{N}_])(" + alt + ")(?![\\p{L}\\p{N}_])", flags); }
+  catch(e){ return null; }   // старый движок без lookbehind / \p{…} — фичу просто отключаем
+}
+
+function decorateGloss(el, hit){
+  el.classList.add("gloss");
+  el.dataset.term = hit.term;
+  el.dataset.def = hit.def;
+  el.setAttribute("tabindex", "0");
+  el.setAttribute("role", "note");
+  el.setAttribute("aria-label", hit.term + ": " + hit.def);
+}
+
+function annotateGlossary(){
+  const root = document.querySelector("#content article.page");
+  if (!root || !window.GLOSSARY || !window.GLOSSARY.length) return;
+  const { ci, cs } = buildGlossIndex();
+  const ciRe = buildGlossRegex([...ci.keys()], "giu");
+  const csRe = buildGlossRegex([...cs.keys()], "gu");
+  if (!ciRe && !csRe) return;
+
+  const boxes = [...root.querySelectorAll(".section")];
+  const lead = root.querySelector(".page-head .lead");
+  if (lead) boxes.unshift(lead);
+
+  boxes.forEach(box => {
+    const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT, { acceptNode(node){
+      if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+      let p = node.parentElement;
+      while (p && p !== box.parentElement){
+        if (GLOSS_SKIP.has(p.tagName) || p.classList.contains("mermaid") || p.classList.contains("gloss"))
+          return NodeFilter.FILTER_REJECT;
+        p = p.parentElement;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    }});
+    const nodes = []; let nd;
+    while ((nd = walker.nextNode())) nodes.push(nd);
+    nodes.forEach(node => annotateTextNode(node, ciRe, csRe, ci, cs));
+
+    // inline-код, целиком совпадающий с термином → подсказка на весь <code>
+    box.querySelectorAll(":not(pre) > code").forEach(code => {
+      if (code.classList.contains("gloss") || code.closest("a")) return;
+      const raw = code.textContent.trim().replace(/[?!().:;,]+$/, "");
+      if (raw.length < 2) return;
+      const hit = cs.get(raw) || ci.get(normGloss(raw));
+      if (!hit) return;
+      decorateGloss(code, hit);
+    });
+  });
+
+  mountGlossPop();
+}
+
+function annotateTextNode(node, ciRe, csRe, ci, cs){
+  const text = node.nodeValue;
+  const matches = [];
+  const collect = (re, lookup) => {
+    if (!re) return;
+    re.lastIndex = 0; let m;
+    while ((m = re.exec(text))){
+      const hit = lookup(m[1]);
+      if (hit) matches.push({ start: m.index, end: m.index + m[1].length, hit });
+      if (m.index === re.lastIndex) re.lastIndex++;
+    }
+  };
+  collect(csRe, k => cs.get(k));
+  collect(ciRe, k => ci.get(normGloss(k)));
+  if (!matches.length) return;
+  matches.sort((a,b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+
+  const chosen = []; let lastEnd = -1;
+  for (const mt of matches){
+    if (mt.start < lastEnd) continue;            // без перекрытий
+    chosen.push(mt);
+    lastEnd = mt.end;
+  }
+  if (!chosen.length) return;
+
+  const frag = document.createDocumentFragment();
+  let pos = 0;
+  for (const mt of chosen){
+    if (mt.start > pos) frag.appendChild(document.createTextNode(text.slice(pos, mt.start)));
+    const span = document.createElement("span");
+    span.textContent = text.slice(mt.start, mt.end);
+    decorateGloss(span, mt.hit);
+    frag.appendChild(span);
+    pos = mt.end;
+  }
+  if (pos < text.length) frag.appendChild(document.createTextNode(text.slice(pos)));
+  node.parentNode.replaceChild(frag, node);
+}
+
+function positionGlossPop(el){
+  const r = el.getBoundingClientRect();
+  glossPop.style.maxWidth = Math.min(340, window.innerWidth - 20) + "px";
+  const pw = glossPop.offsetWidth, ph = glossPop.offsetHeight;
+  let left = r.left + r.width / 2 - pw / 2;
+  left = Math.max(10, Math.min(left, window.innerWidth - pw - 10));
+  let top = r.top - ph - 9;
+  glossPop.classList.toggle("below", top < 8);
+  if (top < 8) top = r.bottom + 9;             // не влезает сверху — показываем снизу
+  glossPop.style.left = Math.round(left) + "px";
+  glossPop.style.top = Math.round(top) + "px";
+}
+
+function mountGlossPop(){
+  if (glossPop) return;
+  glossPop = document.createElement("div");
+  glossPop.id = "gloss-pop";
+  glossPop.innerHTML = '<span class="gp-term"></span><span class="gp-def"></span>';
+  document.body.appendChild(glossPop);
+
+  const show = el => {
+    glossPop.querySelector(".gp-term").textContent = el.dataset.term;
+    glossPop.querySelector(".gp-def").textContent = el.dataset.def;
+    glossPop._for = el;
+    glossPop.classList.add("show");
+    positionGlossPop(el);
+  };
+  const hide = () => { glossPop.classList.remove("show"); glossPop._for = null; };
+  const target = e => (e.target && e.target.closest) ? e.target.closest(".gloss") : null;
+
+  document.addEventListener("mouseover", e => { const g = target(e); if (g) show(g); });
+  document.addEventListener("mouseout",  e => { const g = target(e); if (g && !(e.relatedTarget && g.contains(e.relatedTarget))) hide(); });
+  document.addEventListener("focusin",   e => { const g = target(e); if (g) show(g); });
+  document.addEventListener("focusout",  e => { const g = target(e); if (g) hide(); });
+  document.addEventListener("click", e => {     // тач: тап показывает/прячет
+    const g = target(e);
+    if (g) { (glossPop.classList.contains("show") && glossPop._for === g) ? hide() : show(g); }
+    else hide();
+  });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") hide(); });
+  window.addEventListener("scroll", hide, true);
+  window.addEventListener("resize", hide);
+}
+
 /* ---------- init ---------- */
 function init(){
   applyStoredTheme();
@@ -391,6 +726,10 @@ function init(){
   upgradeStarred();
   highlightCode();
   renderMermaid();
+  setupRunnable();
+  setupStudyCards();
+  setupCaseCards();
+  if (page && page !== "home") annotateGlossary();
 }
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
 else init();
