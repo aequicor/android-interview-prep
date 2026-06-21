@@ -9,7 +9,7 @@
   <title>Фоновая работа · Android-собес</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../assets/style.css?v=20260621-13">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
 <body data-page="background-work">
@@ -29,8 +29,41 @@
           </div>
         </header>
 
+        <div class="study-lab">
+          <div class="study-lab-copy">
+            <span class="study-label">Тренажёр главы</span>
+            <p class="study-title">Сначала пробуем ответить, потом читаем разбор.</p>
+            <p class="study-copy">Карточки разбросаны по главе: они проверяют не определение, а механизм, выбор API и типичные баги. После ответа ставьте дату следующего повторения.</p>
+          </div>
+          <div class="study-lab-side" aria-label="Статистика тренажёра">
+            <div class="study-meter"><b data-study-due>0</b><span>на сегодня</span></div>
+            <div class="study-meter"><b data-study-scheduled>0</b><span>отложено</span></div>
+            <div class="study-meter"><b data-study-total>0</b><span>всего</span></div>
+          </div>
+          <div class="study-lab-actions">
+            <button class="study-btn primary" type="button" data-study-scroll-due>К карточке на сегодня</button>
+            <button class="study-btn" type="button" data-study-reset>Сбросить тренажёр главы</button>
+          </div>
+        </div>
+
         <section class="section" id="limits">
           <h2>Ограничения фона: Doze, App Standby, лимиты</h2>
+          <div class="study-card" data-review-id="background-work-bg-service-dead">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Почему старый рецепт «фоновый <code>Service</code> + <code>WakeLock</code> + <code>Thread</code> с циклом синхронизации» на современном Android не работает?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Каждое звено отваливается из-за своих ограничений. С Android 8.0 фоновое приложение не может держать запущенный фоновый <code>Service</code> — система остановит его, а <code>startService()</code> для фонового приложения бросит <code>IllegalStateException</code>. В Doze <code>WakeLock</code> игнорируются, а неявные broadcast'ы из манифеста не прилетают. Отложенную работу отдают планировщику (WorkManager), а не держат руками.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Начнём с главного, что нужно держать в голове весь разговор: <strong>для системы батарея пользователя важнее вашей задачи</strong>. Любое приложение, ушедшее в фон, для Android — подозреваемый, который тратит CPU и сеть, пока экран погашен. Поэтому начиная с разных версий ОС платформа последовательно закручивала гайки. Если кандидат не понимает этой логики, он будет городить голые <code>Service</code> и <code>Thread</code>, которые в проде просто не запустятся.</p>
           <p class="subhead">Doze (с Android 6.0, API 23)</p>
           <p>Телефон лежит на столе: экран погашен, не на зарядке, не двигается. Через какое-то время система вводит устройство в <strong>Doze</strong> — глубокий сон. В этом режиме сеть для приложений отрезается, <code>WakeLock</code> игнорируются, <code>JobScheduler</code> и синхронизации откладываются, обычные алармы не срабатывают. Процесс не убит — он заморожен.</p>
@@ -74,6 +107,22 @@ B -.->|"экран<br/>включён"| D["Активный<br/>режим"]
 
         <section class="section" id="workmanager">
           <h2>WorkManager: гарантированная отложенная работа</h2>
+          <div class="study-card" data-review-id="background-work-retry-vs-failure">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Что произойдёт, если в <code>doWork()</code> вернуть <code>Result.retry()</code> на неустранимой ошибке (битые данные), и наоборот — <code>Result.failure()</code> на сетевом таймауте?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>retry()</code> на постоянной ошибке даёт бесконечный цикл повторов по <code>BackoffPolicy</code> — задача никогда не доберётся до успеха и будет жечь батарею. <code>failure()</code> на временном сетевом сбое наоборот потеряет задачу: повтор не назначается, хотя позже запрос бы прошёл. Правило: сетевые/IO-сбои → <code>retry</code>, битые данные и ошибки валидации → <code>failure</code>.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>WorkManager — ответ Google на весь зоопарк выше. Это рекомендованный способ для задач, которые <strong>должны выполниться</strong>, но не обязаны прямо сейчас: отправить накопленную аналитику, синхронизировать кэш, сжать и залить фото. Ключевое слово — гарантия: Work переживает перезапуск приложения и перезагрузку устройства, потому что состояние лежит в БД (на старых API под капотом он использует <code>JobScheduler</code>/<code>AlarmManager</code>). Когда условия выполнения наступят — задача отработает, даже если приложение к тому моменту закрыто.</p>
           <p class="subhead">Worker vs CoroutineWorker</p>
           <p>Единица работы — класс-наследник. Простой <code>Worker</code> выполняет <code>doWork()</code> синхронно на фоновом потоке из пула. <code>CoroutineWorker</code> делает <code>doWork()</code> suspend-функцией — это идиоматичный выбор для проекта на корутинах: можно дёргать suspend-репозитории, переключать диспетчеры, корректно отменяться. Если вы уже на корутинах (см. <a href="coroutines.html">Корутины</a>), берите <code>CoroutineWorker</code>.</p>
@@ -182,6 +231,22 @@ end note
 
         <section class="section" id="foreground-service">
           <h2>Foreground service и типы FGS</h2>
+          <div class="study-card" data-review-id="background-work-fgs-start-from-bg">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Приложение в фоне по таймеру пытается поднять foreground service и ловит <code>ForegroundServiceStartNotAllowedException</code>. Почему так и как корректно разбудить сервис?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>С Android 12 (API 31) стартовать FGS из чистого фона нельзя — это закрыло массовый обход фоновых лимитов через «foreground»-сервис. Старт разрешён только из окна-исключения: недавнее взаимодействие пользователя, high-priority FCM, точный аларм, действие из нотификации. Поэтому связка «пришёл high-priority push → подними сервис» работает именно потому, что push даёт временное окно-исключение; иначе задачу отдают WorkManager.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Foreground service (FGS) — это сервис, про который система и пользователь знают, что он работает прямо сейчас и осознанно: воспроизведение музыки, навигация, запись звука, выгрузка большого файла на глазах у пользователя. В обмен на видимость такому сервису не действуют фоновые лимиты — он живёт, пока вы его не остановите.</p>
           <p class="subhead">Обязательная нотификация</p>
           <p>Плата за привилегию — <strong>постоянная нотификация</strong>, которую нельзя смахнуть. Пользователь всегда видит, что приложение что-то делает в фоне. Сервис обязан показать её через <code>startForeground()</code>, причём с дедлайном: если после <code>startForegroundService()</code> вы не вызовете <code>startForeground()</code> в течение нескольких секунд, система убьёт сервис с <code>ANR</code>-подобной ошибкой.</p>
@@ -230,6 +295,22 @@ end note
 
         <section class="section" id="alarmmanager">
           <h2>AlarmManager: будильники и точное время</h2>
+          <div class="study-card" data-review-id="background-work-exact-alarm-throttle">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question"><code>setExactAndAllowWhileIdle()</code> пробивает Doze. Можно ли через него делать частые точные напоминания, например десять алармов на ближайшую минуту?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Нет. «Пробивает Doze» значит «имеет право на редкое пробуждение», а не «игнорирует энергосбережение». Система троттлит <code>...AllowWhileIdle</code>: в глубоком сне гарантируется примерно одно срабатывание раз в несколько минут на приложение, остальные ждут окон. Поставите десять на минуту — выполнится один. Для частых событий правильный путь — внешний триггер (push) или WorkManager, а не опрос по таймеру.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p><code>AlarmManager</code> — единственный инструмент, который умеет «сработать в конкретный момент времени», в том числе разбудив устройство из Doze. Звучит мощно, и именно поэтому система ограничивает его сильнее всего: точный аларм — дорогое пробуждение, и злоупотребление им бьёт по батарее всех приложений.</p>
           <p class="subhead">Inexact: дёшево и батчится</p>
           <p>По умолчанию надо брать <strong>неточные</strong> алармы. Система вольна сдвинуть их момент и схлопнуть несколько алармов разных приложений в одно пробуждение — это и есть экономия. У <code>setInexactRepeating()</code> нельзя задать произвольный период: только константы вроде <code>INTERVAL_FIFTEEN_MINUTES</code>, <code>INTERVAL_HOUR</code>, <code>INTERVAL_DAY</code>.</p>
@@ -275,6 +356,22 @@ end note
 
         <section class="section" id="fcm">
           <h2>FCM как стратегия пробуждения</h2>
+          <div class="study-card" data-review-id="background-work-push-as-signal">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">FCM — best-effort: пуш может прийти дважды, с задержкой или быть схлопнут. Как проектировать обработчик, чтобы не терять и не дублировать события?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Обработчик делают идемпотентным: повторный приход того же события не должен дублировать эффект — отсюда <code>enqueueUniqueWork</code> с ключом по сущности. И push трактуют как сигнал «сходи проверь актуальное состояние», а не как источник данных: по приходу дёргают сервер за свежим состоянием через Work. Тогда даже схлопнутые промежуточные пуши не теряют данные — финальное состояние всё равно подтянется с бэкенда.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>До сих пор всё было про «приложение само хочет что-то сделать в фоне». Но часто событие приходит <strong>снаружи</strong>: сообщение в чате, отмена заказа, обновление цены. Опрашивать сервер по таймеру — батарейное самоубийство и борьба с лимитами. Правильный способ — пусть сервер сам разбудит приложение через push. На Android это <strong>FCM</strong> (Firebase Cloud Messaging).</p>
           <p>FCM держит одно постоянное соединение от устройства к серверам Google, по которому приходят сообщения для всех приложений. Это снимает с вашего приложения необходимость держать свой сокет — пробуждение приходит по общему каналу.</p>
           <p class="subhead">Data vs notification messages</p>
@@ -318,6 +415,22 @@ end note
 
         <section class="section" id="choose">
           <h2>Выбор инструмента</h2>
+          <div class="study-card" data-review-id="background-work-tool-choice-axes">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">По каким двум осям выбирают между WorkManager, foreground service, AlarmManager и FCM, и куда по ним ложится каждый инструмент?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Оси — нужна ли гарантия выполнения и нужна ли точность по времени / мгновенность. WorkManager: гарантия есть, точности нет (когда удобно системе). AlarmManager: точное время (под разрешением), но гарантия — лишь срабатывание аларма. FCM: мгновенность для high-priority, но best-effort (возможны дубли/потери). Foreground service: работает, пока виден и длится сейчас, — для активной непрерывной задачи.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Весь разговор сводится к одному вопросу на собесе: «дано вот такая задача — чем её решать?». Ответ выводится из двух осей: нужна ли <strong>гарантия выполнения</strong> и нужна ли <strong>точность по времени / мгновенность</strong>.</p>
           <div class="table-wrap">
             <table>
@@ -491,7 +604,7 @@ class PlaybackService : Service() {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/glossary.js?v=20260621-13"></script>
-  <script src="../assets/app.js?v=20260621-13"></script>
+  <script src="../assets/glossary.js?v=20260621-16"></script>
+  <script src="../assets/app.js?v=20260621-16"></script>
 </body>
 </html>

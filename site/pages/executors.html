@@ -17,7 +17,7 @@
   <title>Executor и пулы потоков · Android-собес</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../assets/style.css?v=20260621-13">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
 <body data-page="executors">
@@ -37,8 +37,41 @@
           </div>
         </header>
 
+        <div class="study-lab">
+          <div class="study-lab-copy">
+            <span class="study-label">Тренажёр главы</span>
+            <p class="study-title">Сначала пробуем ответить, потом читаем разбор.</p>
+            <p class="study-copy">Карточки разбросаны по главе: они проверяют не определение, а механизм, выбор API и типичные баги. После ответа ставьте дату следующего повторения.</p>
+          </div>
+          <div class="study-lab-side" aria-label="Статистика тренажёра">
+            <div class="study-meter"><b data-study-due>0</b><span>на сегодня</span></div>
+            <div class="study-meter"><b data-study-scheduled>0</b><span>отложено</span></div>
+            <div class="study-meter"><b data-study-total>0</b><span>всего</span></div>
+          </div>
+          <div class="study-lab-actions">
+            <button class="study-btn primary" type="button" data-study-scroll-due>К карточке на сегодня</button>
+            <button class="study-btn" type="button" data-study-reset>Сбросить тренажёр главы</button>
+          </div>
+        </div>
+
         <section class="section" id="executor-basics">
           <h2>Executor, ExecutorService и задачи</h2>
+          <div class="study-card" data-review-id="executors-submit-vs-execute">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Задача, отправленная через <code>submit()</code>, упала с исключением, но <code>Future.get()</code> по ней никто не вызвал. Где окажется это исключение и почему это опасно?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>submit()</code> оборачивает задачу в <code>FutureTask</code>, и исключение оседает внутри как результат — оно всплывёт только при <code>get()</code>, обёрнутым в <code>ExecutionException</code>. Без вызова <code>get()</code> ошибка молча проглатывается: не логируется, не падает поток, баг становится невидимым. Для fire-and-forget берут <code>execute()</code> (там исключение уходит в <code>UncaughtExceptionHandler</code>) либо достают его из <code>Future</code> в <code>afterExecute()</code>.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p><code>Executor</code> — минимальный интерфейс с единственным методом <code>execute(Runnable)</code>: он отделяет <em>отправку</em> задачи от того, <em>как</em> и <em>на каком</em> потоке она исполнится. <code>ExecutorService</code> расширяет его до полноценного фреймворка: приём <code>Callable</code> (задача с результатом), возврат <code>Future</code>, групповые операции и управляемое завершение.</p>
           <div class="table-wrap">
             <table>
@@ -130,6 +163,22 @@ fun main() {
 
         <section class="section" id="growth-model">
           <h2>Модель роста пула (ключевой вопрос)</h2>
+          <div class="study-card" data-review-id="executors-unbounded-queue-max">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Пулу задали <code>corePoolSize=4</code>, <code>maximumPoolSize=50</code> и неограниченную очередь. Под лавиной задач сколько потоков он реально поднимет и почему?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Только 4 — <code>maximumPoolSize</code> будет проигнорирован. Новый поток сверх core создаётся лишь когда очередь <em>переполнена</em>, а неограниченная очередь не переполняется никогда, поэтому шаг роста до max недостижим. Все лишние задачи копятся в очереди, что грозит ростом памяти до <code>OutOfMemoryError</code>. Чтобы пул действительно рос до max, нужна ограниченная очередь (или <code>SynchronousQueue</code>).</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Главная контринтуитивность: пул <strong>предпочитает очередь созданию нового потока</strong>. Порядок, дословно по документации Oracle, такой:</p>
           <ol>
             <li>Потоков меньше <code>corePoolSize</code> → <strong>создаётся новый поток</strong>, даже если другие простаивают.</li>
@@ -228,6 +277,22 @@ fun main() {
 
         <section class="section" id="rejection">
           <h2>Политики отказа</h2>
+          <div class="study-card" data-review-id="executors-callerruns-ui">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Какой скрытый побочный эффект у <code>CallerRunsPolicy</code> и почему её опасно вешать на пул, в который задачи шлёт главный поток?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>При перегрузке отклонённую задачу выполняет сам поток-отправитель — отсюда и backpressure: пока он занят задачей, новые он не подаёт. Но если отправитель один (UI/Main-поток или цикл чтения из сокета), он на время задачи перестаёт делать свою основную работу. На главном потоке это прямой фриз или ANR, поэтому отдавать <code>CallerRunsPolicy</code> пулу, питаемому из UI, опасно.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Когда задачу нельзя ни поставить в очередь, ни запустить (достигнут <code>maximumPoolSize</code> при полной ограниченной очереди), срабатывает <code>RejectedExecutionHandler</code>. Четыре готовые политики:</p>
           <div class="table-wrap">
             <table>
@@ -337,6 +402,22 @@ fun main() {
 
         <section class="section" id="shutdown">
           <h2>Завершение пула</h2>
+          <div class="study-card" data-review-id="executors-await-without-shutdown">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Вы зовёте <code>awaitTermination(60, SECONDS)</code> без предварительного <code>shutdown()</code>. Что вернётся и почему?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Вернётся <code>false</code> по истечении всех 60 секунд. <code>awaitTermination</code> разблокируется только когда пул дошёл до состояния <code>TERMINATED</code>, а туда он попадает лишь после <code>shutdown()</code>/<code>shutdownNow()</code> и доисполнения задач. Без <code>shutdown()</code> пул остаётся в <code>RUNNING</code>, принимает новые задачи и в <code>TERMINATED</code> не перейдёт — ожидание просто провисит весь таймаут. Канон: <code>shutdown()</code>, затем <code>awaitTermination</code>, и при таймауте — <code>shutdownNow()</code> и ещё одно ожидание.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <div class="table-wrap">
             <table>
               <thead><tr><th>Метод</th><th>Поведение</th></tr></thead>
@@ -497,6 +578,22 @@ val ioPool  = Executors.newFixedThreadPool(cores * 10)     // IO-bound: при W
 
         <section class="section" id="memory-visibility">
           <h2>Память и happens-before в пулах</h2>
+          <div class="study-card" data-review-id="executors-happens-before-shared">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Результат вы забираете через <code>Future.get()</code>, но задача параллельно с другими задачами дописывает в общий <code>ArrayList</code>. Достаточно ли <code>get()</code> для корректности?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Нет. Happens-before от <code>get()</code> связывает только задачу и того, кто её дождался, — про доступ <em>между параллельными задачами</em> к общему списку он не говорит ничего. Несколько задач, одновременно пишущих в обычный <code>ArrayList</code>, — это data race вплоть до порчи внутренней структуры. Для разделяемой изменяемой коллекции нужна потокобезопасная структура (<code>ConcurrentHashMap</code>, <code>CopyOnWriteArrayList</code>) или внешняя синхронизация.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Отдали задачу в пул, она что-то посчитала и записала в общий объект — увидит ли отправитель свежее значение? Без правильной синхронизации не факт: на это и ловят на Senior-уровне.</p>
           <p>Хорошая новость в том, что <code>java.util.concurrent</code> даёт <strong>happens-before</strong> гарантии. Действия в потоке <em>до</em> <code>submit()</code>/<code>execute()</code> видны коду задачи. Действия задачи <em>до её завершения</em> видны потоку, который успешно дождался её через <code>Future.get()</code>. Поэтому передавать результат через <code>Future</code> безопасно — никаких <code>volatile</code> и <code>synchronized</code> вокруг него не нужно.</p>
           <div class="callout warn">
@@ -532,6 +629,22 @@ fun main() {
 
         <section class="section" id="starvation-deadlock">
           <h2>Тупики и голодание потоков в пуле</h2>
+          <div class="study-card" data-review-id="executors-starvation-deadlock">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Объясните thread starvation deadlock и почему он особенно коварен на пуле размером больше единицы.</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Задача в пуле блокируется в ожидании <em>другой</em> задачи, отправленной в тот же пул, а свободных потоков уже нет — ждущий поток занят ожиданием, выполнить вложенную задачу некому, оба зависают. На пуле из 8 потоков такой вложенный <code>submit().get()</code> проходит, пока есть свободные потоки, поэтому на лёгких тестах всё зелёное. Под нагрузкой, когда все потоки разом встанут в ожидание своих вложенных задач, пул мгновенно защёлкивается — баг плавающий и привязан к нагрузке. Зависимые подзадачи гоняют через отдельный пул или неблокирующую композицию.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Пул может застрять сам из-за себя — без единого <code>synchronized</code> и без классического deadlock на двух локах. Имя этому — <strong>thread starvation deadlock</strong>.</p>
           <p>Схема простая: задача в пуле блокируется в ожидании результата <em>другой</em> задачи, отправленной в <strong>тот же</strong> пул, а свободных потоков уже не осталось. Ждущий поток занят ожиданием, выполнить вложенную задачу некому — обе зависают навсегда.</p>
 <pre><code class="language-kotlin">val pool = Executors.newSingleThreadExecutor()   // ровно один поток
@@ -834,7 +947,7 @@ class MiniPool(n: Int) {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/glossary.js?v=20260621-13"></script>
-  <script src="../assets/app.js?v=20260621-13"></script>
+  <script src="../assets/glossary.js?v=20260621-16"></script>
+  <script src="../assets/app.js?v=20260621-16"></script>
 </body>
 </html>

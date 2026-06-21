@@ -17,7 +17,7 @@
   <title>Поведенческое интервью и процесс · Android-собес</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../assets/style.css?v=20260621-13">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
 <body data-page="behavioral">
@@ -37,8 +37,41 @@
           </div>
         </header>
 
+        <div class="study-lab">
+          <div class="study-lab-copy">
+            <span class="study-label">Тренажёр главы</span>
+            <p class="study-title">Сначала пробуем ответить, потом читаем разбор.</p>
+            <p class="study-copy">Карточки разбросаны по главе: они проверяют не определение, а механизм, выбор API и типичные баги. После ответа ставьте дату следующего повторения.</p>
+          </div>
+          <div class="study-lab-side" aria-label="Статистика тренажёра">
+            <div class="study-meter"><b data-study-due>0</b><span>на сегодня</span></div>
+            <div class="study-meter"><b data-study-scheduled>0</b><span>отложено</span></div>
+            <div class="study-meter"><b data-study-total>0</b><span>всего</span></div>
+          </div>
+          <div class="study-lab-actions">
+            <button class="study-btn primary" type="button" data-study-scroll-due>К карточке на сегодня</button>
+            <button class="study-btn" type="button" data-study-reset>Сбросить тренажёр главы</button>
+          </div>
+        </div>
+
         <section class="section" id="star">
           <h2>Метод STAR — каркас ответа</h2>
+          <div class="study-card" data-review-id="behavioral-star-action">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">В ответе по STAR на какой из четырёх блоков должна приходиться львиная доля рассказа и почему именно на него?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Основной объём — на блок <code>A</code> (Action), порядка 80% времени. Именно в действиях виден ваш личный вклад, а интервьюер оценивает вас, а не команду. Раздутый <code>S</code> (контекст) — типичная поломка: вводных много, а конкретных шагов не слышно. <code>S</code> и <code>T</code> держат короткими, <code>R</code> завершают метрикой.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>STAR (Situation–Task–Action–Result) — это не скрипт, а структура повествования. Она держит ответ собранным: интервьюер слышит контекст, вашу личную задачу, конкретные действия и измеримый итог — без «воды» и блужданий. Держите <strong>60–90 секунд</strong> на историю; если интервьюеру мало — он попросит деталей.</p>
           <div class="diagram">
           <div class="mermaid">
@@ -102,6 +135,22 @@ R (Результат + вывод):
 
         <section class="section" id="bank">
           <h2>Банк историй: 6 заготовок</h2>
+          <div class="study-card" data-review-id="behavioral-bank-contexts">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Почему рискованно набирать весь банк из 6–8 историй вокруг одного проекта, даже если каждая отвечает на несколько вопросов?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Опытные интервьюеры копают вглубь одной истории уточнениями («а что именно сделали вы?», «а почему так?») — это проверка на выдуманность. Если все заготовки из одного проекта, на третий подряд запрос «а ещё пример?» вы упрётесь в стену и начнёте повторяться, что выглядит как узкий или приукрашенный опыт. Поэтому истории берут из разных контекстов: проектов, команд, ролей, типов трудностей.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Подготовь 6–8 историй заранее — этого хватает, чтобы покрыть почти любой поведенческий вопрос. Одна история часто отвечает на несколько вопросов под разным углом: рассказ про факап = и про ошибку, и про обучаемость, и про коммуникацию (смотря какой блок Action подсветить). Идеально, если в историях есть цифры и они из <strong>разных</strong> ситуаций.</p>
           <div class="table-wrap">
             <table>
@@ -213,6 +262,22 @@ flowchart TB
 
         <section class="section" id="antipatterns">
           <h2>Антипаттерны ответов</h2>
+          <div class="study-card" data-review-id="behavioral-fake-weakness">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">На вопрос про слабые стороны кандидат отвечает «я перфекционист / слишком много работаю». Почему это провальный ответ, хотя формально это про недостаток?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Это замаскированные достоинства, и интервьюеры распознают их как уклонение. Вопрос проверяет не наличие идеальной слабости, а способность к саморефлексии и работе над собой. Сильный ответ называет реальную слабость вне ядра роли и показывает механизм компенсации: факт → осознание → конкретные действия → прогресс. Обратная крайность — слабость, бьющая прямо по требованиям вакансии — тоже дисквалифицирует.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Чаще всего поведенческую секцию заваливают не отсутствием опыта, а его плохой подачей. Вот типичные провалы и как их переписать.</p>
           <div class="table-wrap">
             <table>
@@ -362,6 +427,22 @@ flowchart TB
 
         <section class="section" id="ambiguity">
           <h2>Неопределённость и обратная связь</h2>
+          <div class="study-card" data-review-id="behavioral-bias-for-action-limit">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Bias for action хвалят как достоинство. В каком случае «быстро начал делать в условиях неопределённости» — это минус, и как показать, что вы видите эту границу?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Bias for action ломается на необратимых и дорогих решениях: выбор схемы БД, формата API, зависимости в ядре, многонедельной миграции по сырым требованиям. Там «сначала сделаю, потом разберёмся» оборачивается неделями переделок. Зрелый ответ сортирует по цене ошибки: где обратимо и дёшево — двигаюсь сразу и уточняю на ходу; где необратимо и дорого — сначала фиксирую договорённости и прячу риск за feature-flag.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Два класса вопросов идут отдельно от историй конфликта и провала: «расскажите про задачу с размытыми требованиями» (проверка bias for action) и «как реагируете на жёсткую критику» (проверка обучаемости). Это самостоятельные компетенции, и заготовки из банка их не закрывают.</p>
 
           <p class="subhead">Действовать в неопределённости</p>
@@ -384,6 +465,22 @@ flowchart TB
 
         <section class="section" id="leadership">
           <h2>Лидерство и влияние без власти</h2>
+          <div class="study-card" data-review-id="behavioral-leadership-no-title">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">На senior-собесе просят историю про лидерство, а формальной роли лида у вас не было. Какую историю выбрать и почему отсутствие должности здесь не проблема?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Для инженерного senior-грейда спрашивают именно про влияние без полномочий — формальная роль не нужна и иногда мешает («все делали как я сказал» показывает должность, а не навык). Поэтому история «вырастил джуна до самостоятельности» или «протащил стандарт ревью, который приняла команда» закрывает вопрос лучше, чем «руководил пятью людьми». Если интервьюеру нужен управленческий опыт (найм, оценка, увольнения), он спросит прямо — это другая вакансия.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>На старших грейдах лидерство спрашивают шире, чем «менторил джуна». Интервьюера интересует влияние на технические решения без формальных полномочий, готовность взять ownership за общий результат и умение проводить непопулярные решения. Это ядро senior-грейда, и именно здесь видно разницу между «сильным разработчиком» и «инженером, который тянет команду».</p>
 
           <p class="subhead">Формальное и неформальное лидерство</p>
@@ -574,7 +671,7 @@ flowchart TB
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/glossary.js?v=20260621-13"></script>
-  <script src="../assets/app.js?v=20260621-13"></script>
+  <script src="../assets/glossary.js?v=20260621-16"></script>
+  <script src="../assets/app.js?v=20260621-16"></script>
 </body>
 </html>

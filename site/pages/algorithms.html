@@ -17,7 +17,7 @@
   <title>Алгоритмы и структуры данных · Android-собес</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../assets/style.css?v=20260621-13">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
 <body data-page="algorithms">
@@ -37,8 +37,41 @@
           </div>
         </header>
 
+        <div class="study-lab">
+          <div class="study-lab-copy">
+            <span class="study-label">Тренажёр главы</span>
+            <p class="study-title">Сначала пробуем ответить, потом читаем разбор.</p>
+            <p class="study-copy">Карточки разбросаны по главе: они проверяют не определение, а механизм, выбор API и типичные баги. После ответа ставьте дату следующего повторения.</p>
+          </div>
+          <div class="study-lab-side" aria-label="Статистика тренажёра">
+            <div class="study-meter"><b data-study-due>0</b><span>на сегодня</span></div>
+            <div class="study-meter"><b data-study-scheduled>0</b><span>отложено</span></div>
+            <div class="study-meter"><b data-study-total>0</b><span>всего</span></div>
+          </div>
+          <div class="study-lab-actions">
+            <button class="study-btn primary" type="button" data-study-scroll-due>К карточке на сегодня</button>
+            <button class="study-btn" type="button" data-study-reset>Сбросить тренажёр главы</button>
+          </div>
+        </div>
+
         <section class="section" id="bigo">
           <h2>Big-O: время, память, амортизация</h2>
+          <div class="study-card" data-review-id="algorithms-amortized-growth">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Почему амортизированный <code>O(1)</code> у <code>ArrayList.add</code> держится при росте ёмкости в разы (×1.5, ×2), но ломается до <code>O(n)</code>, если растить на фиксированную добавку (+10)?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>При росте в <code>k</code> раз расширения случаются всё реже, а стоимость копирований складывается в геометрическую прогрессию, которая сходится к константе на вставку — суммарно <code>O(n)</code>. При росте на константу <code>c</code> расширение происходит каждые <code>c</code> вставок, копируется всё больше: арифметическая прогрессия даёт <code>~O(n²)</code> суммарно, то есть <code>O(n)</code> на вставку. Стоимость очередного копирования обязана быть пропорциональна уже накопленной работе.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Big-O описывает <strong>асимптотику худшего случая</strong> — как растёт число операций при увеличении входа <code>n</code>, отбрасывая константы и младшие члены. <code>O(2n + 5)</code> — это <code>O(n)</code>. Кроме времени всегда оценивай <strong>память</strong> (auxiliary space): рекурсия с глубиной <code>n</code> — это <code>O(n)</code> на стеке, даже если «лишних» массивов нет.</p>
           <p class="subhead">Амортизированная сложность</p>
           <p>Амортизация — это <em>усреднённая</em> стоимость операции по длинной серии вызовов. Классика — <code>ArrayList.add()</code>: обычно <code>O(1)</code>, но изредка случается дорогое расширение массива <code>O(n)</code>. Если ёмкость удваивается, суммарная стоимость <code>n</code> вставок — <code>O(n)</code>, значит на одну вставку приходится <strong>амортизированные <code>O(1)</code></strong>. Важно не путать с «средним случаем»: амортизация — это гарантия по серии, а не вероятностное ожидание.</p>
@@ -172,6 +205,22 @@ flowchart LR
 
         <section class="section" id="hashmap">
           <h2>HashMap: бакеты, коллизии, treeify</h2>
+          <div class="study-card" data-review-id="algorithms-mutable-key">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Что произойдёт, если положить в <code>HashMap</code> мутабельный ключ, а потом изменить поле, входящее в его <code>hashCode</code>?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Ключ «потеряется»: бакет выбирается по <code>(n-1) &amp; hash</code>, объект положили по старому хешу, а после мутации <code>hashCode</code> даёт другой бакет — <code>get</code> ищет не там. По контракту равные по <code>equals</code> объекты обязаны иметь равный <code>hashCode</code>, и хеш должен быть стабилен, пока объект не меняется. Поэтому ключи делают иммутабельными (часто <code>data class</code>).</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Это «вопрос-маркер»: по тому, как кандидат рассказывает про <code>HashMap</code>, видно глубину. Внутри — массив бакетов <code>Node[] table</code> (по умолчанию 16). Индекс бакета вычисляется как <code>(n - 1) &amp; hash</code>, где <code>hash</code> — это <strong>перемешанный</strong> хеш ключа: <code>h = key.hashCode(); h ^ (h &gt;&gt;&gt; 16)</code> (старшие биты подмешиваются к младшим, чтобы плохие <code>hashCode()</code> не валились в один бакет).</p>
           <p class="subhead">Коллизии: chaining → treeify</p>
           <p>Если два ключа попали в один бакет (<strong>коллизия</strong>), они складываются в связный список (<em>chaining</em>). Поиск в бакете идёт перебором с проверкой <code>equals</code>. С <strong>Java 8</strong> добавлена оптимизация: если в одном бакете накопилось <code>&gt; 8</code> элементов (<code>TREEIFY_THRESHOLD</code>) <em>и</em> ёмкость таблицы <code>&ge; 64</code> (<code>MIN_TREEIFY_CAPACITY</code>), список превращается в <strong>красно-чёрное дерево</strong> — поиск в бакете становится <code>O(log n)</code> вместо <code>O(n)</code>. При уменьшении до <code>&lt; 6</code> (<code>UNTREEIFY_THRESHOLD</code>) дерево схлопывается обратно в список.</p>
@@ -212,6 +261,22 @@ class BadKey(var id: Int)        // нет equals/hashCode + поле меняе
 
         <section class="section" id="linked-tree-map">
           <h2>LinkedHashMap и TreeMap</h2>
+          <div class="study-card" data-review-id="algorithms-map-choice">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Нужны диапазонные запросы «ближайший ключ ≥ x» и упорядоченный обход. Какую из <code>HashMap</code> / <code>LinkedHashMap</code> / <code>TreeMap</code> взять и какой ценой?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>TreeMap</code>: красно-чёрное дерево держит ключи отсортированными и даёт навигацию (<code>ceilingKey</code>, <code>floorKey</code>, <code>subMap</code>). Цена — все операции <code>O(log n)</code> вместо среднего <code>O(1)</code>. <code>HashMap</code> порядка не хранит вообще, <code>LinkedHashMap</code> хранит порядок вставки или доступа, но не сортировку и без навигации по диапазону.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p class="subhead">LinkedHashMap — хеш + порядок</p>
           <p><code>LinkedHashMap</code> наследует <code>HashMap</code>, но дополнительно связывает записи <strong>двусвязным списком</strong>, сохраняя порядок. По умолчанию — <em>порядок вставки</em> (insertion-order). Если создать с <code>accessOrder = true</code>, записи переупорядочиваются при каждом <code>get</code>/<code>put</code> — самый «свежий» доступ уходит в хвост. Это даёт встроенный механизм <strong>LRU</strong>: переопредели <code>removeEldestEntry()</code>, и самый давний по доступу элемент будет вытесняться.</p>
           <div class="code-label">LruByLinkedHashMap.kt</div>
@@ -252,6 +317,22 @@ fun main() {
 
         <section class="section" id="concurrent">
           <h2>Потокобезопасные структуры</h2>
+          <div class="study-card" data-review-id="algorithms-chm-check-then-act">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Почему <code>if (!map.containsKey(k)) map.put(k, v)</code> на <code>ConcurrentHashMap</code> — это всё равно гонка, хотя сама мапа потокобезопасна?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Атомарны только отдельные операции, а связка «проверил — потом положил» состоит из двух: между <code>containsKey</code> и <code>put</code> другой поток успевает вставить ключ, и значение перезатрётся. Нужны атомарные комбинированные методы — <code>putIfAbsent</code>, <code>computeIfAbsent</code>, <code>merge</code>. Плюс в <code>ConcurrentHashMap</code> запрещены null-ключи и null-значения.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Обычный <code>HashMap</code> и <code>ArrayList</code> <strong>не потокобезопасны</strong>: гонка при resize может зациклить или повредить структуру. Для конкурентного доступа есть специальные классы — и Senior должен понимать <em>как</em> они синхронизируются, а не только их имена.</p>
           <p class="subhead">ConcurrentHashMap — без глобального лока</p>
           <p>До Java 8 использовалась <strong>сегментация (lock-striping)</strong>: таблица делилась на сегменты, каждый со своим локом — параллельно работало столько потоков, сколько сегментов. С <strong>Java 8</strong> сегменты убрали: теперь синхронизация идёт <strong>на уровне отдельного бакета</strong>. Вставка в пустой бакет делается одним <strong>CAS</strong> (compare-and-swap) без блокировки; при коллизии поток берёт <code>synchronized</code> на <em>первом узле</em> этого бакета — лок затрагивает один бакет, а не всю таблицу. <strong>Чтения почти всегда lock-free</strong> (идут по <code>volatile</code>-ссылкам). Глобального лока нет ни при чтении, ни при записи — отсюда высокая пропускная способность.</p>
@@ -537,6 +618,22 @@ fun main() {
 
         <section class="section" id="kotlin-collections">
           <h2>Коллекции Kotlin: read-only, Sequence, ArrayDeque</h2>
+          <div class="study-card" data-review-id="algorithms-readonly-not-immutable">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Гарантирует ли тип <code>List&lt;Int&gt;</code> в Kotlin, что лежащую за ним коллекцию никто не изменит?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Нет. <code>List</code> — это read-only интерфейс без <code>add</code>/<code>remove</code>, но не неизменяемый объект. <code>listOf</code> возвращает обычный <code>java.util.ArrayList</code>, и если на тот же объект есть ссылка как на <code>MutableList</code> (из Kotlin или Java), его спокойно мутируют — read-only ссылка этого не запретит. Для настоящей неизменности нужна persistent-коллекция или защитная копия (<code>toList()</code>).</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Глава пока шла по <code>java.util</code>, но на Android-собесе любят именно Kotlin-специфику поверх тех же JVM-классов. Здесь три самых частых вопроса.</p>
           <p class="subhead">Read-only ≠ immutable</p>
           <p><code>List</code> в Kotlin — это <strong>read-only интерфейс</strong>: у него нет <code>add</code>/<code>remove</code>. Но это не гарантия неизменности самого объекта. <code>listOf(…)</code> под капотом возвращает реальный <code>java.util.ArrayList</code> (или <code>Arrays.asList</code>), и если на тот же объект есть ссылка как на <code>MutableList</code> — хоть из Kotlin, хоть из Java-кода — его спокойно мутируют, а read-only ссылка этого не запретит.</p>
@@ -607,6 +704,22 @@ for (x in list.toList()) { if (x % 2 == 0) list.remove(x) }</code></pre>
 
         <section class="section" id="lru">
           <h2>Реализация LRU-кэша на Kotlin</h2>
+          <div class="study-card" data-review-id="algorithms-lru-get-write-lock">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">В LRU на <code>LinkedHashMap(accessOrder = true)</code> почему <code>get</code> нельзя защищать read-локом — ведь это «просто чтение»?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>При <code>accessOrder = true</code> <code>get</code> перемещает обращённую запись в хвост двусвязного списка доступа, то есть структурно меняет карту. Это запись, а не чтение: несколько потоков под общим read-локом войдут одновременно и порвут связи списка либо словят <code>ConcurrentModificationException</code>. Значит <code>get</code> нужен write-лок (и <code>ReentrantReadWriteLock</code> вырождается в обычный mutex), либо берут готовый <code>androidx.collection.LruCache</code>.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Задача «написать LRU-кэш» — один из самых частых live-coding вопросов. Ключевая идея: чтобы и <code>get</code>, и <code>put</code> были <code>O(1)</code>, нужна <strong>связка</strong> <code>HashMap</code> (доступ по ключу за <code>O(1)</code>) + <strong>двусвязный список</strong> (порядок использования, перемещение узла в начало за <code>O(1)</code>). Самый недавно использованный — в голове, кандидат на вытеснение — в хвосте.</p>
           <div class="code-label">LruCache.kt</div>
 <pre><code class="language-kotlin">class LruCache&lt;K, V&gt;(private val capacity: Int) {
@@ -1016,7 +1129,7 @@ fun minEatingSpeed(piles: IntArray, h: Int): Int {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/glossary.js?v=20260621-13"></script>
-  <script src="../assets/app.js?v=20260621-13"></script>
+  <script src="../assets/glossary.js?v=20260621-16"></script>
+  <script src="../assets/app.js?v=20260621-16"></script>
 </body>
 </html>

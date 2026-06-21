@@ -17,7 +17,7 @@
   <title>Сеть · Android-собес</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../assets/style.css?v=20260621-13">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
 <body data-page="network">
@@ -37,8 +37,41 @@
           </div>
         </header>
 
+        <div class="study-lab">
+  <div class="study-lab-copy">
+    <span class="study-label">Тренажёр главы</span>
+    <p class="study-title">Сначала пробуем ответить, потом читаем разбор.</p>
+    <p class="study-copy">Карточки разбросаны по главе: они проверяют не определение, а механизм, выбор API и типичные баги. После ответа ставьте дату следующего повторения.</p>
+  </div>
+  <div class="study-lab-side" aria-label="Статистика тренажёра">
+    <div class="study-meter"><b data-study-due>0</b><span>на сегодня</span></div>
+    <div class="study-meter"><b data-study-scheduled>0</b><span>отложено</span></div>
+    <div class="study-meter"><b data-study-total>0</b><span>всего</span></div>
+  </div>
+  <div class="study-lab-actions">
+    <button class="study-btn primary" type="button" data-study-scroll-due>К карточке на сегодня</button>
+    <button class="study-btn" type="button" data-study-reset>Сбросить тренажёр главы</button>
+  </div>
+</div>
+
         <section class="section" id="http">
           <h2>HTTP: методы, статусы, семантика</h2>
+          <div class="study-card" data-review-id="network-idempotent-retry">
+  <div class="study-card-top">
+    <span class="study-label">Перед чтением</span>
+    <span class="study-state" data-study-state>к повторению сегодня</span>
+  </div>
+  <p class="study-question">Почему автоматический retry при разрыве соединения безопасен для <code>PUT</code> и <code>DELETE</code>, но опасен для <code>POST</code>?</p>
+  <details class="study-answer">
+    <summary>Показать разбор</summary>
+    <div class="ans"><p><code>PUT</code> и <code>DELETE</code> идемпотентны: повтор даёт то же состояние сервера. <code>POST</code> не идемпотентен — повтор «создать заказ» породит дубль. Поэтому OkHttp по умолчанию не ретраит не-идемпотентные методы, а для них вводят <code>Idempotency-Key</code>, по которому сервер дедуплицирует.</p></div>
+  </details>
+  <div class="study-actions" aria-label="Запланировать повторение">
+    <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+    <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+    <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+  </div>
+</div>
           <p>HTTP — текстовый (в HTTP/2 — бинарный) запрос-ответный протокол. Запрос = метод + URL + заголовки + тело; ответ = статус + заголовки + тело. Ключевые свойства методов, которые спрашивают: <strong>безопасность</strong> (safe — не меняет состояние) и <strong>идемпотентность</strong> (повтор даёт тот же эффект).</p>
           <div class="table-wrap">
             <table>
@@ -105,6 +138,22 @@
 
         <section class="section" id="tls">
           <h2>TLS/HTTPS: рукопожатие и доверие</h2>
+          <div class="study-card" data-review-id="network-tls-asymmetric">
+  <div class="study-card-top">
+    <span class="study-label">Перед чтением</span>
+    <span class="study-state" data-study-state>к повторению сегодня</span>
+  </div>
+  <p class="study-question">Зачем в TLS вообще нужна асимметричная криптография, если весь трафик потом шифруется симметричным ключом?</p>
+  <details class="study-answer">
+    <summary>Показать разбор</summary>
+    <div class="ans"><p>Асимметрия работает только в рукопожатии: она нужна, чтобы аутентифицировать сервер (сертификат) и безопасно согласовать общий симметричный ключ сессии по эфемерному Diffie-Hellman. Дальше данные шифруются быстрым симметричным алгоритмом (AES-GCM/ChaCha20), потому что асимметрика медленная. Эфемерный DH даёт forward secrecy: приватные ключи по сети не передаются.</p></div>
+  </details>
+  <div class="study-actions" aria-label="Запланировать повторение">
+    <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+    <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+    <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+  </div>
+</div>
           <p>HTTPS = HTTP поверх TLS. TLS решает три задачи: <strong>конфиденциальность</strong> (шифрование), <strong>целостность</strong> (MAC/AEAD), <strong>аутентификация сервера</strong> (сертификат). Главная идея, которую ждут на собесе: <strong>асимметричная криптография используется только при рукопожатии</strong>, чтобы безопасно договориться об общем симметричном ключе сессии, а дальше весь трафик шифруется быстрым симметричным алгоритмом (AES-GCM/ChaCha20).</p>
           <div class="table-wrap">
             <table>
@@ -183,6 +232,22 @@ val client = OkHttpClient.Builder()
 
         <section class="section" id="okhttp">
           <h2>OkHttp: клиент, интерсепторы, пул</h2>
+          <div class="study-card" data-review-id="network-app-vs-network-interceptor">
+  <div class="study-card-top">
+    <span class="study-label">Перед чтением</span>
+    <span class="study-state" data-study-state>к повторению сегодня</span>
+  </div>
+  <p class="study-question">Куда вешать auth-токен, а куда — логгер «по проводу»: на <code>addInterceptor</code> или <code>addNetworkInterceptor</code>, и почему?</p>
+  <details class="study-answer">
+    <summary>Показать разбор</summary>
+    <div class="ans"><p>Auth-токен и общие заголовки — на application (<code>addInterceptor</code>): он вызывается ровно один раз на запрос, не дублируется при редиректах/retry. Логгер реальных «по проводу» заголовков — на network (<code>addNetworkInterceptor</code>): он видит каждый хоп, имеет доступ к <code>Connection</code> и к ещё не распакованному gzip-телу. Application не видит редиректы и не вызывается при кэш-хите.</p></div>
+  </details>
+  <div class="study-actions" aria-label="Запланировать повторение">
+    <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+    <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+    <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+  </div>
+</div>
           <p><code>OkHttpClient</code> — тяжёлый объект: держит пул соединений, пул потоков (dispatcher) и кэш. <strong>Создавай его один раз</strong> (синглтон/DI) и переиспользуй через <code>newBuilder()</code> — так клиенты делят connection pool и кэш.</p>
           <div class="code-label">NetworkModule.kt</div>
 <pre><code class="language-kotlin">val client = OkHttpClient.Builder()
@@ -299,6 +364,22 @@ val api = retrofit.create&lt;UserApi&gt;()</code></pre>
 
         <section class="section" id="errors">
           <h2>Обработка ошибок и устойчивость</h2>
+          <div class="study-card" data-review-id="network-swallow-cancellation">
+  <div class="study-card-top">
+    <span class="study-label">Перед чтением</span>
+    <span class="study-state" data-study-state>к повторению сегодня</span>
+  </div>
+  <p class="study-question">Что сломается, если общий <code>catch</code> в <code>safeApiCall</code> поймает и проглотит <code>CancellationException</code>?</p>
+  <details class="study-answer">
+    <summary>Показать разбор</summary>
+    <div class="ans"><p>Отмена корутины реализована через бросок <code>CancellationException</code>. Если его проглотить, родительский scope не узнает об отмене — сломается структурированный параллелизм, корутина «повиснет», ресурсы не освободятся. Поэтому его ловят <em>первой</em> веткой и делают <code>throw</code> (или используют <code>ensureActive()</code>), а уже потом обрабатывают <code>HttpException</code>/<code>IOException</code> и прочее.</p></div>
+  </details>
+  <div class="study-actions" aria-label="Запланировать повторение">
+    <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+    <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+    <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+  </div>
+</div>
           <p>Сетевой вызов падает множеством способов: нет связи (<code>IOException</code>/<code>UnknownHostException</code>), HTTP-ошибка (<code>HttpException</code> / не-2xx), таймаут (<code>SocketTimeoutException</code>), ошибка парсинга (<code>SerializationException</code>), отмена (<code>CancellationException</code>). Цель — поймать всё это в одном месте и отдать наверх <strong>предсказуемый доменный результат</strong>, а не «сырое» исключение.</p>
           <div class="code-label">DataResult.kt</div>
 <pre><code class="language-kotlin">sealed interface DataResult&lt;out T&gt; {
@@ -403,6 +484,22 @@ Left -->|да| Fail
 
         <section class="section" id="serialization">
           <h2>Сериализация: kotlinx vs Moshi vs Gson</h2>
+          <div class="study-card" data-review-id="network-gson-npe">
+  <div class="study-card-top">
+    <span class="study-label">Перед чтением</span>
+    <span class="study-state" data-study-state>к повторению сегодня</span>
+  </div>
+  <p class="study-question">Как Gson умудряется положить <code>null</code> в non-null Kotlin-поле и проигнорировать его значение по умолчанию?</p>
+  <details class="study-answer">
+    <summary>Показать разбор</summary>
+    <div class="ans"><p>Gson создаёт объект через <code>Unsafe</code>, минуя конструктор Kotlin. Раз конструктор не вызывается, default-значения и проверки null-safety не отрабатывают: отсутствующее поле остаётся <code>null</code> даже в non-null типе, и приложение падает с NPE в неожиданном месте. kotlinx.serialization и Moshi-with-codegen Kotlin-aware и работают через конструктор, поэтому для нового кода берут их.</p></div>
+  </details>
+  <div class="study-actions" aria-label="Запланировать повторение">
+    <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+    <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+    <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+  </div>
+</div>
           <p>Конвертер превращает JSON-тело в объект и обратно. Выбор библиотеки — частый вопрос «что и почему».</p>
           <div class="table-wrap">
             <table>
@@ -437,6 +534,22 @@ val json = Json {
 
         <section class="section" id="websockets">
           <h2>WebSockets и реалтайм: Upgrade, ping/pong, реконнект</h2>
+          <div class="study-card" data-review-id="network-ws-half-open">
+  <div class="study-card-top">
+    <span class="study-label">Перед чтением</span>
+    <span class="study-state" data-study-state>к повторению сегодня</span>
+  </div>
+  <p class="study-question">Сокет «открыт», <code>onFailure</code> не сработал, но сообщения не идут уже минуту. Что произошло и чем это ловят заранее?</p>
+  <details class="study-answer">
+    <summary>Показать разбор</summary>
+    <div class="ans"><p>NAT или прокси разорвал соединение без <code>FIN</code> — на уровне TCP клиент об этом не узнаёт, сокет «как будто живой» (half-open). <code>onFailure</code> сработает только при следующей отправке по таймауту. Ловят это <code>pingInterval(...)</code>: OkHttp шлёт ping-фреймы и ждёт pong; если pong не пришёл, соединение признаётся мёртвым, вызывается <code>onFailure</code> и запускается reconnect с backoff.</p></div>
+  </details>
+  <div class="study-actions" aria-label="Запланировать повторение">
+    <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+    <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+    <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+  </div>
+</div>
           <p>HTTP — запрос-ответный: сервер молчит, пока его не спросят. Для чатов, котировок, статусов заказа это неудобно — нужен канал, по которому сервер сам шлёт сообщения. WebSocket поднимается поверх того же TCP через HTTP <strong>Upgrade-рукопожатие</strong>: клиент шлёт обычный GET с заголовком <code>Upgrade: websocket</code>, сервер отвечает <code>101 Switching Protocols</code>, и дальше сокет переходит в полнодуплексный режим. <code>wss://</code> — то же самое, но поверх TLS.</p>
           <div class="diagram">
           <div class="mermaid">
@@ -969,7 +1082,7 @@ val api = retrofit.create(UserApi::class.java)</code></pre>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/glossary.js?v=20260621-13"></script>
-  <script src="../assets/app.js?v=20260621-13"></script>
+  <script src="../assets/glossary.js?v=20260621-16"></script>
+  <script src="../assets/app.js?v=20260621-16"></script>
 </body>
 </html>

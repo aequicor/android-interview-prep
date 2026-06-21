@@ -17,7 +17,7 @@
   <title>Android-компоненты и IPC · Android-собес</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../assets/style.css?v=20260621-13">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
 <body data-page="components">
@@ -37,6 +37,23 @@
           </div>
         </header>
 
+        <div class="study-lab">
+          <div class="study-lab-copy">
+            <span class="study-label">Тренажёр главы</span>
+            <p class="study-title">Сначала пробуем ответить, потом читаем разбор.</p>
+            <p class="study-copy">Карточки разбросаны по главе: они проверяют не определение, а механизм, выбор API и типичные баги. После ответа ставьте дату следующего повторения.</p>
+          </div>
+          <div class="study-lab-side" aria-label="Статистика тренажёра">
+            <div class="study-meter"><b data-study-due>0</b><span>на сегодня</span></div>
+            <div class="study-meter"><b data-study-scheduled>0</b><span>отложено</span></div>
+            <div class="study-meter"><b data-study-total>0</b><span>всего</span></div>
+          </div>
+          <div class="study-lab-actions">
+            <button class="study-btn primary" type="button" data-study-scroll-due>К карточке на сегодня</button>
+            <button class="study-btn" type="button" data-study-reset>Сбросить тренажёр главы</button>
+          </div>
+        </div>
+
         <section class="section" id="scope">
           <h2>Граница этой главы</h2>
           <p>Раньше здесь жили Activity, Fragment и IPC в одном месте. Это было удобно как обзор, но плохо для подготовки: по Activity отдельно спрашивают <code>isFinishing</code>, saved state и task/back stack; по Fragment — транзакции, <code>viewLifecycleOwner</code>, state loss и Fragment Result API. Поэтому эти два компонента теперь вынесены в соседние главы, а здесь остаётся платформа вокруг них.</p>
@@ -53,6 +70,22 @@
 
         <section class="section" id="service">
           <h2>Service: started, foreground и bound</h2>
+          <div class="study-card" data-review-id="components-service-thread">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Коллега говорит: «вынес тяжёлую загрузку в <code>Service</code>, теперь она не на main-потоке». В чём он ошибается и где на самом деле начнётся фон?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Service по умолчанию работает в главном потоке процесса — это компонент без UI, а не фоновый поток. Тяжёлая работа в <code>onStartCommand()</code> даст ANR так же, как в Activity. Сам поток надо создать явно: корутина (<code>Dispatchers.IO</code>), Executor или Worker.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Service — компонент без UI для долгой работы. Важно: <strong>Service по умолчанию работает в главном потоке</strong> — это не «фоновый поток», а лишь компонент без интерфейса. Тяжёлую работу всё равно уносят в корутины/поток.</p>
           <p class="subhead">Started vs bound</p>
           <div class="table-wrap">
@@ -136,6 +169,22 @@ WorkManager.getInstance(context).enqueue(req)</code></pre>
 
         <section class="section" id="workmanager">
           <h2>WorkManager под капотом</h2>
+          <div class="study-card" data-review-id="components-wm-reboot">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">За счёт чего работа из <code>WorkManager</code> переживает перезапуск приложения и перезагрузку устройства?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Запросы хранятся не в памяти процесса, а в собственной SQLite-базе (через Room). После ребута их восстанавливает <code>RescheduleReceiver</code>, который ловит <code>BOOT_COMPLETED</code>. Под капотом WorkManager выбирает движок под версию ОС: <code>JobScheduler</code> на API 23+ либо <code>AlarmManager</code> + <code>BroadcastReceiver</code> на старых.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>В callout выше WorkManager назван «современной заменой сервисам» — но на собесе про фоновую работу спрашивают глубже, чем «есть такой класс». Разберём, как он даёт гарантии и чем управляется. Полная глава — <a href="background-work.html">Фоновая работа</a>; здесь — суть для вопросов про компоненты.</p>
           <p class="subhead">Где он хранит работу и почему она переживает ребут</p>
           <p>Запросы лежат в собственной SQLite-базе (через Room), а не в памяти процесса. Поэтому работа переживает перезапуск приложения и перезагрузку устройства: после ребута её восстанавливает <code>RescheduleReceiver</code>, ловящий <code>BOOT_COMPLETED</code>. Под капотом на разных версиях WorkManager выбирает движок — <code>JobScheduler</code> (API 23+) либо, для старых, связку <code>AlarmManager</code> + <code>BroadcastReceiver</code>.</p>
@@ -192,6 +241,22 @@ F --> H
 
         <section class="section" id="receiver">
           <h2>BroadcastReceiver</h2>
+          <div class="study-card" data-review-id="components-onreceive-coroutine">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">В <code>onReceive()</code> запустили обычную корутину и сразу вышли из метода. Почему работа может не доделаться и что меняет <code>goAsync()</code>?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Как только <code>onReceive()</code> вернёт управление, процесс считается неактивным и его могут убить до завершения корутины, а сам объект ресивера перестаёт быть валидным. <code>goAsync()</code> возвращает <code>PendingResult</code> и говорит системе «я ещё не закончил» — процесс держат живым чуть дольше (тот же бюджет ~10 секунд), а в конце обязателен <code>pendingResult.finish()</code>. Для долгой работы — <code>enqueue</code> в WorkManager.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Компонент-подписчик на системные (<code>BOOT_COMPLETED</code>, заряд, сеть) или собственные события. Регистрируется двумя способами с принципиально разной семантикой.</p>
           <div class="table-wrap">
             <table>
@@ -232,6 +297,22 @@ override fun onStop() {
 
         <section class="section" id="provider">
           <h2>ContentProvider и Context</h2>
+          <div class="study-card" data-review-id="components-provider-init">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Библиотека (WorkManager, Firebase) поднимается сама, без вашего кода в <code>Application</code>. Через какой механизм и чем это бьёт по холодному старту?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>ContentProvider.onCreate()</code> вызывается раньше <code>Application.onCreate()</code> — в окне между attach и onCreate приложения. Библиотека объявляет служебный провайдер в манифесте (через manifest merger) и инициализирует SDK в его <code>onCreate</code>. Минус: каждый такой провайдер выполняется последовательно на главном потоке и замедляет cold start. Ради этого появился <code>androidx.startup</code> с одним <code>InitializationProvider</code>.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p class="subhead">ContentProvider</p>
           <p>Стандартный механизм <strong>предоставить структурированные данные другим приложениям</strong> (или процессам). Внутри одного приложения он почти не нужен — там проще Room/репозиторий. Он оправдан, когда: данные читают чужие приложения; нужно интегрироваться с системой (контакты, календарь, медиатека, <code>FileProvider</code> для безопасной раздачи файлов); требуется <code>SyncAdapter</code>/виджеты, которым нужен provider.</p>
           <p>Доступ — через <code>ContentResolver</code> по URI вида <code>content://authority/path/id</code>. Права разграничиваются <code>android:readPermission</code>/<code>writePermission</code> и временными <strong>URI permissions</strong> (<code>FLAG_GRANT_READ_URI_PERMISSION</code>) — так <code>FileProvider</code> отдаёт один файл без выдачи доступа ко всему.</p>
@@ -300,6 +381,22 @@ val pending = PendingIntent.getActivity(
 
         <section class="section" id="ipc-binder">
           <h2>IPC: Binder под капотом</h2>
+          <div class="study-card" data-review-id="components-binder-mainthread">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Зачем клиенту <code>linkToDeath</code> и почему синхронный AIDL-вызов с главного потока опасен, если сервер повиснет?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>linkToDeath</code> регистрирует death recipient: при смерти удалённого процесса срабатывает <code>binderDied()</code>, и клиент узнаёт о разрыве сразу, а не на следующем <code>transact</code> с <code>DeadObjectException</code> — успевает сбросить proxy и переподключиться. Синхронный AIDL-вызов блокирует вызывающий поток до ответа; сделанный с main-потока при зависшем сервере он замораживает UI и через несколько секунд даёт ANR. Поэтому удалённые вызовы делают с фонового потока.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Процессы в Android изолированы (каждое приложение — свой Linux-процесс и UID). Чтобы они общались, нужен <strong>IPC</strong>. Основной механизм — <strong>Binder</strong>: это и есть транспорт почти всего системного API (вызов <code>ActivityManager</code>, <code>startActivity</code> через <code>system_server</code> и т.д.).</p>
           <p>Binder реализован как драйвер ядра <code>/dev/binder</code>. На стороне клиента находится <strong>proxy</strong> (реализует интерфейс, но внутри упаковывает вызов), на стороне сервера — <strong>stub</strong> (распаковывает и вызывает реальный метод). Клиент зовёт <code>transact()</code>, драйвер копирует данные в адресное пространство сервера и вызывает <code>onTransact()</code>. Сервер обрабатывает вызовы в <strong>пуле binder-потоков</strong> (по умолчанию до ~16), поэтому удалённые методы могут выполняться <em>параллельно</em> и не на main-потоке.</p>
           <div class="diagram">
@@ -347,6 +444,22 @@ end note
 
         <section class="section" id="ipc-aidl">
           <h2>AIDL, Messenger и процессы</h2>
+          <div class="study-card" data-review-id="components-aidl-vs-messenger">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Нужен IPC к своему сервису. Когда брать AIDL, а когда хватает <code>Messenger</code>, и чем это отличается по параллелизму?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>AIDL даёт богатый типизированный API и параллельные вызовы от многих клиентов — обработка идёт в binder thread pool, поэтому серверный Stub должен быть потокобезопасным. Messenger строит очередь <code>Message</code> поверх одного Binder и обрабатывает их по одному в <code>Handler</code>: меньше кода, но нет параллелизма и сложных сигнатур. Для простого обмена сообщениями — Messenger, для настоящего IPC-API — AIDL.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p class="subhead">AIDL: интерфейс между процессами</p>
           <p>Писать proxy/stub руками тяжело — для этого есть <strong>AIDL</strong> (Android Interface Definition Language). Описываете интерфейс в <code>.aidl</code>, генератор создаёт <code>Stub</code> (наследуете на сервере) и <code>Proxy</code> (получаете на клиенте через <code>asInterface()</code>). Данные пересекают границу процесса через <strong>маршалинг в <code>Parcel</code></strong>; кастомные классы должны быть <code>Parcelable</code>.</p>
           <div class="code-label">IRemoteService.aidl</div>
@@ -552,7 +665,7 @@ class UploadService : Service() {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/glossary.js?v=20260621-13"></script>
-  <script src="../assets/app.js?v=20260621-13"></script>
+  <script src="../assets/glossary.js?v=20260621-16"></script>
+  <script src="../assets/app.js?v=20260621-16"></script>
 </body>
 </html>

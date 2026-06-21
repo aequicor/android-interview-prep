@@ -9,7 +9,7 @@
   <title>Gradle и сборка · Android-собес</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../assets/style.css?v=20260621-13">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
 <body data-page="gradle-build">
@@ -25,8 +25,41 @@
           <div class="meta"><span class="tag lvl-mid">Middle</span><span class="tag lvl-sen">Senior</span><span class="tag hot">Частый вопрос</span></div>
         </header>
 
+        <div class="study-lab">
+          <div class="study-lab-copy">
+            <span class="study-label">Тренажёр главы</span>
+            <p class="study-title">Сначала пробуем ответить, потом читаем разбор.</p>
+            <p class="study-copy">Карточки разбросаны по главе: они проверяют не определение, а механизм, выбор API и типичные баги. После ответа ставьте дату следующего повторения.</p>
+          </div>
+          <div class="study-lab-side" aria-label="Статистика тренажёра">
+            <div class="study-meter"><b data-study-due>0</b><span>на сегодня</span></div>
+            <div class="study-meter"><b data-study-scheduled>0</b><span>отложено</span></div>
+            <div class="study-meter"><b data-study-total>0</b><span>всего</span></div>
+          </div>
+          <div class="study-lab-actions">
+            <button class="study-btn primary" type="button" data-study-scroll-due>К карточке на сегодня</button>
+            <button class="study-btn" type="button" data-study-reset>Сбросить тренажёр главы</button>
+          </div>
+        </div>
+
         <section class="section" id="model">
           <h2>Модель Gradle: фазы и граф задач</h2>
+          <div class="study-card" data-review-id="gradle-build-config-runs-always">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Почему тяжёлый код на верхнем уровне <code>build.gradle</code> (чтение файла, сетевой запрос) замедляет даже <code>./gradlew help</code>, а не только сборку?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Тело build-скрипта на верхнем уровне исполняется на фазе configuration, а она проходит при любой команде Gradle — даже когда вы ничего не собираете. Поэтому I/O или сетевой запрос в конфигурации прибавляется ко всем командам сразу. Лениво выполняемую работу выносят внутрь <code>doLast {}</code> задачи (фаза execution) с объявленными входами/выходами, чтобы она кешировалась.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Каждая сборка Gradle проходит три фазы строго по порядку: <strong>initialization</strong>, <strong>configuration</strong>, <strong>execution</strong>. Понимание этого порядка — ключ к тому, почему одни правки в <code>build.gradle</code> ускоряют сборку, а другие незаметно тормозят вообще всё.</p>
           <p>В <em>initialization</em> Gradle читает <code>settings.gradle(.kts)</code>, чтобы узнать состав сборки: какие модули в неё входят (через <code>include(":app", ":core")</code>) и какие included builds подключены. На этой фазе создаётся объект <code>Settings</code> и по объекту <code>Project</code> на каждый модуль — но скрипты модулей ещё не исполнялись.</p>
           <p>В <em>configuration</em> Gradle исполняет тело каждого <code>build.gradle</code> всех участвующих модулей, регистрирует задачи и строит из них граф — по входам и выходам каждой задачи. Здесь критичный момент: код на верхнем уровне build-скрипта (вне блоков <code>tasks.register</code>) исполняется <strong>на каждой сборке</strong>, даже если вы собираете одну-единственную задачу. Поэтому тяжёлая работа в конфигурации — чтение файлов, сетевые запросы, перебор зависимостей — замедляет любую команду Gradle, включая <code>./gradlew help</code>.</p>
@@ -66,6 +99,22 @@ flowchart LR
 
         <section class="section" id="variants">
           <h2>AGP: build types, flavors, variants</h2>
+          <div class="study-card" data-review-id="gradle-build-variants-explode">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Как из build types и product flavors получается число вариантов, и почему добавление одного измерения флейворов бьёт по скорости сборки?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>AGP перемножает по одному флейвору из каждого измерения на каждый build type — число вариантов растёт мультипликативно (2 измерения по 3 флейвора × 2 типа = 18). AGP конфигурирует задачи на все варианты, даже если собираете один, поэтому раздувается фаза конфигурации и граф задач. Лишние измерения убирают, а ненужные комбинации режут через <code>variantFilter</code> / <code>beforeVariants</code>.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>AGP добавляет поверх Gradle понятие <strong>build variant</strong> — конкретной сборки приложения. Вариант рождается из пересечения двух осей: <em>build type</em> (как собрано) и <em>product flavor</em> (что за версия).</p>
           <p><strong>Build type</strong> описывает технику сборки. Из коробки два: <code>debug</code> (отлаживаемый, без минификации, с дебажной подписью) и <code>release</code> (для публикации, с R8 и боевой подписью). <strong>Product flavor</strong> — это вариация продукта: free против paid, dev против prod, разные бренды. Флейворы группируются по измерениям (<code>flavorDimensions</code>), и AGP перемножает по одному флейвору из каждого измерения на каждый build type.</p>
           <div class="diagram">
@@ -130,6 +179,22 @@ flowchart TB
 
         <section class="section" id="speed">
           <h2>Ускорение сборки</h2>
+          <div class="study-card" data-review-id="gradle-build-two-caches">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Configuration cache и build cache — какой из них что ускоряет, и взаимоисключающие ли они?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Это два разных кеша на разных фазах. Configuration cache (<code>org.gradle.configuration-cache=true</code>) пропускает повторное построение графа задач — ускоряет фазу конфигурации. Build cache (<code>org.gradle.caching=true</code>) переиспользует выходы самих задач (классы, dex, AAR) — ускоряет execution, особенно чистые сборки и переключение веток. Они не взаимоисключающие, включают оба.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Медленная сборка — налог на каждую итерацию разработчика. Хорошая новость: большую часть выигрыша дают несколько переключателей в <code>gradle.properties</code> и дисциплина в объявлении зависимостей.</p>
           <p>База — <strong>Gradle daemon</strong>: фоновый JVM-процесс, который живёт между сборками и держит прогретый кеш и JIT. Он включён по умолчанию; выключать его (<code>--no-daemon</code>) есть смысл только на одноразовых CI-агентах. <strong>Parallel</strong> (<code>org.gradle.parallel=true</code>) собирает независимые модули одновременно — выигрыш тем больше, чем лучше разбит проект.</p>
           <p class="subhead">Configuration cache против build cache</p>
@@ -172,6 +237,22 @@ kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 
         <section class="section" id="annotation">
           <h2>KSP vs kapt</h2>
+          <div class="study-card" data-review-id="gradle-build-ksp-vs-kapt">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Почему kapt принципиально медленнее KSP — что лишнего он делает на сборке?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>kapt написан под Java-процессоры: чтобы их прогнать, он сначала генерирует Java-стабы (для этого нужно разрешить все символы программы) и затем скармливает их <code>javac</code> с процессорами — отдельный дорогой проход компилятора. KSP читает символы Kotlin напрямую через свой API, без стабов и без <code>javac</code>, и разрешает ссылки лениво. Отсюда кратная разница в скорости генерации и более бережная инкрементальная пересборка.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Аннотационные процессоры (Dagger/Hilt, Room, Moshi) генерируют код на сборке. Долгое время в Kotlin это делал <strong>kapt</strong>, и он был узким местом. KSP пришёл его заменить — и почти всегда быстрее.</p>
           <p>Почему kapt медленный: процессоры написаны под Java и работают с Java-моделью кода. Чтобы их прогнать, kapt сначала компилирует Kotlin в <strong>Java-стабы</strong> (заглушки с сигнатурами, без тел методов), а для этого должен разрешить все символы программы. По данным команды Kotlin, генерация стабов стоит примерно треть полного анализа kotlinc. Затем эти стабы скармливаются <code>javac</code> с процессорами — отдельный проход компилятора.</p>
           <p><strong>KSP</strong> (Kotlin Symbol Processing) читает символы Kotlin напрямую через собственный API, без стабов и без <code>javac</code>. Он понимает Kotlin-специфику нативно и разрешает ссылки лениво, по запросу. На примере из документации Kotlin: при общем времени компиляции Kotlin около 21,5 с kapt тратил на генерацию ~8,7 с, а KSP — ~1,15 с.</p>
@@ -211,6 +292,22 @@ dependencies {
 
         <section class="section" id="modularization">
           <h2>Модуляризация и влияние на сборку</h2>
+          <div class="study-card" data-review-id="gradle-build-api-vs-impl">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Почему дефолт — <code>implementation</code>, а не <code>api</code>, и как это влияет на перекомпиляцию потребителей?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>api</code>-зависимость протекает в compile classpath потребителей транзитивно, <code>implementation</code> остаётся внутренней. Меньше classpath — быстрее компиляция. Главное: при ABI-совместимой правке <code>implementation</code>-зависимости потребителей не надо перекомпилировать (compile-avoidance), а с <code>api</code> любое изменение протекает дальше по графу. <code>api</code> ставят только когда тип реально торчит в публичной сигнатуре модуля.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Разбиение монолита на модули работает сразу в двух плоскостях: архитектурной и сборочной. Типовая раскладка по слоям: <code>:app</code> (точка сборки, DI-граф), <code>:feature:*</code> (экраны и их логика), <code>:core:*</code> (общие UI/утилиты), <code>:data</code> (репозитории, сеть, БД).</p>
           <p class="subhead">api против implementation</p>
           <p>Это первое, что спрашивают про модули. Зависимость в <code>api</code> <strong>протекает</strong> в compile classpath потребителей: кто зависит от вашего модуля, видит и его api-зависимости транзитивно. <code>implementation</code> остаётся внутренней — она в classpath потребителя не попадает.</p>
@@ -250,6 +347,22 @@ dependencies {
 
         <section class="section" id="r8">
           <h2>R8: shrinking, obfuscation, optimization</h2>
+          <div class="study-card" data-review-id="gradle-build-keep-class-overkill">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Gson возвращает объект с пустыми полями после R8. <code>-keep class Foo { *; }</code> чинит краш — почему это плохое решение и что точнее?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Gson сопоставляет JSON с полями по их именам через рефлексию, а R8 поля переименовывает — десериализация теряет соответствие. <code>-keep class Foo { *; }</code> делает класс точкой входа: R8 не удалит, не переименует и не оптимизирует ни класс, ни члены — раздувает dex и глушит оптимизации. Точнее <code>-keepclassmembers ... &lt;fields&gt;;</code>: сохраняет имена нужных членов, но позволяет удалить класс, если он недостижим.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>В release-сборке за уменьшение и защиту кода отвечает <strong>R8</strong> — он включается, когда вы ставите <code>isMinifyEnabled = true</code>. R8 делает три вещи за один проход.</p>
           <p><strong>Shrinking</strong> (tree shaking) — находит и выкидывает недостижимый код: неиспользуемые классы, поля, методы из вашего кода и зависимостей. <strong>Obfuscation</strong> — переименовывает классы и методы в короткие имена (<code>com.example.MyActivity → a.b.a</code>), уменьшая размер dex и заодно усложняя реверс. <strong>Optimization</strong> — переписывает код: инлайнит методы, убирает мёртвые ветки, упрощает выражения.</p>
           <p>Точка входа в анализ достижимости — <strong>keep-правила</strong>. AGP и AAPT2 генерируют базовый набор автоматически (Activity, View, Service из манифеста). Остальное, что вызывается не из Kotlin-кода напрямую, R8 «не видит» и может удалить или переименовать.</p>
@@ -436,7 +549,7 @@ dependencies {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/glossary.js?v=20260621-13"></script>
-  <script src="../assets/app.js?v=20260621-13"></script>
+  <script src="../assets/glossary.js?v=20260621-16"></script>
+  <script src="../assets/app.js?v=20260621-16"></script>
 </body>
 </html>

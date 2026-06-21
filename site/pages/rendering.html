@@ -9,7 +9,7 @@
   <title>Рендеринг и кадры · Android-собес</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../assets/style.css?v=20260621-13">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
 <body data-page="rendering">
@@ -25,8 +25,41 @@
           <div class="meta"><span class="tag lvl-mid">Middle</span><span class="tag lvl-sen">Senior</span><span class="tag hot">Частый вопрос</span></div>
         </header>
 
+        <div class="study-lab">
+          <div class="study-lab-copy">
+            <span class="study-label">Тренажёр главы</span>
+            <p class="study-title">Сначала пробуем ответить, потом читаем разбор.</p>
+            <p class="study-copy">Карточки разбросаны по главе: они проверяют не определение, а механизм, выбор API и типичные баги. После ответа ставьте дату следующего повторения.</p>
+          </div>
+          <div class="study-lab-side" aria-label="Статистика тренажёра">
+            <div class="study-meter"><b data-study-due>0</b><span>на сегодня</span></div>
+            <div class="study-meter"><b data-study-scheduled>0</b><span>отложено</span></div>
+            <div class="study-meter"><b data-study-total>0</b><span>всего</span></div>
+          </div>
+          <div class="study-lab-actions">
+            <button class="study-btn primary" type="button" data-study-scroll-due>К карточке на сегодня</button>
+            <button class="study-btn" type="button" data-study-reset>Сбросить тренажёр главы</button>
+          </div>
+        </div>
+
         <section class="section" id="pipeline">
           <h2>Конвейер кадра: Choreographer и VSYNC</h2>
+          <div class="study-card" data-review-id="rendering-dropped-frame">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Кадр не успел подготовиться к следующему VSYNC, опоздав на 1 мс. Покажет ли Choreographer его «с небольшим опозданием»?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Нет. Choreographer не выводит кадр позже дедлайна — он роняет его целиком, и на экране ещё раз держится предыдущий кадр. Глаз ловит это как рывок. Поэтому промах даже на миллисекунду стоит целого пропущенного кадра, и чем выше частота (8.3 мс на 120 Гц), тем дороже любая лишняя работа.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Дисплей обновляется не когда захочет приложение, а на своей частоте: 60 раз в секунду на обычном экране, 90 или 120 — на «плавных». Каждое такое обновление аппаратура анонсирует сигналом <strong>VSYNC</strong> (vertical synchronization). Между двумя соседними VSYNC у вас есть фиксированное окно, чтобы успеть подготовить новый кадр. Это и есть <em>бюджет кадра</em>: <code>1000 мс / 60 ≈ 16.6 мс</code> при 60 Гц, <code>1000 / 90 ≈ 11 мс</code> при 90 Гц и всего <code>1000 / 120 ≈ 8.3 мс</code> при 120 Гц.</p>
           <p>Связующее звено между этим аппаратным «тиком» и вашим UI — <code>Choreographer</code>. Он подписан на VSYNC и по каждому сигналу запускает один проход отрисовки: вызывает накопленные колбэки в строгом порядке — обработка ввода, аниматоры, затем обход дерева View или рекомпозиция Compose с measure/layout/draw. Когда вы пишете <code>view.postOnAnimation { }</code> или анимация Compose ждёт следующего кадра — заявка кладётся в очередь Choreographer и сработает на ближайшем VSYNC.</p>
           <div class="diagram">
@@ -53,6 +86,22 @@ DISP -.->|следующий VSYNC| VS
 
         <section class="section" id="renderthread">
           <h2>UI Thread и RenderThread</h2>
+          <div class="study-card" data-review-id="rendering-renderthread-idle">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Вы синхронно распарсили большой JSON в обработчике клика, и кадр уронен. Виноват ли в этом RenderThread или GPU?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Нет, они тут простаивают. UI Thread не закрашивает пиксели — он записывает команды в display list (<code>RenderNode</code>). Долгая работа на главном потоке мешает ему дописать display list к точке sync, и RenderThread остаётся без данных, которых ждёт. Поэтому «тяжёлое — в фон» — это правило про каждый кадр, а не только про защиту от ANR.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Распространённое заблуждение — что главный поток сам рисует пиксели. Со времён аппаратного ускорения (включено по умолчанию с Android 4.0, API 14) это не так. Главный поток (UI Thread) не закрашивает экран — он <strong>записывает, что нужно нарисовать</strong>. Каждый <code>View.onDraw</code> или draw-фаза Compose не льёт пиксели, а пишет команды рисования в <em>display list</em> — структуру внутри <code>RenderNode</code>. Это, по сути, запись на плёнку: «нарисуй прямоугольник тут, текст там, картинку сюда».</p>
           <p>Готовый набор <code>RenderNode</code> синхронизируется на отдельный поток — <strong>RenderThread</strong> (появился в Android 5.0, API 21). Он берёт display list, транслирует команды в вызовы GPU (OpenGL ES / Vulkan) и отправляет на видеоядро. Синхронизация не «выстрелил и забыл»: на точке sync главный поток коротко ждёт RenderThread (передача состояния), после чего освобождается как можно раньше — он не блокируется до момента, пока кадр реально покажут.</p>
           <div class="diagram">
@@ -82,6 +131,22 @@ GPU-->>RT: кадр готов
 
         <section class="section" id="jank">
           <h2>Jank и пропущенные кадры</h2>
+          <div class="study-card" data-review-id="rendering-jankstats-vs-macro">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Нужно понять, рвётся ли список в проде у реальных пользователей, и отдельно — стабильно воспроизвести просадку для поиска причины. Какие инструменты под какую задачу?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>JankStats</code> — продакшен на реальных устройствах: даёт длительность каждого кадра с метками состояния, отвечает «рвётся ли и где». Для воспроизведения берут <code>Macrobenchmark</code> с <code>FrameTimingMetric</code>: прогоняет сценарий стабильно от раза к разу и выдаёт <code>frameOverrunMs</code>. Конкретную просадку разбирают в Perfetto FrameTimeline. Эмулятор для замеров кадров не годится — нет настоящего VSYNC-конвейера и GPU телефона.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Jank — это рывок, который видит пользователь, когда система пропустила кадр(ы) из-за того, что UI не успел отрисоваться в бюджет. Android vitals делит просадки на категории по времени отрисовки кадра: обычный кадр укладывается в окно (16 мс на 60 Гц), <em>медленный кадр</em> — от 16 мс примерно до 700 мс, <em>frozen frame</em> (зависший) — дольше 700 мс, а свыше 5 с — это уже ANR. Frozen frames выделяют отдельно: почти секунда без отклика на ввод воспринимается как «приложение повисло», особенно на старте и переходах.</p>
           <div class="table-wrap">
             <table>
@@ -141,6 +206,22 @@ recyclerView.addOnScrollListener(/* ... putState("scroll", "active") ... */)</co
 
         <section class="section" id="lists">
           <h2>Производительность списков</h2>
+          <div class="study-card" data-review-id="rendering-lazycolumn-key">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">В <code>LazyColumn</code> вы поставили <code>key = { it }</code> по позиции элемента (его индексу). Что не так и что произойдёт при вставке элемента в начало списка?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Ключ по индексу = поведение по умолчанию, толку ноль: личность элемента не стабильна. При вставке в начало индексы всех элементов ниже «съезжают», Compose считает их изменившимися — каскад лишних рекомпозиций и сломанная анимация перестановки. Нужен <code>key</code> по бизнес-id, тогда перерисуется только реально новое. Неуникальный ключ — другая крайность: рантайм бросит исключение.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Список — главный генератор jank в реальных приложениях: при скролле кадры идут подряд, и любая лишняя работа на элемент сразу превращается в рывки. Подходы во View и в Compose разные по механике, но цель одна — чтобы подготовка одного элемента стоила доли миллисекунды.</p>
           <p class="subhead">RecyclerView: переиспользование</p>
           <p><code>RecyclerView</code> держит небольшой пул <code>ViewHolder</code> и переиспользует их: ушедший за край экрана холдер не уничтожается, а заново привязывается к новым данным в <code>onBindViewHolder</code>. Отсюда правило: <strong>bind должен быть лёгким</strong> — никаких аллокаций, форматтеров «на лету», синхронного доступа к диску; документация целится в «много меньше 1 мс» на привязку. Обновления списка делают через <code>ListAdapter</code> + <code>DiffUtil</code>, который на фоне считает разницу старого и нового списка и шлёт точечные анимации вместо <code>notifyDataSetChanged()</code>. Чтобы DiffUtil различал «тот же элемент с новыми данными» и «другой элемент», нужны <em>stable ids</em> (через <code>areItemsTheSame</code> по бизнес-id). Префетч (<code>LinearLayoutManager</code> готовит холдеры впрок, пока главный поток простаивает между кадрами) включён по умолчанию и работает в связке с RenderThread.</p>
@@ -195,6 +276,22 @@ recyclerView.addOnScrollListener(/* ... putState("scroll", "active") ... */)</co
 
         <section class="section" id="baseline">
           <h2>Baseline Profiles и кадры</h2>
+          <div class="study-card" data-review-id="rendering-baseline-aot">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Откуда вообще берётся jank на первом запуске после установки, если код вашего приложения не менялся, и за счёт чего baseline profile его убирает?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>ART сначала исполняет байткод интерпретатором и лишь постепенно JIT-компилирует горячие методы — первые секунды (старт, первый скролл) идут «холодными» и тормозят. Baseline profile — список горячих путей в APK/AAB; при установке ART делает по нему AOT-компиляцию заранее, и критичные пути с первого касания исполняются нативным кодом, без интерпретации, JIT-разогрева и джанка от фоновой dexopt. Порядок выигрыша — ~30% с первого запуска.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>У первого запуска после установки есть встроенный jank, не связанный с вашим кодом напрямую. ART (Android Runtime) сначала исполняет ваш байткод <em>интерпретатором</em>, потом JIT-компилятор постепенно компилирует горячие методы в машинный код — но первые секунды работы идут «холодными» и тормозят: старт долгий, первый скролл рвётся. <strong>Baseline Profiles</strong> убирают именно это.</p>
           <p>Baseline profile — это список горячих путей (методов и классов: старт, навигация, скролл, отрисовка кадра), который кладётся в APK/AAB файлом <code>baseline-prof.txt</code>. При установке ART делает по нему <strong>AOT-компиляцию</strong> (ahead-of-time) — компилирует эти методы в машинный код заранее, ещё до первого запуска. В итоге критичные пути исполняются скомпилированными с первого касания: нет ни интерпретации, ни JIT-разогрева, ни джанка от фоновой dexopt во время сессии. Документация называет порядок ~30% ускорения с первого запуска по сравнению с отсутствием профиля.</p>
           <div class="diagram">
@@ -323,7 +420,7 @@ private fun FeedRow(item: ItemUi) {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/glossary.js?v=20260621-13"></script>
-  <script src="../assets/app.js?v=20260621-13"></script>
+  <script src="../assets/glossary.js?v=20260621-16"></script>
+  <script src="../assets/app.js?v=20260621-16"></script>
 </body>
 </html>

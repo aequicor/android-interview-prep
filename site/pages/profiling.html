@@ -17,7 +17,7 @@
   <title>Профилирование и оптимизация · Android-собес</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../assets/style.css?v=20260621-13">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
 <body data-page="profiling">
@@ -37,8 +37,41 @@
           </div>
         </header>
 
+        <div class="study-lab">
+          <div class="study-lab-copy">
+            <span class="study-label">Тренажёр главы</span>
+            <p class="study-title">Сначала пробуем ответить, потом читаем разбор.</p>
+            <p class="study-copy">Карточки разбросаны по главе: они проверяют не определение, а механизм, выбор API и типичные баги. После ответа ставьте дату следующего повторения.</p>
+          </div>
+          <div class="study-lab-side" aria-label="Статистика тренажёра">
+            <div class="study-meter"><b data-study-due>0</b><span>на сегодня</span></div>
+            <div class="study-meter"><b data-study-scheduled>0</b><span>отложено</span></div>
+            <div class="study-meter"><b data-study-total>0</b><span>всего</span></div>
+          </div>
+          <div class="study-lab-actions">
+            <button class="study-btn primary" type="button" data-study-scroll-due>К карточке на сегодня</button>
+            <button class="study-btn" type="button" data-study-reset>Сбросить тренажёр главы</button>
+          </div>
+        </div>
+
         <section class="section" id="tools">
           <h2>Инструменты: что чем смотреть</h2>
+          <div class="study-card" data-review-id="profiling-profiler-vs-benchmark">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Когда вы возьмёте <code>Profiler</code>, а когда <code>Macrobenchmark</code>, и почему замер на debug-сборке бессмысленен?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Профайлер — интерактивный поиск причины «почему медленно» здесь и сейчас. Macrobenchmark даёт воспроизводимую цифру для регрессий в CI («стало ли медленнее на N мс»). Гонять бенчмарк надо на release/profileable-сборке: debug отключает R8, не применяет Baseline Profile и держит ART в интерпретаторе/JIT, поэтому его цифры в разы хуже пользовательских и нерепрезентативны.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Ключ к ответу — соответствие «симптом → инструмент». Эту таблицу стоит держать в голове.</p>
           <div class="table-wrap">
             <table>
@@ -162,6 +195,22 @@ flowchart LR
 
         <section class="section" id="art-gc-lifecycle">
           <h2>Жизненный путь объекта в ART GC</h2>
+          <div class="study-card" data-review-id="profiling-gc-pressure">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Почему поток мелких аллокаций в <code>onBindViewHolder</code> бьёт по плавности сильнее, чем одна крупная утечка?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>С Android 8 ART использует Concurrent Copying GC (с Android 10 поколенческий): паузы конкурентные и короткие, поэтому проблема плавности — не длина STW, а GC pressure. Чем больше аллокаций в горячем пути, тем чаще запускается young GC и тем больше он суммарно отъедает у кадра, дробя его и давая jank. Крупная утечка опасна иначе: растит RSS и в пределе даёт OOM, но сама кадры не дёргает.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Эта схема объясняет связку из вопроса выше наглядно: молодые объекты собираются часто и дёшево, до старшего поколения доживают единицы, а паузы — конкурентные и короткие. Отсюда вывод: бьёт по кадру не длина одной паузы, а <em>частота</em> молодых сборок под потоком аллокаций.</p>
           <div class="diagram">
           <div class="mermaid">
@@ -197,6 +246,22 @@ stateDiagram-v2
 
         <section class="section" id="startup">
           <h2>Старт приложения: cold / warm / hot</h2>
+          <div class="study-card" data-review-id="profiling-ttid-ttfd">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Чем <code>TTID</code> отличается от <code>TTFD</code> и зачем вообще нужен ручной вызов <code>reportFullyDrawn()</code>?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>TTID — время до первого отрисованного кадра, его система определяет сама. TTFD — момент, когда контент реально готов (данные подгружены, плейсхолдеры заменены); этот момент знает только приложение, поэтому его сообщают вызовом <code>reportFullyDrawn()</code>. Иначе можно показать пустой каркас за 200 мс (отличный TTID), но тянуть данные 2 секунды (плохой TTFD) — а пользователь видит именно второе.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Метрика, которую видит пользователь и Play Store (Android Vitals). Различают три сценария по тому, сколько работы уже сделано.</p>
           <div class="table-wrap">
             <table>
@@ -274,6 +339,22 @@ class StartupBenchmark {
 
         <section class="section" id="ui-jank">
           <h2>Производительность UI: jank и бюджет кадра</h2>
+          <div class="study-card" data-review-id="profiling-avg-fps-trap">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Почему высокий средний FPS не противоречит ощутимому jank, и какую метрику измерять вместо среднего?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>FPS как среднее за секунду прячет отдельные провалы: можно держать 58 кадров в среднем, но один кадр длиной 120 мс даст заметный рывок — пользователь чувствует именно худшие кадры. Поэтому измеряют не средний FPS, а перцентили длительности кадров (P90/P99) и долю janky/frozen-кадров; их и отдают <code>FrameTimingMetric</code> в Macrobenchmark и FrameTimeline в Perfetto.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Чтобы анимация была плавной при 60 Гц, каждый кадр должен быть готов за <strong>≈16,6 мс</strong>; для 90 Гц — ~11 мс, для <strong>120 Гц — ~8 мс</strong>. Не уложился — <code>Choreographer</code> <strong>пропускает кадр</strong> (dropped frame), пользователь видит рывок. Это и есть <strong>jank</strong>. Кадр, опоздавший очень сильно (&gt; ~700 мс), — frozen frame, его отдельно ругает Android Vitals.</p>
           <div class="diagram">
           <div class="mermaid">
@@ -336,6 +417,22 @@ val sorted = remember(items) { items.sortedBy { it.name } }</code></pre>
 
         <section class="section" id="anr">
           <h2>ANR: типы, пороги и разбор трейса</h2>
+          <div class="study-card" data-review-id="profiling-anr-broadcast-thread">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Почему синхронный I/O в <code>onReceive</code> у <code>BroadcastReceiver</code> грозит ANR, и как правильно вынести работу?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>И <code>onReceive</code>, и колбэки <code>Service</code> по умолчанию исполняются на главном потоке, а у broadcast жёсткий порог (10 с в foreground). Тяжёлый <code>onReceive</code> не только сам рискует упереться в этот таймаут, но и блокирует обработку ввода. Работу выносят в <code>goAsync()</code>, корутину или WorkManager, не держа main thread.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>ANR (Application Not Responding) система рисует, когда главный поток слишком долго не реагирует — за этим следит watchdog в <code>ActivityManager</code>. Это не отдельный баг, а симптом: main thread заблокирован, и ОС предлагает пользователю закрыть приложение. На собесе по перформансу ANR спрашивают почти всегда, причём конкретику: пороги и как читать трейс.</p>
           <p class="subhead">Типы ANR и пороги</p>
           <div class="table-wrap">
@@ -373,6 +470,22 @@ val sorted = remember(items) { items.sortedBy { it.name } }</code></pre>
 
         <section class="section" id="apk-size">
           <h2>Размер APK/AAB: R8 и shrinking</h2>
+          <div class="study-card" data-review-id="profiling-r8-keep">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Включили <code>isMinifyEnabled = true</code> — и приложение падает только в release. Какой класс кода чаще всего ломает R8 и как это лечить?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>R8 удаляет недостижимый код и переименовывает классы/члены. Код, к которому обращаются по имени, — рефлексия, Gson/Moshi по полям, kotlinx.serialization, JNI, классы из манифеста — для R8 выглядит «недостижимым», и он его выпиливает или переименовывает, отсюда краш только в release. Лечение — точечные <code>-keep</code>-правила; для читаемых стектрейсов хранить и загружать <code>mapping.txt</code> в Play Console.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p><strong>R8</strong> — стандартный компилятор-оптимизатор Android (заменил ProGuard), работает за один проход прямо над DEX и делает четыре вещи: <strong>tree shaking</strong> (удаляет недостижимый код), <strong>optimization</strong> (инлайнинг, слияние классов, удаление мёртвых веток), <strong>obfuscation</strong> (короткие имена → меньше строковая таблица) и <strong>desugaring</strong>. Включается в release одной строкой.</p>
           <div class="code-label">app/build.gradle.kts</div>
 <pre><code class="language-kotlin">android {
@@ -777,7 +890,7 @@ class StartupCompilationBenchmark {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/glossary.js?v=20260621-13"></script>
-  <script src="../assets/app.js?v=20260621-13"></script>
+  <script src="../assets/glossary.js?v=20260621-16"></script>
+  <script src="../assets/app.js?v=20260621-16"></script>
 </body>
 </html>

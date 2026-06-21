@@ -17,7 +17,7 @@
   <title>Хранение данных · Android-собес</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../assets/style.css?v=20260621-13">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
 <body data-page="storage">
@@ -37,8 +37,41 @@
           </div>
         </header>
 
+        <div class="study-lab">
+          <div class="study-lab-copy">
+            <span class="study-label">Тренажёр главы</span>
+            <p class="study-title">Сначала пробуем ответить, потом читаем разбор.</p>
+            <p class="study-copy">Карточки разбросаны по главе: они проверяют не определение, а механизм, выбор API и типичные баги. После ответа ставьте дату следующего повторения.</p>
+          </div>
+          <div class="study-lab-side" aria-label="Статистика тренажёра">
+            <div class="study-meter"><b data-study-due>0</b><span>на сегодня</span></div>
+            <div class="study-meter"><b data-study-scheduled>0</b><span>отложено</span></div>
+            <div class="study-meter"><b data-study-total>0</b><span>всего</span></div>
+          </div>
+          <div class="study-lab-actions">
+            <button class="study-btn primary" type="button" data-study-scroll-due>К карточке на сегодня</button>
+            <button class="study-btn" type="button" data-study-reset>Сбросить тренажёр главы</button>
+          </div>
+        </div>
+
         <section class="section" id="sharedprefs">
           <h2>SharedPreferences: наследие и его минусы</h2>
+          <div class="study-card" data-review-id="storage-apply-anr">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Почему утверждение «<code>apply()</code> не блокирует UI-поток» — только полуправда?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Сама запись на диск уходит в фон, но Android регистрирует её в <code>QueuedWork</code> и дожидается завершения всех pending-<code>apply()</code> в момент <code>onPause()</code>/<code>onStop()</code>. На медленном диске или при множестве записей это блокирует main и становится источником ANR. То есть «бесплатность» <code>apply()</code> заканчивается на переходах жизненного цикла.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p><code>SharedPreferences</code> — простое key-value-хранилище поверх XML-файла в приватной директории приложения. Долго был дефолтом для настроек, но в современных проектах его считают legacy. Понимать его всё ещё нужно: его минусы — это ровно те причины, по которым появился DataStore.</p>
 
           <p class="subhead">apply() vs commit() — классический вопрос</p>
@@ -161,6 +194,22 @@ val Context.userPrefs: DataStore&lt;UserPrefs&gt; by dataStore(
 
         <section class="section" id="encrypted">
           <h2>Шифрованное хранилище и Keystore</h2>
+          <div class="study-card" data-review-id="storage-key-invalidated">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Ключ Keystore создан с <code>setUserAuthenticationRequired(true)</code>. Что с ним случится, если пользователь добавит новый отпечаток, и как это правильно обработать?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>По умолчанию такой ключ инвалидируется при ре-энролле биометрии (<code>setInvalidatedByBiometricEnrollment(true)</code>), и при использовании прилетит <code>KeyPermanentlyInvalidatedException</code>. Защита от того, чтобы дописанная чужая биометрия не открыла старые данные. Обработка: поймать исключение, удалить алиас (<code>deleteEntry</code>), сгенерировать новый ключ и считать ранее зашифрованные им данные потерянными — пользователя надо пере-аутентифицировать.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Для чувствительных данных (токены, PII) нужно шифрование <strong>в покое (at rest)</strong>: даже если файл вытащат с устройства (root, бэкап), без ключа он бесполезен. Корень доверия — <strong>Android Keystore</strong>: ключи генерируются и хранятся в аппаратно-защищённой среде (TEE/StrongBox), их нельзя экспортировать — приложение лишь использует их для шифрования/дешифрования.</p>
 
           <p class="subhead">EncryptedSharedPreferences и статус Jetpack Security</p>
@@ -245,6 +294,22 @@ stateDiagram-v2
 
         <section class="section" id="room">
           <h2>Room и SQLite: реляционное хранилище</h2>
+          <div class="study-card" data-review-id="storage-flow-invalidation">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Как Flow-запрос Room узнаёт, что таблицу изменили, и почему он может переэмитить «лишний раз»?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>За реактивность отвечает <code>InvalidationTracker</code>: Room вешает на наблюдаемые таблицы SQL-триггеры на INSERT/UPDATE/DELETE, помечающие <code>tableId</code> в служебном логе; после коммита трекер опрашивает лог и перезапускает подписанные запросы. Инвалидация идёт на уровне <em>таблицы</em>, а не строки или <code>WHERE</code>, поэтому Flow переэмитит даже когда выбранные строки не тронуты. Лишние эмиты гасят через <code>distinctUntilChanged()</code> или сужением наблюдаемой сущности.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Для структурированных данных со связями и сложными запросами — <strong>Room</strong>, official ORM-обёртка над SQLite. «Голый» SQLite работает со строковыми SQL без проверок, требует ручного маппинга <code>Cursor</code> и легко даёт ошибки в рантайме. Room проверяет SQL на этапе компиляции, генерирует boilerplate, интегрируется с корутинами/Flow и даёт инструменты для миграций.</p>
           <div class="table-wrap">
             <table>
@@ -386,6 +451,22 @@ sequenceDiagram
 
         <section class="section" id="room-concurrency">
           <h2>Потокобезопасность Room: WAL, single-writer, main-thread</h2>
+          <div class="study-card" data-review-id="storage-wal-concurrency">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Объясните, как режим WAL влияет на конкурентность чтения и записи в Room, и что он при этом НЕ меняет.</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>WAL пишет изменения в отдельный <code>-wal</code>-файл, а в основную БД вливает их позже операцией checkpoint; Room включает его по умолчанию на API 16+. Выигрыш: читатели больше не блокируют писателя и наоборот — несколько потоков читают согласованный снимок, пока один пишет. Чего WAL не меняет: писатель по-прежнему один, две параллельные записи сериализуются, и долгая транзакция-писатель вешает другие записи (но не чтение).</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Один из самых частых senior-вопросов про Room — про конкурентность: можно ли читать во время записи, сколько писателей одновременно, почему запрос нельзя дёргать с главного потока. Всё это вытекает из модели SQLite, поверх которой Room лишь добавляет эргономику.</p>
 
           <p class="subhead">Журнальный режим: rollback journal vs WAL</p>
@@ -425,6 +506,22 @@ sequenceDiagram
 
         <section class="section" id="room-relations">
           <h2>Связи и сложные типы: TypeConverter, @Relation, @Upsert</h2>
+          <div class="study-card" data-review-id="storage-replace-cascade">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Чем опасен <code>@Insert(onConflict = REPLACE)</code> при внешних ключах и почему <code>@Upsert</code> часто корректнее?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>REPLACE</code> для <code>@Insert</code> — это не UPDATE, а DELETE старой строки + INSERT новой. При <code>ON DELETE CASCADE</code> удаление старой строки каскадно сносит связанные дочерние записи, и они не вернутся; плюс меняется <code>rowid</code>, ломая наблюдателей по конкретному id. <code>@Upsert</code> (Room 2.4+) делает настоящий UPDATE при конфликте по первичному ключу — каскад не срабатывает, <code>rowid</code> сохраняется.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Room — это SQLite, а SQLite знает только <code>NULL</code>, <code>INTEGER</code>, <code>REAL</code>, <code>TEXT</code>, <code>BLOB</code>. Всё остальное (<code>Date</code>, enum, список) надо превращать в эти типы — и тут начинаются нюансы, которые любят на собесе.</p>
 
           <p class="subhead">TypeConverter: как хранить Date, enum, List</p>
@@ -573,6 +670,22 @@ flowchart LR
 
         <section class="section" id="choose">
           <h2>Какое хранилище под задачу + бэкап</h2>
+          <div class="study-card" data-review-id="storage-choose-token">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Где хранить auth-токен и почему обычный <code>SharedPreferences</code> здесь не подходит даже как временное решение?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Токен — чувствительные данные, нужно шифрование at rest: шифрованный DataStore (Tink) или поток байт под ключом из Keystore. Обычный <code>SharedPreferences</code> кладёт значение открытым XML в песочнице, который вытащат при root или попадании в облачный бэкап. Поэтому секреты держат зашифрованными с ключом в TEE и явно исключают из <code>cloud-backup</code>; помнить, что шифрование защищает извлечённый файл, но не рантайм на скомпрометированном устройстве.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Сводная таблица — частый «быстрый» вопрос на собесе: дают сценарий, ждут обоснованный выбор.</p>
           <div class="table-wrap">
             <table>
@@ -967,7 +1080,7 @@ fun decryptToken(alias: String, data: ByteArray, iv: ByteArray): ByteArray? {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/glossary.js?v=20260621-13"></script>
-  <script src="../assets/app.js?v=20260621-13"></script>
+  <script src="../assets/glossary.js?v=20260621-16"></script>
+  <script src="../assets/app.js?v=20260621-16"></script>
 </body>
 </html>

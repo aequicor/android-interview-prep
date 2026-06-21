@@ -17,7 +17,7 @@
   <title>Fragment · Android-собес</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../assets/style.css?v=20260621-13">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
 <body data-page="fragment">
@@ -37,8 +37,41 @@
           </div>
         </header>
 
+        <div class="study-lab">
+          <div class="study-lab-copy">
+            <span class="study-label">Тренажёр главы</span>
+            <p class="study-title">Сначала пробуем ответить, потом читаем разбор.</p>
+            <p class="study-copy">Карточки разбросаны по главе: они проверяют не определение, а механизм, выбор API и типичные баги. После ответа ставьте дату следующего повторения.</p>
+          </div>
+          <div class="study-lab-side" aria-label="Статистика тренажёра">
+            <div class="study-meter"><b data-study-due>0</b><span>на сегодня</span></div>
+            <div class="study-meter"><b data-study-scheduled>0</b><span>отложено</span></div>
+            <div class="study-meter"><b data-study-total>0</b><span>всего</span></div>
+          </div>
+          <div class="study-lab-actions">
+            <button class="study-btn primary" type="button" data-study-scroll-due>К карточке на сегодня</button>
+            <button class="study-btn" type="button" data-study-reset>Сбросить тренажёр главы</button>
+          </div>
+        </div>
+
         <section class="section" id="why-fragments">
           <h2>Зачем фрагменты ещё спрашивают</h2>
+          <div class="study-card" data-review-id="fragment-not-mini-activity">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Почему Fragment некорректно считать «Activity без manifest», и какое практическое следствие это даёт для кода, трогающего View?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Activity — системный компонент с собственным Window, task/back stack и Intent-входом, а Fragment — объект, которым внутри уже существующего окна управляет <code>FragmentManager</code>. У Fragment View может быть уничтожена, пока сам объект остаётся в back stack — такой двойственности у Activity обычно нет. Поэтому код, работающий с View, должен жить в lifecycle View, а не в lifecycle Fragment.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Даже если новый UI пишется на Compose, фрагменты остаются в legacy-коде, Navigation Component, BottomSheet/Dialog-сценариях, гибридных экранах и библиотеках. Интервьюеру важен не сам факт «умею создать Fragment», а понимание границ владения: кто держит View, кто держит back stack, кто отвечает за результат и почему прямые ссылки между фрагментами быстро превращаются в утечки.</p>
 
           <div class="table-wrap">
@@ -61,6 +94,22 @@
 
         <section class="section" id="fragment-lifecycle">
           <h2>Два lifecycle: Fragment и его View</h2>
+          <div class="study-card" data-review-id="fragment-this-vs-viewlifecycleowner">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Что произойдёт, если подписаться на <code>viewModel.state</code> через <code>this</code> вместо <code>viewLifecycleOwner</code>, а фрагмент потом уйдёт в back stack и вернётся?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Подписка на lifecycle самого Fragment переживёт <code>onDestroyView()</code>, потому что объект Fragment остаётся жив в back stack. Новый emit после возврата попытается тронуть уже невалидный binding старой View — отсюда <code>NullPointerException</code>, дубль подписки или удержание мёртвой View в памяти. <code>viewLifecycleOwner</code> завершает подписку вместе с View, и в <code>onViewCreated()</code> она создаётся заново для новой View.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>У фрагмента есть lifecycle самого объекта и lifecycle View. View создаётся в <code>onCreateView()</code>/<code>onViewCreated()</code> и уничтожается в <code>onDestroyView()</code>. Сам Fragment при этом может остаться живым: например, когда его положили в back stack через <code>replace()</code>. Именно на этом ломаются binding, Flow-подписки и LiveData-observers.</p>
 
           <div class="diagram">
@@ -121,6 +170,22 @@ Detached --> [*]
 
         <section class="section" id="fragment-manager">
           <h2>FragmentManager: чей back stack и чей scope</h2>
+          <div class="study-card" data-review-id="fragment-parent-vs-child-manager">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Когда брать <code>childFragmentManager</code>, а когда <code>parentFragmentManager</code>, и чем грозит вложенный flow в общем manager Activity?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>parentFragmentManager</code> — для навигации между sibling-фрагментами на уровне родителя; <code>childFragmentManager</code> — для вложенного flow внутри текущего фрагмента (tabs, pager, internal-flow). Смысл в области владения: дочерний back stack умирает вместе со своим Fragment. Если положить вложенные фрагменты в manager Activity, родитель умрёт, а его «дети» останутся в общем back stack и переживут свой UI — путь к странной навигации и утечкам.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p><code>FragmentManager</code> хранит активные фрагменты, выполняет транзакции и ведёт back stack. В Activity обычно берут <code>supportFragmentManager</code>; внутри Fragment — <code>parentFragmentManager</code>, если меняем соседей на уровне родителя, и <code>childFragmentManager</code>, если внутри текущего фрагмента есть вложенные фрагменты: tabs, pager, маленький internal-flow.</p>
 
           <div class="table-wrap">
@@ -218,6 +283,22 @@ H -->|"нет"| D
 
         <section class="section" id="back-stack-state-loss">
           <h2>Back stack, state saved и <code>commitAllowingStateLoss</code></h2>
+          <div class="study-card" data-review-id="fragment-allowing-state-loss">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Делает ли <code>commitAllowingStateLoss()</code> транзакцию «безопасной», и когда его вообще уместно применять?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Нет. Он лишь запрещает FragmentManager падать с <code>IllegalStateException</code>, если состояние уже сохранено через <code>onSaveInstanceState()</code> — но результат транзакции может потеряться после восстановления (process death, поворот). Пользователь решит, что диалог показан, а его уже нет. Применять только там, где потеря UI-события приемлема; навигацию и бизнес-события так терять нельзя — лучше проверять <code>isStateSaved</code> и откладывать до STARTED.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>FragmentManager сохраняет своё состояние вместе с Activity. После <code>onSaveInstanceState()</code> система уже зафиксировала, какие фрагменты и back stack нужно восстановить. Если в этот момент попытаться сделать обычный <code>commit()</code>, FragmentManager бросит <code>IllegalStateException</code>: вы меняете состояние, которое уже сохранено.</p>
 
           <div class="code-label">SafeDialog.kt</div>
@@ -255,6 +336,22 @@ H -->|"нет"| D
 
         <section class="section" id="communication">
           <h2>Передача данных: args, shared ViewModel и Fragment Result API</h2>
+          <div class="study-card" data-review-id="fragment-result-api-vs-viewmodel">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Почему Fragment Result API не годится, когда важно каждое событие, и что взять вместо него?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Fragment Result API моделирует «последний результат на ключ», а не очередь событий: при трёх установках по одному ключу получателю доедет только последняя. Для выбора фильтра это правильно, но если важна каждая запись, события будут теряться. Тогда нужен shared ViewModel с <code>SharedFlow</code>/Channel или доменное хранилище событий. Ключ при этом — часть контракта между отправителем и получателем.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Прямая ссылка Fragment A на Fragment B — почти всегда плохой знак: нарушается lifetime, появляется связность с конкретным контейнером, сложнее тестировать. Есть три нормальных канала: аргументы при создании, shared ViewModel для общего состояния и Fragment Result API для одноразового результата между фрагментами.</p>
 
           <div class="table-wrap">
@@ -337,6 +434,22 @@ class FilterBottomSheet : BottomSheetDialogFragment() {
 
         <section class="section" id="failure-modes">
           <h2>Типичные поломки Fragment</h2>
+          <div class="study-card" data-review-id="fragment-findfragmentbytag-direct-call">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Чем плох приём «найду получателя через <code>findFragmentByTag()</code> и напрямую дёрну его метод», даже если в демо это работает?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Он жёстко привязывает отправителя к конкретному контейнеру, tag и классу получателя: после пересоздания, другого layout, nested manager или Navigation Component получателя там может не быть. Прямой вызов ещё и обходит lifecycle — метод можно вызвать, когда View получателя уже уничтожена. Контракт через arguments/Fragment Result API/shared ViewModel явно задаёт, кому принадлежит состояние и когда его можно доставить.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Фрагменты ломаются на границах: не тот manager, не тот lifecycle owner, транзакция после saved state, передача результата через прямую ссылку. Хороший ответ на собесе называет не только «как правильно», но и симптом, по которому вы найдёте баг в проде.</p>
 
           <div class="table-wrap">
@@ -488,7 +601,7 @@ class FilterSheet : BottomSheetDialogFragment() {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/glossary.js?v=20260621-13"></script>
-  <script src="../assets/app.js?v=20260621-13"></script>
+  <script src="../assets/glossary.js?v=20260621-16"></script>
+  <script src="../assets/app.js?v=20260621-16"></script>
 </body>
 </html>

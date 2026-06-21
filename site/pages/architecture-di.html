@@ -17,7 +17,7 @@
   <title>Архитектура и DI · Android-собес</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../assets/style.css?v=20260621-13">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
 <body data-page="architecture">
@@ -37,8 +37,41 @@
           </div>
         </header>
 
+        <div class="study-lab">
+          <div class="study-lab-copy">
+            <span class="study-label">Тренажёр главы</span>
+            <p class="study-title">Сначала пробуем ответить, потом читаем разбор.</p>
+            <p class="study-copy">Карточки разбросаны по главе: они проверяют не определение, а механизм, выбор API и типичные баги. После ответа ставьте дату следующего повторения.</p>
+          </div>
+          <div class="study-lab-side" aria-label="Статистика тренажёра">
+            <div class="study-meter"><b data-study-due>0</b><span>на сегодня</span></div>
+            <div class="study-meter"><b data-study-scheduled>0</b><span>отложено</span></div>
+            <div class="study-meter"><b data-study-total>0</b><span>всего</span></div>
+          </div>
+          <div class="study-lab-actions">
+            <button class="study-btn primary" type="button" data-study-scroll-due>К карточке на сегодня</button>
+            <button class="study-btn" type="button" data-study-reset>Сбросить тренажёр главы</button>
+          </div>
+        </div>
+
         <section class="section" id="presentation">
           <h2>Паттерны представления: MVVM, MVI, MVP</h2>
+          <div class="study-card" data-review-id="architecture-mvi-reducer">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Почему в MVI <code>reducer</code> делают чистой функцией <code>(State, Action) -&gt; State</code>, а навигацию и тост не кладут в тот же <code>State</code>?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Чистый reducer даёт предсказуемость и тестируемость: одно и то же состояние плюс интент всегда дают один и тот же новый State, его легко проверить юнит-тестом и «перемотать» историю. Навигация и тост — одноразовые side-effects: в immutable State они стали бы частью состояния и переигрались бы новому подписчику при повороте экрана, повторно сработав. Поэтому их отдают отдельным каналом (<code>Channel</code>/<code>SharedFlow</code>), а не через State.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Все три отвечают на вопрос «как связать UI с логикой и состоянием». Разница — в направлении потока данных и в том, как хранится и обновляется состояние экрана.</p>
 
           <p class="subhead">MVP (legacy)</p>
@@ -150,6 +183,22 @@ flowchart LR
 
         <section class="section" id="event-carriers">
           <h2>Носитель события vs носитель состояния</h2>
+          <div class="study-card" data-review-id="architecture-effect-carrier">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Нужно доставить событие «токен протух, разлогиньтесь» сразу нескольким активным экранам. Что взять — <code>Channel.receiveAsFlow()</code> или <code>SharedFlow</code> — и почему?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Здесь нужен <code>SharedFlow</code>: событие по смыслу broadcast, его должны получить все активные подписчики. <code>Channel</code> доставляет каждый элемент ровно одному получателю, поэтому отдал бы сигнал только первому подписавшемуся экрану, а остальные его не увидели бы. Fan-out <code>SharedFlow</code> здесь нужен; для навигации или snackbar внутри одного экрана он, наоборот, вреден — там берут <code>Channel</code>.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>«Почему именно <code>Channel</code> для эффектов?» — частый каверзный вопрос. Разложим три кандидата по поведению: что происходит при повороте, при отсутствии подписчика и при нескольких коллекторах.</p>
           <div class="table-wrap">
             <table>
@@ -174,6 +223,22 @@ flowchart LR
 
         <section class="section" id="clean">
           <h2>Clean Architecture: слои и правило зависимостей</h2>
+          <div class="study-card" data-review-id="architecture-repo-interface-location">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Интерфейс репозитория объявлен в <code>data</code>, рядом с <code>RepositoryImpl</code>. Что это ломает в Clean Architecture и почему правильнее держать интерфейс в <code>domain</code>?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Интерфейс должен жить в <code>domain</code>, а реализация — в <code>data</code>: это инверсия зависимостей, стрелка идёт от конкретики к абстракции. Если перенести интерфейс в <code>data</code>, то <code>domain.UseCase</code> вынужден импортировать <code>data</code> — стрелка разворачивается наружу, и <code>domain</code> теряет независимость от Android/Retrofit/Room. Его уже не собрать отдельным чистым Kotlin-модулем и не протестировать без моков инфраструктуры; в multi-module модуль <code>:domain</code> вообще не должен видеть <code>:data</code>.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Clean Architecture (Роберт Мартин) делит код на концентрические слои. Главное — <strong>правило зависимостей</strong>: исходный код может зависеть только в направлении внутрь, к более стабильной политике. Внутренние слои ничего не знают о внешних.</p>
           <div class="diagram">
           <div class="mermaid">
@@ -376,6 +441,22 @@ dependencies {
 
         <section class="section" id="di-hilt">
           <h2>DI: Hilt — компоненты, скоупы, граф</h2>
+          <div class="study-card" data-review-id="architecture-binds-vs-provides">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Когда в Hilt-модуле берут <code>@Binds</code>, а когда <code>@Provides</code>, и почему модуль с <code>@Binds</code> должен быть <code>abstract</code>, а не <code>object</code>?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>@Provides</code> — когда объект конструируете вы сами (например, чужой класс из библиотеки, который надо собрать через билдер). <code>@Binds</code> — когда просто связываете интерфейс с уже создаваемой реализацией; он компилируется эффективнее, без тела метода. Именно поэтому метод <code>@Binds</code> абстрактный, а модуль — <code>abstract class</code>: <code>object</code> не может содержать абстрактные методы, и сборка упадёт.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Dependency Injection — передача зависимостей объекту извне вместо их создания внутри. Это практическая реализация DIP: верхние слои зависят от абстракций, а конкретные реализации поставляет контейнер. <strong>Hilt — надстройка над Dagger</strong>: он генерирует за вас стандартный граф компонентов, привязанный к жизненным циклам Android (Application, Activity, ViewModel, Fragment), и кодогенерацию точек входа. Под капотом всё тот же compile-time DI Dagger с проверкой графа на этапе компиляции.</p>
 
           <p class="subhead">Иерархия компонентов и скоупы</p>
@@ -584,6 +665,22 @@ fun WizardStep(navController: NavHostController) {
 
         <section class="section" id="reactive">
           <h2>Reactive-слой: Flow/StateFlow как контракт</h2>
+          <div class="study-card" data-review-id="architecture-whilesubscribed">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Почему состояние из ViewModel шарят через <code>stateIn(scope, SharingStarted.WhileSubscribed(5000), initial)</code>, а не через <code>Eagerly</code>/<code>Lazily</code>?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>Eagerly</code> и <code>Lazily</code> никогда не останавливают upstream: подписка на источник (Room, сеть) держится до конца жизни <code>viewModelScope</code>, даже когда экран ушёл в фон — лишняя работа и расход батареи. <code>WhileSubscribed(5000)</code> останавливает upstream через 5 секунд после ухода последнего подписчика и перезапускает при новом. Эти 5 секунд — буфер, перекрывающий разрыв при повороте: старый коллектор отписался, новый подписался не мгновенно, и за это окно upstream не успевает рестартовать (нет лишнего рефетча).</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Связь между слоями реактивна. <strong>Контракт data → domain → UI описывается через <code>Flow</code></strong>: репозиторий отдаёт «холодный» <code>Flow</code> данных (например, из Room), UseCase его трансформирует, ViewModel превращает в «горячий» <code>StateFlow</code> для UI. Так обновления (новый ответ сети записан в БД) автоматически доезжают до экрана.</p>
           <div class="code-label">Flow по слоям: cold во data, hot в presentation</div>
 <pre><code class="language-kotlin">// data: cold Flow из источника истины (Room)
@@ -669,6 +766,22 @@ fun `emits loading then content`() = runTest {
 
         <section class="section" id="state-survival">
           <h2>Устойчивость состояния: поворот, process death, SavedStateHandle</h2>
+          <div class="study-card" data-review-id="architecture-process-death">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Состояние лежит только в <code>MutableStateFlow</code> внутри ViewModel. Что с ним станет при повороте экрана, а что — при system-initiated process death, и в чём ловушка?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>При повороте ViewModel переживает конфиг-изменение, поэтому in-memory state цел. При убийстве процесса из-за нехватки памяти ViewModel пересоздаётся заново, <code>viewModelScope</code> и весь in-memory state теряются — это не то же самое, что поворот. Ловушка в том, что наличие ViewModel не спасает: пережить process death можно только через <code>SavedStateHandle</code> (он лежит в <code>Bundle</code>) или опираясь на SSOT (Room/DataStore), откуда данные перечитываются после рестарта.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>«Что переживает поворот, что — нет, а что — убийство процесса» — классическая senior-ловушка и прямой разговор про архитектуру state holder. Уровней устойчивости три, и путать их нельзя.</p>
           <div class="table-wrap">
             <table>
@@ -1051,7 +1164,7 @@ fun observeAll(): Flow&lt;List&lt;Article&gt;&gt; =
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/glossary.js?v=20260621-13"></script>
-  <script src="../assets/app.js?v=20260621-13"></script>
+  <script src="../assets/glossary.js?v=20260621-16"></script>
+  <script src="../assets/app.js?v=20260621-16"></script>
 </body>
 </html>

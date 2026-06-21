@@ -17,7 +17,7 @@
   <title>Безопасность · Android-собес</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../assets/style.css?v=20260621-13">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
 <body data-page="security">
@@ -37,8 +37,41 @@
           </div>
         </header>
 
+        <div class="study-lab">
+          <div class="study-lab-copy">
+            <span class="study-label">Тренажёр главы</span>
+            <p class="study-title">Сначала пробуем ответить, потом читаем разбор.</p>
+            <p class="study-copy">Карточки разбросаны по главе: они проверяют не определение, а механизм, выбор API и типичные баги. После ответа ставьте дату следующего повторения.</p>
+          </div>
+          <div class="study-lab-side" aria-label="Статистика тренажёра">
+            <div class="study-meter"><b data-study-due>0</b><span>на сегодня</span></div>
+            <div class="study-meter"><b data-study-scheduled>0</b><span>отложено</span></div>
+            <div class="study-meter"><b data-study-total>0</b><span>всего</span></div>
+          </div>
+          <div class="study-lab-actions">
+            <button class="study-btn primary" type="button" data-study-scroll-due>К карточке на сегодня</button>
+            <button class="study-btn" type="button" data-study-reset>Сбросить тренажёр главы</button>
+          </div>
+        </div>
+
         <section class="section" id="crypto-basics">
           <h2>Криптография: симметрия, асимметрия, хеши, MAC</h2>
+          <div class="study-card" data-review-id="security-gcm-iv-reuse">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Почему для AES-GCM повтор одного IV под одним ключом — это катастрофа, а не мелкая небрежность, и кто отвечает за уникальность IV?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Повтор nonce под одним ключом ломает не только конфиденциальность: восстанавливается ключ аутентификации GCM, то есть рушится вся защита. Поэтому IV (12 байт) генерируют случайно на каждое шифрование и хранят рядом с шифртекстом — он не секрет. Фиксированный или счётчиковый IV без гарантии уникальности использовать нельзя.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Три кита, которые нужно чётко разграничивать: <strong>шифрование</strong> (конфиденциальность, обратимо при наличии ключа), <strong>хеширование</strong> (целостность/отпечаток, необратимо) и <strong>MAC/подпись</strong> (аутентичность + целостность).</p>
 
           <p class="subhead">Симметричное vs асимметричное</p>
@@ -114,6 +147,22 @@
 
         <section class="section" id="keystore">
           <h2>Android Keystore: ключи, которые не покидают устройство</h2>
+          <div class="study-card" data-review-id="security-strongbox-fallback">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Вы запросили <code>setIsStrongBoxBacked(true)</code>, но не каждое устройство поддерживает StrongBox. Что произойдёт и как корректно отработать этот случай?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Если устройство не поддерживает StrongBox для заданного алгоритма/размера, провайдер бросит <code>StrongBoxUnavailableException</code> при генерации ключа. Нужно поймать это исключение и пересоздать ключ с <code>setIsStrongBoxBacked(false)</code>, откатившись на TEE. StrongBox даёт максимальную стойкость (отдельный Secure Element), но для большинства задач достаточно TEE.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Главная идея Keystore: ключевой материал генерируется и используется в <strong>защищённой среде</strong> и не извлекается в адресное пространство приложения. Вы передаёте Keystore данные на шифрование/подпись и получаете результат — но сам ключ «потрогать» нельзя даже с root в обычном процессе. Это превращает кражу ключа в кражу <em>доступа</em> (которую можно отозвать), а не файла.</p>
 
           <p class="subhead">TEE и StrongBox — где живёт ключ</p>
@@ -264,6 +313,22 @@ sequenceDiagram
 
         <section class="section" id="biometric">
           <h2>Биометрия: BiometricPrompt и CryptoObject</h2>
+          <div class="study-card" data-review-id="security-cryptoobject-vs-flag">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Почему привязка операции к <code>CryptoObject</code> сильнее, чем доверие булеву результату «биометрия пройдена»?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Булев флаг — это логическая проверка: хук (Frida) перехватит callback и вернёт «успех». С <code>CryptoObject</code> успешная биометрия разблокирует сам ключ в TEE для этой сессии — если пользователь не прошёл аутентификацию, ключ недоступен и <code>cipher.doFinal()</code> упадёт. Аутентификация становится частью крипто-операции, а не отдельным «да/нет». Нужен ключ с <code>setUserAuthenticationRequired(true)</code> и <code>BIOMETRIC_STRONG</code>.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p><code>BiometricPrompt</code> (из <code>androidx.biometric</code>) — единая системная точка для отпечатка/лица/радужки с авто-fallback на PIN/пароль. Но важнейший нюанс уровня Senior: <strong>сам факт «прошёл биометрию» — слабая гарантия</strong>. Логический флаг «authenticated = true» легко обойти хуком (Frida) или подменой результата. Сильная схема — <strong>привязать крипто-операцию к биометрии</strong> через <code>CryptoObject</code>: ключ Keystore становится доступен <em>только</em> после успешной аутентификации, и без неё данные физически не расшифровать.</p>
 
           <p class="subhead">Классы аутентификаторов</p>
@@ -332,6 +397,22 @@ fun decryptWithBiometric(
 
         <section class="section" id="reverse">
           <h2>Реверс-инжиниринг и защита: Frida и контрмеры</h2>
+          <div class="study-card" data-review-id="security-client-detection-race">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Объясните, почему root- и Frida-детект на клиенте — это «гонка, которую защищающийся не выигрывает», и что тогда делает критичное решение надёжным.</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Любой клиентский детект исполняется в том же процессе, который контролирует атакующий: ту же проверку хукают и заставляют вернуть «чисто», артефакты прячут руткитом. Это вечная гонка сигнатур, проигрываемая на подготовленном устройстве. Поэтому клиентский детект годится лишь как сигнал и удорожание атаки, а критичные решения (платёж, лицензия, целостность) принимает сервер по подписанному Google вердикту Play Integrity, который нельзя подделать на устройстве.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Раздел про <strong>defensive security</strong>: как кандидат объясняет угрозы со стороны атакующего и какие контрмеры строит. Не про написание эксплойтов — про понимание, что приложение на чужом устройстве работает во враждебной среде.</p>
 
           <p class="subhead">Что такое Frida (концептуально)</p>
@@ -385,6 +466,22 @@ flowchart LR
 
         <section class="section" id="obfuscation">
           <h2>Обфускация и защита бинаря: что R8 умеет и чего не делает</h2>
+          <div class="study-card" data-review-id="security-mapping-leak">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Чем опасна утечка <code>mapping.txt</code> для защиты бинаря и как при этом сохранить читаемые стектрейсы?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>mapping.txt</code> — это таблица «обфусцированное имя → исходное». Если файл утечёт (в репозиторий, публичный артефакт, открытый бакет), вся работа R8 по запутыванию имён обнуляется: реверсер прогоняет APK через mapping и получает читаемые имена. Решение — обращаться с ним как с секретом сборки: не коммитить, хранить в защищённом артефакт-сторадже CI по версиям, загружать в краш-сервис приватно, а ретрейс делать на их стороне.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>«Мы включили R8, приложение защищено от реверса» — фраза, на которой собес часто и заканчивается не в пользу кандидата. R8 полезен, но даёт ложное чувство брони. Разберёмся, что он реально делает, а что нет.</p>
 
           <p class="subhead">Что R8 делает в релизе</p>
@@ -497,6 +594,22 @@ flowchart LR
 
         <section class="section" id="screen-leaks">
           <h2>Защита данных на экране и в системных кэшах</h2>
+          <div class="study-card" data-review-id="security-flag-secure-limits">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Вы повесили <code>FLAG_SECURE</code> на экран с балансом. От какого способа «сфотографировать» данные он принципиально не спасает, и что это говорит о границах метода?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>FLAG_SECURE</code> работает внутри графической подсистемы Android: он закрывает программные каналы — системный скриншот, запись экрана, MediaProjection, превью в Recents. Но внешнюю камеру, которой просто фотографируют экран, он остановить не может: против аналоговой дыры software-защиты нет. Отсюда вывод про модель угроз: против shoulder-surfing работают маскирование данных, показ полного значения только по явному действию и авто-скрытие.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Парадокс пентеста: вы аккуратно зашифровали хранилище, а больше всего находок по MASVS-STORAGE приходит вообще не из него. Чувствительные данные утекают через побочные каналы, которые система создаёт сама, без вашего ведома. Экран с балансом и одноразовым кодом — классический пример, на котором это удобно разобрать.</p>
 
           <div class="diagram">
@@ -1004,7 +1117,7 @@ codeInput.inputType =
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/glossary.js?v=20260621-13"></script>
-  <script src="../assets/app.js?v=20260621-13"></script>
+  <script src="../assets/glossary.js?v=20260621-16"></script>
+  <script src="../assets/app.js?v=20260621-16"></script>
 </body>
 </html>

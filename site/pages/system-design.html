@@ -17,7 +17,7 @@
   <title>Системный дизайн (mobile) · Android-собес</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../assets/style.css?v=20260621-13">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
 <body data-page="system-design">
@@ -36,6 +36,23 @@
             <span class="tag hot">Частый вопрос</span>
           </div>
         </header>
+
+        <div class="study-lab">
+          <div class="study-lab-copy">
+            <span class="study-label">Тренажёр главы</span>
+            <p class="study-title">Сначала пробуем ответить, потом читаем разбор.</p>
+            <p class="study-copy">Карточки разбросаны по главе: они проверяют не определение, а механизм, выбор API и типичные баги. После ответа ставьте дату следующего повторения.</p>
+          </div>
+          <div class="study-lab-side" aria-label="Статистика тренажёра">
+            <div class="study-meter"><b data-study-due>0</b><span>на сегодня</span></div>
+            <div class="study-meter"><b data-study-scheduled>0</b><span>отложено</span></div>
+            <div class="study-meter"><b data-study-total>0</b><span>всего</span></div>
+          </div>
+          <div class="study-lab-actions">
+            <button class="study-btn primary" type="button" data-study-scroll-due>К карточке на сегодня</button>
+            <button class="study-btn" type="button" data-study-reset>Сбросить тренажёр главы</button>
+          </div>
+        </div>
 
         <section class="section" id="framework">
           <h2>Фреймворк ответа (чеклист)</h2>
@@ -72,6 +89,22 @@ flowchart TB
 
         <section class="section" id="architecture">
           <h2>Высокоуровневая архитектура</h2>
+          <div class="study-card" data-review-id="system-design-loading-state">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">UI читает только из Room через <code>Flow</code>, а сеть пишет в Room. Откуда тогда экран берёт состояния «идёт загрузка» и «ошибка сети» — их ведь нет в данных БД?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Загрузка и ошибка — это не данные домена, в основную таблицу их класть нельзя. Статус операции отдают отдельным потоком, а <code>UiState</code> во ViewModel собирает данные из Room и статус через <code>combine</code>. У Paging 3 для этого есть <code>CombinedLoadStates</code> отдельно от <code>PagingData</code>. Если записать <code>isLoading</code> в Room, оно переживёт перезапуск и залипнет — вечный спиннер по уже пришедшим данным.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Стандарт индустрии — слоистая архитектура с однонаправленным потоком данных (UDF) и БД как единственным источником истины. Три слоя: <strong>UI</strong> (Compose + ViewModel), <strong>domain</strong> (UseCase, бизнес-правила), <strong>data</strong> (Repository поверх сети и БД). Repository прячет источники и решает, когда идти в сеть, а когда отдать кэш.</p>
           <div class="diagram">
           <div class="mermaid">
@@ -120,6 +153,22 @@ class FeedRepository(
 
         <section class="section" id="api-data">
           <h2>API-контракт и модель данных</h2>
+          <div class="study-card" data-review-id="system-design-tombstones">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Дельта-синхронизация по <code>updatedSince</code> тянет созданное и изменённое. Как клиент узнает, что запись удалили на сервере, если её просто нет в дельте?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Из самой дельты — никак: отсутствие записи неотличимо от «не менялась», и удалённое зависает в кэше. Поэтому удаление делают логическим — через тумбстоуны: сервер помечает запись <code>deleted=true</code> со свежим <code>updatedAt</code>, она приходит в обычной дельте, клиент по флагу удаляет локально. Тумбстоуны живут TTL; клиента, который офлайн дольше TTL, переводят на полный ресинк, иначе он пропустит удаление.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Проговори контракт хотя бы на пальцах: эндпоинты, метод пагинации, формат полезной нагрузки, версионирование. В mobile важны <strong>экономия трафика</strong> (поля по требованию, сжатие, дельта-синхронизация) и <strong>стабильность контракта</strong> (бэкенд-driven UI, чтобы не релизить приложение ради каждого изменения).</p>
           <div class="table-wrap">
             <table>
@@ -184,6 +233,22 @@ sequenceDiagram
 
         <section class="section" id="offline">
           <h2>Offline-first и синхронизация</h2>
+          <div class="study-card" data-review-id="system-design-idempotency">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Воркер дренирует outbox и делает <code>POST /like</code> с ретраями. Какой баг гарантированно появится без <code>Idempotency-Key</code> и почему?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>«Двойные лайки» и «два списания». При ретрае запрос может выполниться дважды: сеть упала уже после того, как сервер обработал запрос, клиент не получил ответ и повторяет. Передавая <code>Idempotency-Key</code> (UUID операции), сервер по нему распознаёт и отбрасывает дубликат — повтор не задваивает действие.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Это сердце mobile system design и любимая зона вопросов. Базовый принцип: <strong>локальная БД — источник истины</strong>, сеть — слой оптимизации, а не обязательное условие работы. Пользователь должен видеть данные и совершать действия офлайн, а синхронизация происходит в фоне.</p>
 
           <p class="subhead">Четыре кита offline-first</p>
@@ -335,6 +400,22 @@ suspend fun pushUpdate(local: ProductEntity): SyncOutcome {
 
         <section class="section" id="paging">
           <h2>Пагинация: Paging 3</h2>
+          <div class="study-card" data-review-id="system-design-remotemediator">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Когда брать <code>RemoteMediator + PagingSource</code> из Room, а когда хватит одного <code>PagingSource</code> напрямую из сети? Что ломается во втором варианте?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Один <code>PagingSource</code> хватает, когда источник один (только сеть или только БД). Слоистый <code>RemoteMediator + PagingSource(Room)</code> нужен для офлайн-кэша: медиатор дозагружает страницы из сети в Room, UI читает из Room — single source of truth. Прямой <code>PagingSource</code> из сети теряет офлайн, при пересоздании грузит всё заново и не имеет места консистентно хранить курсор.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Бесконечная лента — почти в каждом кейсе. Библиотека <strong>Paging 3</strong> решает подгрузку страниц, состояния загрузки/ошибки, retry и (главное для офлайна) кэширование в БД. Два режима:</p>
           <ul>
             <li><strong>PagingSource</strong> — когда источник один (только сеть или только БД).</li>
@@ -531,6 +612,22 @@ class ImageCache(maxMemBytes: Int, private val disk: DiskLruCache) {
 
         <section class="section" id="realtime">
           <h2>Real-time транспорт: WebSocket и переподключение</h2>
+          <div class="study-card" data-review-id="system-design-jitter">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Объясните, зачем в reconnect-backoff нужен jitter, если экспонента и так разносит попытки во времени.</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Экспонента разносит попытки одного клиента, но не разных. Если сервер упал и тысяча клиентов одновременно потеряла сокет, без jitter все отсчитают одинаковый backoff и ударят реконнектом в одну миллисекунду — снова положат сервер (thundering herd). Случайная добавка размазывает попытки по окну, и нагрузка на восстановившийся сервер становится плавной.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Дизайн чата или живой ленты почти всегда упирается в один вопрос: как доставлять обновления мгновенно. Polling простой, но при коротком интервале жжёт батарею и трафик, а при длинном даёт задержку. Для настоящего realtime берут <strong>WebSocket поверх TLS</strong>: одно персистентное двунаправленное соединение, низкая latency для доставки сообщений и статусов «доставлено/прочитано».</p>
 
           <p class="subhead">Транспорты реального времени</p>
@@ -663,6 +760,22 @@ enum class MessageStatus { SENDING, SENT, DELIVERED, READ, FAILED }</code></pre>
 
         <section class="section" id="case-image-loader">
           <h2>Кейс: библиотека загрузки изображений</h2>
+          <div class="study-card" data-review-id="system-design-request-dedup">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Десять элементов списка одновременно грузят один и тот же URL. Каким механизмом не сходить в сеть десять раз?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Request dedup (coalescing): Engine держит map «ключ → уже запущенный <code>Deferred</code>». Первый запрос стартует загрузку и кладёт <code>Deferred</code> в map, остальные девять не идут в сеть, а подписываются (<code>await()</code>) на тот же результат. По завершении все получают bitmap, запись из map убирается. Тот же приём спасает от cache stampede при истечении TTL.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Иногда просят спроектировать не приложение, а библиотеку — чаще всего загрузчик картинок (свой Coil/Glide). Кейс проверяет, видите ли вы за простым <code>load(url).into(view)</code> координацию кэшей, декодирования, отмены и lifecycle.</p>
 
           <p class="subhead">Fluent API и Engine-координатор</p>
@@ -1097,7 +1210,7 @@ fun compactOutbox(ops: List&lt;Op&gt;): List&lt;Op&gt; {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/glossary.js?v=20260621-13"></script>
-  <script src="../assets/app.js?v=20260621-13"></script>
+  <script src="../assets/glossary.js?v=20260621-16"></script>
+  <script src="../assets/app.js?v=20260621-16"></script>
 </body>
 </html>

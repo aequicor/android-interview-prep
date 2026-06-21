@@ -17,7 +17,7 @@
   <title>Тестирование · Android-собес</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../assets/style.css?v=20260621-13">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
 <body data-page="testing">
@@ -37,8 +37,41 @@
           </div>
         </header>
 
+        <div class="study-lab">
+          <div class="study-lab-copy">
+            <span class="study-label">Тренажёр главы</span>
+            <p class="study-title">Сначала пробуем ответить, потом читаем разбор.</p>
+            <p class="study-copy">Карточки разбросаны по главе: они проверяют не определение, а механизм, выбор API и типичные баги. После ответа ставьте дату следующего повторения.</p>
+          </div>
+          <div class="study-lab-side" aria-label="Статистика тренажёра">
+            <div class="study-meter"><b data-study-due>0</b><span>на сегодня</span></div>
+            <div class="study-meter"><b data-study-scheduled>0</b><span>отложено</span></div>
+            <div class="study-meter"><b data-study-total>0</b><span>всего</span></div>
+          </div>
+          <div class="study-lab-actions">
+            <button class="study-btn primary" type="button" data-study-scroll-due>К карточке на сегодня</button>
+            <button class="study-btn" type="button" data-study-reset>Сбросить тренажёр главы</button>
+          </div>
+        </div>
+
         <section class="section" id="pyramid">
           <h2>Пирамида тестирования</h2>
+          <div class="study-card" data-review-id="testing-fake-vs-mock">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Гугл советует для своих репозиториев и data source предпочитать fake, а не mock с <code>verify</code>. Какой недостаток mock это убирает?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Mock проверяет последовательность вызовов (behavior verification), поэтому тест ломается при рефакторинге внутренностей, даже когда поведение не изменилось. Fake — рабочая лёгкая реализация, и тест проверяет состояние/результат (state verification), который к такому рефакторингу устойчив. Mock остаётся уместен для побочных эффектов (лог, аналитика) и для внешних типов, которые трудно подделать.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Классическая модель Майка Кона: много дешёвых быстрых тестов внизу, мало дорогих медленных наверху. Перевёрнутая пирамида (много UI-тестов) — антипаттерн: долгие прогоны, хрупкость, flaky.</p>
           <div class="diagram">
           <div class="mermaid">
@@ -186,6 +219,22 @@ flowchart TB
 
         <section class="section" id="coroutines">
           <h2>Тестирование корутин: kotlinx-coroutines-test</h2>
+          <div class="study-card" data-review-id="testing-setmain-rule">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">ViewModel-тест на JVM падает на корутине из <code>viewModelScope</code> ещё до ассертов. Почему и что добавить в <code>@Before</code>/<code>@After</code>?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>viewModelScope</code> работает на <code>Dispatchers.Main.immediate</code>, а в JVM-тесте Android-Looper'а нет, поэтому Main не инициализируется. Лечат подменой: <code>Dispatchers.setMain(testDispatcher)</code> в <code>@Before</code> и <code>resetMain()</code> в <code>@After</code> (обычно через <code>MainDispatcherRule</code>). Важно передавать в <code>setMain</code> тот же <code>TestDispatcher</code>, что инжектится в код, — тогда у <code>runTest</code> и боевых корутин общий планировщик.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Корутины асинхронны, а тест должен быть детерминированным. Библиотека <code>kotlinx-coroutines-test</code> даёт <strong>виртуальное время</strong>: <code>delay</code> не ждёт реально, а двигает виртуальные часы планировщика. Точка входа — <code>runTest</code>: запускает тело как корутину, по завершении проверяет, что не осталось «висящих» (не дождавшихся) корутин и что не было необработанных исключений.</p>
           <p class="subhead">StandardTestDispatcher vs UnconfinedTestDispatcher</p>
           <div class="table-wrap">
@@ -254,6 +303,22 @@ flowchart TB
 
         <section class="section" id="flow">
           <h2>Тестирование Flow: Turbine и StateFlow</h2>
+          <div class="study-card" data-review-id="testing-stateflow-conflation">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Тест на <code>StateFlow</code> через Turbine иногда пропускает <code>Loading</code>, хотя код «работает». В чём причина и как сделать тест детерминированным?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>StateFlow</code> conflated и хранит только последнее значение: если несколько эмиссий прошли до первого <code>awaitItem()</code>, промежуточные схлопываются, и коллектор видит лишь самое свежее. Лечение: подписаться и снять первый <code>awaitItem()</code> на начальном значении <em>до</em> триггера; либо взять <code>StandardTestDispatcher</code> для пошагового контроля; либо не проверять цепочку, а ассертить терминальное <code>.value</code> / <code>expectMostRecentItem()</code>. Если последовательность состояний — контракт, моделируйте её cold <code>Flow</code> или <code>SharedFlow</code> без конфляции.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p><code>Flow</code> асинхронен и может быть бесконечным (особенно <code>StateFlow</code>/<code>SharedFlow</code>), поэтому собрать его в список через <code>toList()</code> не выйдет — он не завершится. Ручной сбор в <code>launch</code> с буфером многословен и хрупок. <strong>Turbine</strong> (Cash App) даёт лаконичный DSL: <code>flow.test { ... }</code> запускает сбор, а внутри вы <em>по одному</em> снимаете эмиссии.</p>
           <ul>
             <li><code>awaitItem()</code> — дождаться и вернуть следующий элемент (снимает его из очереди).</li>
@@ -292,6 +357,22 @@ class SearchViewModelTest {
 
         <section class="section" id="instrumented">
           <h2>Instrumented / UI: Espresso, Compose, UiAutomator</h2>
+          <div class="study-card" data-review-id="testing-compose-vs-espresso">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Тебе нужно надёжно найти кнопку в Compose-тесте, который не должен падать при правке текста или локализации. Что выбрать и почему?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Привязка к видимому тексту через <code>onNodeWithText</code> ломается при локализации и правках копирайта. Для устойчивых селекторов вешают <code>Modifier.testTag("…")</code> и ищут через <code>onNodeWithTag</code>. Текстовые матчеры оставляют там, где проверяется именно контент. Compose ищет узлы по семантическому дереву (а не по view-иерархии, как Espresso) и сам синхронизируется с рекомпозицией.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Эти тесты лежат в <code>androidTest/</code> и бегут на устройстве/эмуляторе через <code>AndroidJUnitRunner</code>. Они проверяют реальный UI, поэтому медленнее и более хрупки — держите их немного, на ключевые сценарии.</p>
 
           <p class="subhead">Espresso (классические View)</p>
@@ -452,6 +533,22 @@ class ProfileViewModelTest {
 
         <section class="section" id="events">
           <h2>Тестирование событий: SharedFlow и Channel</h2>
+          <div class="study-card" data-review-id="testing-replay0-subscribe-order">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Тест события на <code>SharedFlow</code> с <code>replay=0</code> то ловит эмиссию, то нет. Где ловушка и как гарантировать порядок?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>При <code>replay=0</code> истории нет: подписчик, пришедший после <code>emit</code>, событие не увидит. Значит сбор надо запустить <em>до</em> триггера: либо Turbine <code>flow.test { }</code> (подписывается синхронно), либо коллектор в <code>backgroundScope</code>. На <code>StandardTestDispatcher</code> между <code>launch { collect }</code> и эмиссией обязателен <code>runCurrent()</code> — иначе подписка ещё не активна и событие уйдёт в никуда. Альтернатива со своей семантикой — <code>Channel</code> + <code>receiveAsFlow()</code>: оно буферизует событие одному коллектору.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Глава выше разбирала <code>StateFlow</code> — держатель состояния. Но навигация, снэкбары, тосты — это <em>события</em>, а не состояние, и тестируются принципиально иначе. Событие должно сработать ровно один раз: показать <code>StateFlow</code> для one-shot плохо, потому что при повороте экрана коллектор переподпишется и получит последнее значение <strong>заново</strong> — снэкбар выскочит второй раз. Поэтому события возят через <code>SharedFlow</code> с <code>replay=0</code> или <code>Channel</code>.</p>
           <p class="subhead">replay=0: подписка должна идти до эмиссии</p>
           <p><code>SharedFlow</code> с <code>replay=0</code> горячий и не хранит историю. Подписчик, пришедший <em>после</em> <code>emit</code>, событие просто не увидит. В тесте это значит: сбор надо запустить <strong>до</strong> триггера. Через Turbine <code>flow.test { }</code> подписывается синхронно внутри блока, либо вынесите коллектор в <code>backgroundScope</code> и дайте ему реально подписаться через <code>runCurrent()</code> до вызова действия.</p>
@@ -481,6 +578,22 @@ fun `onSave success emits Back`() = runTest {
 
         <section class="section" id="test-quality">
           <h2>Как измерить качество тестов: мутационное тестирование</h2>
+          <div class="study-card" data-review-id="testing-mutation-vs-coverage">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Объясни, почему 100% покрытия не значит «нет багов», и что меряет mutation score, чего не видит покрытие.</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Покрытие (JaCoCo / Kover) считает, какие строки и ветки <em>исполнились</em>, но исполнение — не проверка: тест без единого ассерта даёт 100% и ловит ноль багов. Мутационное тестирование (PIT) вносит мелкие правки в код (мутации) и прогоняет тесты: если упали — мутацию «убили» (тест эффективен), если прошли — «выжила» (тест слеп). Mutation score = доля убитых мутаций, то есть прямая мера силы ассертов. Цена — медленный прогон, поэтому мутационку применяют точечно к критичной логике.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Покрытие (JaCoCo / Kover) считает, какие строки и ветки <em>исполнились</em> во время прогона. Но исполнение — не проверка: тест, который дёргает код без единого ассерта, даёт 100% покрытия и ловит ноль багов. Нужен инструмент, который меряет не охват, а силу самих утверждений.</p>
           <p class="subhead">Killed vs survived: мутационный score</p>
           <p>Мутационное тестирование (PIT / Pitest) намеренно вносит мелкие правки в продакшн-код — мутации: <code>+</code> на <code>-</code>, <code>&gt;</code> на <code>&gt;=</code>, выкинуть вызов, инвертировать условие — и прогоняет тесты на каждой. Если тесты <strong>упали</strong>, мутацию «убили»: тест эффективен. Если <strong>прошли</strong> — мутация «выжила»: тест слеп к этому изменению. Mutation score = доля убитых мутаций. Это прямая мера качества ассертов, а не строк. Цена — медленный прогон (тесты гоняются на каждую мутацию), поэтому мутационку применяют точечно к критичной логике.</p>
@@ -838,7 +951,7 @@ class FeedViewModelTest {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/glossary.js?v=20260621-13"></script>
-  <script src="../assets/app.js?v=20260621-13"></script>
+  <script src="../assets/glossary.js?v=20260621-16"></script>
+  <script src="../assets/app.js?v=20260621-16"></script>
 </body>
 </html>

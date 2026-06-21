@@ -17,7 +17,7 @@
   <title>Потоки и память JVM · Android-собес</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../assets/style.css?v=20260621-13">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
 <body data-page="threads">
@@ -37,8 +37,41 @@
           </div>
         </header>
 
+        <div class="study-lab">
+          <div class="study-lab-copy">
+            <span class="study-label">Тренажёр главы</span>
+            <p class="study-title">Сначала пробуем ответить, потом читаем разбор.</p>
+            <p class="study-copy">Карточки разбросаны по главе: они проверяют не определение, а механизм, выбор API и типичные баги. После ответа ставьте дату следующего повторения.</p>
+          </div>
+          <div class="study-lab-side" aria-label="Статистика тренажёра">
+            <div class="study-meter"><b data-study-due>0</b><span>на сегодня</span></div>
+            <div class="study-meter"><b data-study-scheduled>0</b><span>отложено</span></div>
+            <div class="study-meter"><b data-study-total>0</b><span>всего</span></div>
+          </div>
+          <div class="study-lab-actions">
+            <button class="study-btn primary" type="button" data-study-scroll-due>К карточке на сегодня</button>
+            <button class="study-btn" type="button" data-study-reset>Сбросить тренажёр главы</button>
+          </div>
+        </div>
+
         <section class="section" id="thread-runnable">
           <h2>Поток и Runnable: носитель и задача</h2>
+          <div class="study-card" data-review-id="threads-start-vs-run">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Чем отличается вызов <code>run()</code> от <code>start()</code> у <code>Thread</code> и что будет при повторном <code>start()</code> на том же объекте?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>run()</code> — обычный метод: он исполнит код в текущем потоке, нового потока не появится. Новый поток создаёт только <code>start()</code>. Повторный <code>start()</code> на одном объекте бросит <code>IllegalThreadStateException</code> — объект потока одноразовый.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Поток (<code>Thread</code>) — это нить исполнения, которой ОС выделяет квант процессорного времени. В Java поток создаётся через <code>Thread</code> + <code>Runnable</code>, но напрямую плодить потоки — антипаттерн: каждый стоит примерно 512 КБ–1 МБ стека, а переключение контекста требует перехода в режим ядра. На практике используют пулы (<code>Executor</code>) или корутины — к ним отдельные разделы.</p>
           <div class="code-label">Thread и Runnable</div>
 <pre><code class="language-kotlin">// Runnable — задача; Thread — носитель исполнения
@@ -70,6 +103,22 @@ t.join()  // блокирующе ждём завершения</code></pre>
 
         <section class="section" id="race">
           <h2>Гонка данных и synchronized</h2>
+          <div class="study-card" data-review-id="threads-volatile-increment">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Два потока инкрементируют <code>@Volatile var count</code> через <code>count++</code>. Почему итог почти всегда меньше ожидаемого, хотя поле volatile?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>count++</code> — это три шага: read, +1, write. <code>volatile</code> делает каждое отдельное чтение и запись видимыми, но не связывает тройку в одно неделимое действие. Если оба потока прочитали значение раньше, чем любой записал, они прибавят единицу к одному числу — вторая запись затрёт первую (lost update). На сотнях тысяч итераций такие потери копятся.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Когда два потока без синхронизации читают-пишут общее изменяемое состояние, результат недетерминирован. Операция <code>count++</code> не атомарна — это три действия (read–modify–write), которые могут переплестись.</p>
 <pre><code class="language-kotlin">class Counter {
     @Volatile private var count = 0              // volatile НЕ спасёт от гонки инкремента!
@@ -139,6 +188,22 @@ fun main() {
 
         <section class="section" id="memory-model">
           <h2>Модель памяти: volatile и happens-before</h2>
+          <div class="study-card" data-review-id="threads-happens-before-scope">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Объясните, почему запись в одну <code>volatile</code>-переменную делает видимыми и обычные, не-volatile поля, записанные до неё.</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Ребро happens-before связывает не одну переменную, а две точки во времени и переносит через себя всю память. Запись в <code>volatile</code> работает как release-барьер, чтение той же переменной — как acquire. Когда читатель увидел значение, записанное под release, ему гарантированно видно и всё, что писатель сделал до этой записи, включая обычные поля.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Без синхронизации JIT и CPU вправе кэшировать переменную в регистре или кэше ядра — поток может «не увидеть» запись из другого потока сколь угодно долго. <code>volatile</code> гарантирует, что чтение идёт из главной памяти, а запись туда же сбрасывается, и запрещает переупорядочивание операций вокруг переменной.</p>
           <div class="table-wrap">
             <table>
@@ -237,6 +302,22 @@ sequenceDiagram
 
         <section class="section" id="deadlock">
           <h2>Deadlock, livelock, starvation</h2>
+          <div class="study-card" data-review-id="threads-coffman-conditions">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Deadlock требует всех четырёх условий Коффмана. Сколько из них нужно сломать, чтобы взаимоблокировка стала невозможной, и какой приём ломает circular wait?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Достаточно сломать любое одно из четырёх условий — все они нужны одновременно. Circular wait ломает единый глобальный порядок захвата локов (например, по <code>id</code> объекта): если все берут L1 раньше L2, цикла «A ждёт B, B ждёт A» не возникнет. <code>tryLock</code> с таймаутом ломает no preemption, захват всех локов разом — hold and wait.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <div class="table-wrap">
             <table>
               <thead><tr><th>Проблема</th><th>Суть</th><th>Как лечат</th></tr></thead>
@@ -311,6 +392,22 @@ class OneCell&lt;T&gt; {
 
         <section class="section" id="cas">
           <h2>CAS и lock-free</h2>
+          <div class="study-card" data-review-id="threads-atomiclong-vs-longadder">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Счётчик инкрементируется из многих потоков очень часто, а читается редко. Что выбрать — <code>AtomicLong</code> или <code>LongAdder</code> — и почему?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Под высокой конкуренцией CAS-цикл <code>AtomicLong</code> крутится вхолостую: потоки бьются за один адрес и постоянно проваливают <code>compareAndSet</code>. <code>LongAdder</code> распыляет инкременты по нескольким ячейкам (striping) и суммирует их только при чтении через <code>sum()</code>. Меньше contention — выше throughput, поэтому для «частая запись, редкое чтение» берут <code>LongAdder</code>.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Блокировки дороги (переключение в ядро, парковка потоков). Альтернатива — <strong>неблокирующие</strong> алгоритмы поверх аппаратной инструкции <strong>CAS (Compare-And-Swap)</strong>. CPU предоставляет её как атомарную команду (<code>CMPXCHG</code> на x86, <code>LL/SC</code> на ARM): сравнить значение в памяти с ожидаемым, при совпадении записать новое и вернуть признак успеха. Всё это — атомарно, без локов.</p>
           <div class="diagram">
           <div class="mermaid">
@@ -383,6 +480,22 @@ ref.compareAndSet(cur, "C", stamp, stamp + 1)</code></pre>
 
         <section class="section" id="lifecycle">
           <h2>Жизненный цикл потока и кооперативная отмена</h2>
+          <div class="study-card" data-review-id="threads-cooperative-cancel">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Что на самом деле делает <code>interrupt()</code> и почему нельзя «проглотить» пойманный <code>InterruptedException</code>?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>interrupt()</code> лишь выставляет флаг прерывания — поток не убивается, он сам обязан проверять флаг (<code>isInterrupted()</code>) и завершаться. Блокирующие методы (<code>sleep</code>, <code>wait</code>, <code>join</code>) реагируют на флаг броском <code>InterruptedException</code> и при этом сбрасывают его. Если исключение проглотить, сигнал отмены потеряется: нужно либо завершить работу, либо восстановить флаг через <code>Thread.currentThread().interrupt()</code>.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>У потока шесть состояний (<code>Thread.State</code>), и собеседующему важно, что вы различаете два «спящих»: <code>BLOCKED</code> и <code>WAITING</code>. В <code>BLOCKED</code> поток попадает, когда ждёт <em>захвата монитора</em> на входе в <code>synchronized</code>; в <code>WAITING</code>/<code>TIMED_WAITING</code> — когда сам отпустил монитор и ждёт сигнала (<code>wait()</code>, <code>join()</code>, <code>park()</code>, <code>await()</code>).</p>
           <div class="table-wrap">
             <table>
@@ -781,7 +894,7 @@ fun total(k: String): Long = m3[k]?.sum() ?: 0</code></pre>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/glossary.js?v=20260621-13"></script>
-  <script src="../assets/app.js?v=20260621-13"></script>
+  <script src="../assets/glossary.js?v=20260621-16"></script>
+  <script src="../assets/app.js?v=20260621-16"></script>
 </body>
 </html>

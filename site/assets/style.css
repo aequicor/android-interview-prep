@@ -504,6 +504,98 @@ td code { white-space: nowrap; }
   cursor: not-allowed; opacity: .55; color: var(--text-faint);
   border-color: var(--border); background: var(--panel);
 }
+.study-btn.ghost { background: transparent; }
+
+/* ---------- домашняя поверхность «Сегодня» ---------- */
+.today-lab {
+  margin: 8px 0 36px;
+  padding: 18px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 6%, var(--panel));
+}
+.today-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px 18px;
+  align-items: center;
+}
+.today-title { margin: 9px 0 4px; font-size: 20px; font-weight: 800; letter-spacing: -.01em; color: var(--text); }
+.today-sub { margin: 0; color: var(--text-dim); font-size: 14px; line-height: 1.55; max-width: 60ch; }
+.today-meters { display: flex; gap: 8px; }
+.today-list {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+.today-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.today-card-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.today-kind {
+  padding: 2px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 36%, var(--border));
+  border-radius: 7px;
+  color: var(--accent-2);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+.today-kind.from-test { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.today-chapter { color: var(--text-faint); font-size: 12px; font-weight: 600; }
+.today-q { margin: 0; color: var(--text); font-size: 14.5px; line-height: 1.5; font-weight: 600; }
+.today-q code { font-size: .92em; }
+.today-card-foot { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
+.today-grade { display: flex; gap: 6px; flex-wrap: wrap; }
+.today-grade .study-btn { flex: 1; min-width: 64px; padding: 6px 8px; }
+.today-more { margin: 12px 0 0; color: var(--text-faint); font-size: 13px; }
+.today-weak { margin-top: 16px; }
+.today-weak-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.today-weak-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--panel); color: var(--text-dim);
+  font-size: 13px; font-weight: 600; text-decoration: none;
+}
+.today-weak-chip:hover { color: var(--text); border-color: var(--accent); }
+.today-weak-chip b { color: var(--accent); }
+.today-empty {
+  margin-top: 14px; padding: 16px;
+  border: 1px dashed var(--border); border-radius: 10px;
+  background: var(--panel);
+}
+.today-empty strong { display: block; color: var(--text); font-size: 15px; }
+.today-empty p { margin: 6px 0 0; color: var(--text-dim); font-size: 14px; line-height: 1.55; }
+.today-actions { margin-top: 16px; display: flex; gap: 9px; flex-wrap: wrap; }
+
+/* пересдача / связь теста с очередью */
+.quiz-retry-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  margin-bottom: 14px; padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 9%, var(--panel));
+  color: var(--text); font-size: 13.5px; font-weight: 600;
+}
+.quiz-result-actions { display: flex; gap: 9px; flex-wrap: wrap; margin: 14px 0 6px; }
+.quiz-result-actions a.study-btn { text-decoration: none; display: inline-flex; align-items: center; }
+.quiz-queue-note { margin: 0 0 6px; color: var(--text-dim); font-size: 13px; line-height: 1.5; }
+
+@media (max-width: 720px) {
+  .today-head { grid-template-columns: 1fr; }
+  .today-meters { width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .today-list { grid-template-columns: 1fr; }
+  .today-actions .study-btn { width: 100%; text-align: center; }
+}
 
 .study-card {
   margin: 18px 0;

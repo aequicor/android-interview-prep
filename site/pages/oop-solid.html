@@ -17,7 +17,7 @@
   <title>ООП и SOLID · Android-собес</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../assets/style.css?v=20260621-13">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
 <body data-page="oop-solid">
@@ -42,8 +42,41 @@
           <div class="bd"><strong>Базовые термины — в отдельном разделе.</strong> Контракт, инвариант, coupling/cohesion, абстракция, DI/IoC, идемпотентность и другие слова, которые часто звучат на собесе, собраны и уточнены в справочнике <a href="terminology.html">«Терминология инженера»</a>.</div>
         </div>
 
+        <div class="study-lab">
+          <div class="study-lab-copy">
+            <span class="study-label">Тренажёр главы</span>
+            <p class="study-title">Сначала пробуем ответить, потом читаем разбор.</p>
+            <p class="study-copy">Карточки разбросаны по главе: они проверяют не определение, а механизм, выбор API и типичные баги. После ответа ставьте дату следующего повторения.</p>
+          </div>
+          <div class="study-lab-side" aria-label="Статистика тренажёра">
+            <div class="study-meter"><b data-study-due>0</b><span>на сегодня</span></div>
+            <div class="study-meter"><b data-study-scheduled>0</b><span>отложено</span></div>
+            <div class="study-meter"><b data-study-total>0</b><span>всего</span></div>
+          </div>
+          <div class="study-lab-actions">
+            <button class="study-btn primary" type="button" data-study-scroll-due>К карточке на сегодня</button>
+            <button class="study-btn" type="button" data-study-reset>Сбросить тренажёр главы</button>
+          </div>
+        </div>
+
         <section class="section" id="pillars">
           <h2>Четыре столпа ООП</h2>
+          <div class="study-card" data-review-id="oop-solid-final-default">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Класс в Kotlin по умолчанию <code>final</code>. Какую проблему это закрывает и какой баг возникает, если открыть базовый класс, не спроектированный под наследование?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>final</code> по умолчанию заставляет автора осознанно открыть точку расширения через <code>open</code>/<code>abstract</code>, а не оставить её открытой случайно. Это защита от хрупкого базового класса: наследник переопределяет метод, который база зовёт у себя внутри (self-call), и инварианты ломаются. Классика — <code>addAll</code> базы внутри зовёт <code>add</code>, наследник переопределил оба, и счётчик считает дважды.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <div class="table-wrap">
             <table>
               <thead><tr><th>Столп</th><th>Определение</th><th>Суть</th><th>В Kotlin/Android</th></tr></thead>
@@ -147,6 +180,22 @@ fun main() {
 
         <section class="section" id="composition">
           <h2>Композиция, иерархия, расширение</h2>
+          <div class="study-card" data-review-id="oop-solid-delegate-self-call">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Класс-обёртка делает <code>class A(b: B) : I by b</code> и переопределяет <code>m()</code>. Другой метод делегата внутри зовёт <code>m()</code>. Чью реализацию <code>m()</code> он вызовет и почему?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Вызовется реализация из делегата <code>b</code>, а не <code>override</code> из <code>A</code>. Делегирование генерирует методы интерфейса, которые просто форвардят вызовы на сохранённую ссылку <code>b</code>; делегат не знает об обёртке. Self-вызов внутри делегата диспетчеризуется по самому <code>b</code> — это и есть отличие композиции-делегирования от наследования, где self-call динамический. Поэтому <code>by</code> не заменяет наследование там, где нужен переопределяемый self-call.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Грань такая: наследование описывает <code>is-a</code> («разновидность»), композиция описывает <code>has-a</code> («имеет/использует»), интерфейс часто описывает роль <code>can-do</code> («умеет делать»). Ошибка начинается там, где роль или зависимость превращают в жёсткую иерархию.</p>
           <div class="table-wrap">
             <table>
@@ -226,6 +275,22 @@ fun main() {
 
         <section class="section" id="solid">
           <h2>SOLID — пять принципов</h2>
+          <div class="study-card" data-review-id="oop-solid-lsp-precondition">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Базовый <code>normalize(input: String)</code> принимал любую строку. Наследник в <code>override</code> добавил <code>require(input.isNotEmpty())</code>. Почему это уже нарушение LSP, хотя сигнатура совпадает?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Наследник усилил предусловие — принимает более узкий набор входов, чем база. Клиент писался под контракт базового типа и законно передаёт пустую строку, а на подтипе получает исключение. LSP — про поведенческую совместимость, а не совпадение сигнатур: компилятор подстановку разрешит, а рантайм-контракт сломается. По Лисков — Уинг подтип не должен усиливать предусловия и ослаблять постусловия/инварианты.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>SOLID — пять принципов объектного проектирования. Их удобно отвечать по схеме: определение, симптом нарушения, Android-пример, паттерны/архитектурные приёмы, которые помогают принцип реализовать.</p>
           <div class="table-wrap">
             <table>
@@ -367,6 +432,22 @@ fun main() {
 
         <section class="section" id="patterns">
           <h2>GoF-паттерны в Android</h2>
+          <div class="study-card" data-review-id="oop-solid-object-vs-const">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Чем Kotlin <code>object</code> как Singleton отличается от <code>const val</code> / <code>public static val</code> и от <code>@Singleton</code> в Hilt?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>object</code> — один экземпляр с глобальной точкой доступа, который держит поведение и состояние за контролируемым API; создаётся лениво и потокобезопасно при первом доступе. <code>const val</code>/<code>public static val</code> — просто константа или поле, без жизненного цикла, контракта и инкапсулированного поведения. <code>@Singleton</code> в Hilt — не языковой singleton, а scope: один instance в пределах DI-компонента.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p><strong>GoF</strong> — Gang of Four, «Банда четырёх»: Эрих Гамма, Ричард Хелм, Ральф Джонсон и Джон Влиссидес, авторы книги <em>Design Patterns</em>. В книге описаны 23 классических ООП-паттерна, сгруппированных по назначению: порождающие, структурные и поведенческие.</p>
           <div class="table-wrap">
             <table>
@@ -448,6 +529,22 @@ fun main() {
 
         <section class="section" id="strategy-state-decorator">
           <h2>Strategy, State, Decorator — паттерны на композиции</h2>
+          <div class="study-card" data-review-id="oop-solid-strategy-vs-state">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Strategy и State дают одинаковую диаграмму классов. По какому признаку их различают на практике и где в Android каждый из них живёт?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Различие в намерении, не в структуре. Strategy задаёт реализацию извне (клиент через конструктор/DI), стратегии не знают друг о друге и стабильны — пример: внедрённый <code>PaymentMethod</code> или <code>ImageLoader</code>. State меняет поведение изнутри по ходу жизни объекта, а состояния знают про переходы — в Android это sealed-иерархия <code>UiState</code> и <code>when</code> по ней.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Три паттерна, которые на собесе путают чаще остальных. Это прямой мостик от «композиция лучше наследования» к конкретике: все три прячут варьируемое поведение за интерфейсом, но решают разные задачи.</p>
 
           <p class="subhead">Strategy — алгоритм за интерфейсом, выбор снаружи</p>
@@ -516,6 +613,22 @@ val client = LoggingApiClient(RealApiClient())</code></pre>
 
         <section class="section" id="solid-cost">
           <h2>Когда SOLID мешает: over-engineering и YAGNI</h2>
+          <div class="study-card" data-review-id="oop-solid-when-abstract">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">По какому критерию вводить интерфейс, а не плодить абстракции «ради DIP», когда требований ещё нет?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Вводить абстракцию, когда есть вторая реализация, реальная потребность подменить зависимость в тесте или граница действительно нестабильна. Пока вариация одна, абстракция спекулятивна: ось изменения угадывается вслепую, а сломать неверно угаданную абстракцию дорого. Рефакторинг к интерфейсу из конкретного класса механический, поэтому дешевле ввести его по факту. Иначе KISS/YAGNI важнее «галочки SOLID» — это эвристики, а не закон.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Сильный сигнал для Senior — не догматичное применение SOLID. SOLID толкает к абстракциям, YAGNI запрещает строить лишнее, и конфликт между ними реальный. Абстракция не бесплатна: за неё платят лишним слоем косвенности и тем, что по коду труднее ходить.</p>
 
           <p class="subhead">Типичные перегибы</p>
@@ -861,7 +974,7 @@ fun makeAllFly(birds: List&lt;Flyable&gt;) = birds.forEach { it.fly() }</code></
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/glossary.js?v=20260621-13"></script>
-  <script src="../assets/app.js?v=20260621-13"></script>
+  <script src="../assets/glossary.js?v=20260621-16"></script>
+  <script src="../assets/app.js?v=20260621-16"></script>
 </body>
 </html>

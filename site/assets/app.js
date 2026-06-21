@@ -74,126 +74,148 @@ const SPECIAL_PAGES = {
   },
 };
 
-const INTERVIEW_TEST_KEY = "aip-interview-test-v1";
+const INTERVIEW_TEST_KEY = "aip-interview-test-v2";
 const INTERVIEW_TEST_QUESTIONS = [
   {
-    id: "oop-solid-dependency",
+    id: "terminology-idempotency-retry",
+    level: "Middle+",
+    area: "Термины",
+    topicId: "terminology",
+    sectionId: "idempotency",
+    question: "Платёжный `POST` ушёл, клиент получил timeout, а сервер мог уже списать деньги. Какой контракт нужен, чтобы retry не создал дубль?",
+    options: [
+      "Идемпотентный ключ операции: повтор с тем же ключом возвращает прежний результат, а не создаёт новый платёж.",
+      "Correlation id в логах: по нему удобно найти все попытки одного клиентского действия.",
+      "Exponential backoff с jitter: он снижает нагрузку при массовых повторах.",
+      "Короткий client timeout: UI быстрее отдаёт управление пользователю."
+    ],
+    answer: 0,
+    gap: "Идемпотентность: retry опасен без серверной дедупликации.",
+    explain: "Backoff, timeout и логи полезны, но не отвечают на главный вопрос: что будет, если первая попытка всё-таки дошла до сервера. Для unsafe-операции нужен идемпотентный ключ или другой серверный механизм дедупликации.",
+    refs: [
+      { topicId: "terminology", sectionId: "idempotency", label: "Терминология → Идемпотентность" },
+      { topicId: "network", sectionId: "http", label: "Сеть → HTTP и retries" }
+    ]
+  },
+  {
+    id: "oop-solid-viewmodel-fake",
     level: "Middle+",
     area: "Проектирование",
     topicId: "oop-solid",
     sectionId: "solid",
-    question: "Во ViewModel внутри конструктора создаётся `RetrofitClient.create()` и конкретный `UserRepositoryImpl`. Какая проблема здесь важнее всего для собеса?",
+    question: "Нужно unit-тестировать `UserViewModel`, но она сама создаёт `Retrofit` и `UserRepositoryImpl`. Какой ход чинит именно тестируемость?",
     options: [
-      "Проблема только в том, что Retrofit создаётся заново на каждый экран; если сделать его singleton, архитектура станет нормальной.",
-      "ViewModel жёстко зависит от детали реализации: зависимость нельзя заменить fake-ом, а тест полезет в сеть.",
-      "Достаточно вынести `RetrofitClient.create()` в `UserRepositoryImpl`, даже если сама ViewModel продолжит создавать `UserRepositoryImpl` руками.",
-      "Это допустимо, если ViewModel не хранит `Context`: зависимость от конкретного репозитория не влияет на тесты."
+      "Передать во ViewModel `UserRepository` как зависимость снаружи; в тесте подставить fake.",
+      "Сделать `Retrofit` singleton: это уменьшит лишнее создание сетевого клиента.",
+      "Поднять fake-сервер: так можно проверить сетевой контракт в интеграционном тесте.",
+      "Вынести DTO-маппинг из UI: это уменьшит протекание data-слоя в presentation."
     ],
-    answer: 1,
-    gap: "DIP, DI и тестируемость зависимостей.",
-    explain: "ViewModel должна зависеть от абстракции, полученной снаружи. Тогда в проде придёт реальный репозиторий, а в тесте — fake или mock; сетевой клиент не размазывается по UI-слою.",
+    answer: 0,
+    gap: "DIP и DI: что именно надо инвертировать для unit-теста.",
+    explain: "Все варианты могут быть полезны, но unit-тест ViewModel требует заменить внешний мир. Для этого ViewModel должна зависеть от абстракции, полученной снаружи, а не собирать конкретный репозиторий и сеть внутри себя.",
     refs: [
       { topicId: "oop-solid", sectionId: "solid", label: "ООП и SOLID → SOLID" },
       { topicId: "architecture", sectionId: "testing", label: "Архитектура и DI → Тестируемость" }
     ]
   },
   {
-    id: "kotlin-platform-type",
+    id: "kotlin-platform-type-boundary",
     level: "Middle+",
     area: "Kotlin",
     topicId: "kotlin",
     sectionId: "interop",
-    question: "Java-метод без nullability-аннотаций возвращает `String`, а Kotlin видит результат как platform type `String!`. Какой ответ безопаснее?",
+    question: "Java SDK без nullability-аннотаций вернул `String!`. Где лучше снять риск `null`, чтобы он не разъехался по Kotlin-коду?",
     options: [
-      "Присвоить в `String` можно, значит Kotlin уже гарантирует non-null и дополнительная проверка не нужна.",
-      "Это тип с неизвестной nullability: на границе с Java значение нужно проверить или явно принять риск.",
-      "Лучше сразу привести к `String?` через `as String?`: так компилятор сам найдёт все места, где Java может вернуть null.",
-      "Достаточно поставить `!!` в одном месте после Java-вызова: дальше значение считается проверенным для всех будущих вызовов этого API."
+      "На границе: проверить/нормализовать значение и дальше отдать доменной модели уже `String` или `String?` с явным смыслом.",
+      "В Java-коде, если он ваш: nullability-аннотации помогают Kotlin точнее вывести тип.",
+      "`!!` у самой границы делает падение ранним и заметным, если команда сознательно принимает такой контракт.",
+      "Контрактный тест на SDK полезен: он ловит изменение поведения поставщика до релиза."
     ],
-    answer: 1,
-    gap: "Null-safety на Java/Kotlin-границе.",
-    explain: "Platform type означает, что Kotlin не знает контракт nullability. Вы можете трактовать его как nullable или non-null, но ответственность за проверку лежит на вашем коде.",
+    answer: 0,
+    gap: "Platform type: nullability неизвестна, ответственность на вашем коде.",
+    explain: "Аннотации и тесты помогают, а `!!` иногда осознанно ставят как fail-fast. Но главный приём для production-кода — не тащить `String!` дальше: на границе сделать проверку и превратить значение в явный nullable/non-null контракт.",
     refs: [
       { topicId: "kotlin", sectionId: "null-safety", label: "Kotlin → Null-safety" },
       { topicId: "kotlin", sectionId: "interop", label: "Kotlin → Java interop" }
     ]
   },
   {
-    id: "kotlin-lateinit-check",
+    id: "kotlin-variance-readonly-api",
     level: "Middle+",
     area: "Kotlin",
     topicId: "kotlin",
-    sectionId: "null-safety",
-    question: "В классе есть `lateinit var presenter: Presenter`. Как корректно проверить, что свойство уже инициализировано?",
-    options: [
-      "`if (::presenter.isInitialized) presenter.attach()` — через property reference, без вызова функции.",
-      "`if (presenter != null) presenter.attach()` — `lateinit` всё равно nullable под капотом.",
-      "`if (presenter.isInitialized()) presenter.attach()` — у объекта появляется метод проверки.",
-      "`if (::presenter.get() != null) presenter.attach()` — getter безопасно вернёт null до первой инициализации."
-    ],
-    answer: 0,
-    gap: "Точный синтаксис проверки `lateinit`.",
-    explain: "`lateinit`-свойство non-nullable, поэтому проверка через `!= null` не выражает контракт. Kotlin даёт property reference: `::presenter.isInitialized`. Если прочитать свойство раньше присваивания, будет `UninitializedPropertyAccessException`.",
-    refs: [
-      { topicId: "kotlin", sectionId: "null-safety", label: "Kotlin → Null-safety" }
-    ]
-  },
-  {
-    id: "kotlin-variance",
-    level: "Senior",
-    area: "Kotlin",
-    topicId: "kotlin",
     sectionId: "generics",
-    question: "Почему `List<Cat>` можно передать туда, где ожидается `List<Animal>`, а с `MutableList<Cat>` и `MutableList<Animal>` так делать нельзя?",
+    question: "Функция только читает животных и ей нужен доступ по индексу. Какой публичный параметр примет `List<Cat>` там, где ожидаются `Animal`, и не пообещает mutation?",
     options: [
-      "`List` в Kotlin ковариантен (`out T`) и только отдаёт элементы, а `MutableList` ещё принимает `T`, поэтому инвариантен.",
-      "`MutableList` запрещён только из-за JVM type erasure; на Kotlin/Native это бы работало.",
-      "`List` и `MutableList` оба ковариантны, но компилятор запрещает mutable-коллекции ради производительности.",
-      "Это ограничение появляется только при nullable-типах: `MutableList<Cat?>` был бы совместим."
+      "`fun render(items: List<Animal>)`: `List` ковариантен и read-only на уровне API.",
+      "`fun render(items: Iterable<Animal>)`: тоже read-only, но без индексного доступа.",
+      "`fun render(items: MutableList<Animal>)`: даёт запись в список и сужает совместимость mutable-коллекций.",
+      "`fun render(items: Array<Animal>)`: массив даёт индекс, но остаётся mutable и инвариантным."
     ],
     answer: 0,
-    gap: "Variance: `out`, `in` и mutable-коллекции.",
-    explain: "Ковариантный producer безопасен: из `List<Cat>` можно читать `Animal`. Mutable-коллекция ещё принимает элементы; если бы её отдали как `MutableList<Animal>`, туда можно было бы положить Dog и сломать список Cat.",
+    gap: "Variance и выбор минимального API-контракта.",
+    explain: "`List<out T>` безопасен как producer: из него читают `Animal`, но не кладут новых животных. `MutableList` и `Array` уже обещают mutation, а `Iterable` слишком общий для условия с индексами.",
     refs: [
       { topicId: "kotlin", sectionId: "generics", label: "Kotlin → Дженерики и variance" }
     ]
   },
   {
-    id: "kotlin-scope-apply-let",
+    id: "kotlin-scope-apply-builder",
     level: "Middle+",
     area: "Kotlin",
     topicId: "kotlin",
     sectionId: "scope-fns",
-    question: "Нужно создать объект, настроить его свойства в блоке и вернуть сам объект: `User().___ { name = value }`. Какая scope-функция подходит и почему?",
+    question: "Нужно создать объект, настроить свойства и вернуть сам объект: `User().___ { name = value }`. Что поставить в пропуск?",
     options: [
-      "`apply`: внутри блок получает receiver `this`, а наружу возвращается исходный объект.",
-      "`let`: внутри объект доступен как `it`, а наружу всегда возвращается исходный объект.",
-      "`also`: внутри блок получает receiver `this`, а наружу возвращается результат последней строки.",
-      "`run`: внутри объект доступен как `it`, а наружу возвращается исходный объект."
+      "`apply`: блок работает с receiver `this`, наружу возвращается исходный объект.",
+      "`also`: наружу тоже возвращается объект, но внутри он приходит как `it`; удобно для логов и побочных действий.",
+      "`let`: объект приходит как `it`, а результатом будет последняя строка блока.",
+      "`run`: блок работает с receiver `this`, а результатом будет последняя строка блока."
     ],
     answer: 0,
     gap: "Scope-функции: receiver/аргумент и возвращаемое значение.",
-    explain: "`apply` читается как настройка объекта: блок работает с receiver `this`, а результатом всей цепочки остаётся сам receiver. `let`/`run` возвращают результат блока, `also` возвращает receiver, но передаёт его как `it`, поэтому чаще подходит для логирования и побочных действий.",
+    explain: "Все scope-функции похожи, поэтому вопрос на точность. Для builder-style настройки нужен receiver и возврат того же объекта — это `apply`.",
     refs: [
       { topicId: "kotlin", sectionId: "scope-fns", label: "Kotlin → Scope-функции" }
     ]
   },
   {
-    id: "activity-process-death",
+    id: "components-foreground-service-choice",
     level: "Middle+",
-    area: "Платформа Android",
+    area: "Android-компоненты",
+    topicId: "components",
+    sectionId: "service",
+    question: "Пользователь сам запустил запись трека, процесс должен идти сейчас и быть видимым в уведомлении. Что ближе к правильному компоненту?",
+    options: [
+      "Foreground service с подходящим типом: работа видима пользователю и идёт прямо сейчас.",
+      "WorkManager: он хорош для гарантированной отложенной работы с условиями и retry.",
+      "BroadcastReceiver: он удобен как короткая точка входа на событие с быстрым handoff.",
+      "Bound service: он удобен, когда клиент держит соединение с сервисом и вызывает его API."
+    ],
+    answer: 0,
+    gap: "Service lifetime: видимая текущая работа vs отложенная гарантия.",
+    explain: "Ключевые слова в условии — «пользователь запустил», «сейчас» и «видимо в уведомлении». WorkManager закрывает другой класс задач: выполнить позже, когда условия позволят.",
+    refs: [
+      { topicId: "components", sectionId: "service", label: "Android-компоненты → Service" },
+      { topicId: "background-work", sectionId: "foreground-service", label: "Фоновая работа → Foreground service" }
+    ]
+  },
+  {
+    id: "activity-process-death-state",
+    level: "Middle+",
+    area: "Activity",
     topicId: "activity",
     sectionId: "saved-state",
-    question: "После поворота экран сохраняет фильтр поиска, но после возврата из фона фильтр исчезает. Какой вывод правильный?",
+    question: "Поворот сохраняет query поиска, а после убийства процесса query пропадает. Где должен жить маленький ключ восстановления?",
     options: [
-      "ViewModel переживает и поворот, и process death; ошибка точно в `onResume()`.",
-      "Поворот проверяет только configuration change. Для process death нужен `SavedStateHandle`, `onSaveInstanceState` или постоянное хранилище.",
-      "`onDestroy()` гарантированно вызывается перед убийством процесса, значит фильтр нужно сохранять там.",
-      "Достаточно писать фильтр в поле ViewModel из `onStop()`: при восстановлении процесса Android вернёт тот же экземпляр ViewModel."
+      "`SavedStateHandle` или saved instance state: маленькое сериализуемое UI-состояние переживает process death.",
+      "`ViewModel`: она хорошо держит состояние между configuration changes, пока жив процесс.",
+      "База данных: она нужна, если это уже долговечный черновик или доменные данные.",
+      "`onDestroy()`: там удобно освобождать ресурсы при штатном уничтожении owner-а."
     ],
-    answer: 1,
-    gap: "Разница между configuration change и process death.",
-    explain: "ViewModel живёт, пока жив ViewModelStore в процессе. При убийстве процесса он пропадает; восстановить можно только сериализованное или сохранённое состояние.",
+    answer: 0,
+    gap: "Configuration change ≠ process death.",
+    explain: "ViewModel решает поворот, но не смерть процесса. Для query, tab, id и других маленьких ключей восстановления берут `SavedStateHandle`/Bundle; большие и долговечные данные держат в хранилище.",
     refs: [
       { topicId: "activity", sectionId: "saved-state", label: "Activity → Saved state и process death" },
       { topicId: "activity", sectionId: "failure-modes", label: "Activity → Failure modes" }
@@ -202,309 +224,291 @@ const INTERVIEW_TEST_QUESTIONS = [
   {
     id: "fragment-view-lifecycle",
     level: "Middle+",
-    area: "Платформа Android",
+    area: "Fragment",
     topicId: "fragment",
     sectionId: "fragment-lifecycle",
-    question: "Во Fragment Flow собирают с lifecycle самого Fragment. Экран ушёл в back stack: `onDestroyView()` уже вызван, но новый emit пытается обновить старый binding и падает. Какая правка исправляет причину?",
+    question: "Fragment ушёл в back stack: `onDestroyView()` уже был, а новый emit Flow трогает старый binding. Что исправляет именно lifetime UI?",
     options: [
-      "Оставить подписку на `this`: Fragment живёт дольше View, поэтому binding тоже будет доступен.",
       "Собирать Flow в `viewLifecycleOwner.lifecycleScope` через `repeatOnLifecycle(...)`, а binding очищать в `onDestroyView()`.",
-      "Перенести сбор в `fragment.lifecycleScope` и добавить `repeatOnLifecycle(STARTED)`: lifecycle Fragment сам совпадёт со сроком жизни binding.",
-      "Очищать binding в `onStop()`, а подписку оставить прежней: после `onStop()` новых emit уже не будет."
+      "Lifecycle самого Fragment подходит для работы, которая не обращается к уничтоженной View.",
+      "Shared ViewModel подходит для общего состояния между экранами или nav graph.",
+      "Fragment Result API подходит для одноразового результата между фрагментами."
     ],
-    answer: 1,
+    answer: 0,
     gap: "Fragment lifecycle vs view lifecycle: `viewLifecycleOwner`.",
-    explain: "Проблема не в Flow, а во владельце lifecycle. Fragment может жить без View в back stack, поэтому подписка на lifecycle Fragment переживает `onDestroyView()` и трогает мёртвый binding. UI-сбор привязывают к `viewLifecycleOwner` в `onViewCreated()`, а binding чистят в `onDestroyView()`.",
+    explain: "Все варианты про реальные инструменты Fragment, но binding живёт ровно столько, сколько View. Всё, что рендерит UI, привязывают к `viewLifecycleOwner`, иначе подписка переживёт `onDestroyView()`.",
     refs: [
       { topicId: "fragment", sectionId: "fragment-lifecycle", label: "Fragment → Два lifecycle" },
       { topicId: "fragment", sectionId: "failure-modes", label: "Fragment → Failure modes" }
     ]
   },
   {
-    id: "background-work-choice",
+    id: "background-exact-alarm",
     level: "Middle+",
-    area: "Платформа Android",
+    area: "Фон",
     topicId: "background-work",
-    sectionId: "choose",
-    question: "Нужно гарантированно выгрузить накопленные логи, можно подождать сеть и зарядку, точное время не важно. Что выбрать?",
+    sectionId: "alarmmanager",
+    question: "Приложение-будильник должно прозвенеть ровно в 07:30. Какая ось выбора важнее всего?",
     options: [
-      "Foreground service: если работа важная, можно показать техническую нотификацию и держать процесс до конца выгрузки.",
-      "WorkManager с constraints: работа отложенная, гарантированная и переживает перезапуск.",
-      "AlarmManager exact alarm: поставить будильник на ближайшее окно, а сеть и зарядку проверить внутри callback.",
-      "JobScheduler напрямую: он тоже умеет constraints, поэтому WorkManager здесь лишний слой и ничего не добавляет."
+      "Точное пользовательское время: для будильника/таймера нужен exact alarm и готовность пройти ограничения платформы.",
+      "Гарантированная отложенная работа: WorkManager хорош, когда точный момент не важен.",
+      "Серверный срочный триггер: high-priority FCM подходит для входящего события извне.",
+      "Бережное пакетирование: inexact alarm экономит батарею, когда допустимо окно срабатывания."
     ],
-    answer: 1,
-    gap: "Выбор WorkManager / FGS / AlarmManager.",
-    explain: "WorkManager закрывает отложенную гарантированную работу с constraints и ретраями. FGS нужен для видимой пользователю работы прямо сейчас, AlarmManager — для точного времени.",
+    answer: 0,
+    gap: "AlarmManager vs WorkManager: точность времени не равна гарантии выполнения.",
+    explain: "Условие требует не «когда-нибудь гарантированно», а конкретный момент, значимый для пользователя. Это редкий законный случай exact alarm; для синхронизаций и выгрузок логов он обычно не нужен.",
     refs: [
-      { topicId: "background-work", sectionId: "choose", label: "Фоновая работа → Что выбирать" },
-      { topicId: "components", sectionId: "workmanager", label: "Android-компоненты → WorkManager" }
+      { topicId: "background-work", sectionId: "alarmmanager", label: "Фоновая работа → AlarmManager" },
+      { topicId: "background-work", sectionId: "choose", label: "Фоновая работа → Что выбирать" }
     ]
   },
   {
-    id: "looper-main-block",
+    id: "algorithms-lru-o1",
     level: "Middle+",
-    area: "Многопоточность",
-    topicId: "looper-handler",
-    sectionId: "anr",
-    question: "В `onClick` синхронно читается большой файл, экран зависает, иногда прилетает ANR. Что здесь происходит?",
+    area: "Алгоритмы",
+    topicId: "algorithms",
+    sectionId: "lru",
+    question: "Нужно реализовать LRU-cache с `get/put` за O(1). Какой инвариант структуры делает задачу решаемой?",
     options: [
-      "`Handler.post { readFile() }` решит проблему, потому что работа станет асинхронной относительно клика.",
-      "Main thread занят блокирующим I/O, очередь сообщений не обрабатывается, кадры и input ждут.",
-      "Проблема в StrictMode: в release он выключен, поэтому реального ANR от файлового I/O не будет.",
-      "Проблема решается заменой `Handler` на `HandlerThread`, даже если чтение всё ещё запускается из `onClick` на Main."
+      "`HashMap` ведёт ключ к узлу, а двусвязный список хранит порядок доступа; узел можно перецепить за O(1).",
+      "`PriorityQueue` быстро отдаёт минимум/максимум и хорошо подходит для top-K.",
+      "`TreeMap` держит ключи отсортированными и даёт диапазонные запросы за O(log n).",
+      "`ArrayDeque` даёт дешёвые операции на концах и удобен для очереди или стека."
     ],
-    answer: 1,
-    gap: "Main Looper, очередь сообщений и ANR.",
-    explain: "Главный поток должен быстро отдавать управление Looper. Долгий I/O на Main блокирует input, lifecycle-callbacks и кадры; тяжёлое уводят в фон и возвращают на Main только результат.",
+    answer: 0,
+    gap: "LRU: мапа для доступа, список для порядка.",
+    explain: "LeetCode-ловушка в том, что одной мапы или одной очереди мало. Нужно и найти элемент по ключу, и мгновенно переместить его в «самый свежий» конец порядка доступа.",
     refs: [
-      { topicId: "looper-handler", sectionId: "event-loop", label: "Looper и Handler → Event loop" },
-      { topicId: "looper-handler", sectionId: "anr", label: "Looper и Handler → ANR" }
+      { topicId: "algorithms", sectionId: "lru", label: "Алгоритмы → LRU-кэш" },
+      { topicId: "algorithms", sectionId: "linked-tree-map", label: "Алгоритмы → LinkedHashMap" }
     ]
   },
   {
-    id: "threads-volatile",
+    id: "threads-volatile-counter",
     level: "Senior",
-    area: "Многопоточность",
+    area: "Потоки",
     topicId: "threads",
     sectionId: "memory-model",
-    question: "Поле `@Volatile var counter = 0` инкрементируют из нескольких потоков через `counter++`. Почему результат всё равно может быть неверным?",
+    question: "`@Volatile var counter = 0` увеличивают через `counter++` из нескольких потоков. Какой ответ объясняет именно баг?",
     options: [
-      "`@Volatile` даёт видимость, но `counter++` остаётся read-modify-write из нескольких операций без атомарности.",
-      "`@Volatile` делает атомарными только чтение и запись поля, поэтому надо заменить `counter++` на `counter = counter + 1`.",
-      "Проблема исчезнет, если читать `counter` в локальную переменную перед инкрементом: volatile-гарантия уже сработала.",
-      "Нужно добавить `@Synchronized` только на getter: инкремент начнёт выполняться под монитором."
+      "`@Volatile` даёт видимость отдельных чтений/записей, но не атомарность read-modify-write.",
+      "Один actor/thread, владеющий счётчиком, убирает гонку за счёт confinement.",
+      "`synchronized` вокруг инкремента тоже чинит счётчик, потому что даёт mutual exclusion.",
+      "`LongAdder` полезен для счётчиков под высокой конкуренцией, когда подходит его модель чтения."
     ],
     answer: 0,
     gap: "Visibility vs atomicity в Java/Kotlin memory model.",
-    explain: "Volatile гарантирует видимость и порядок чтения/записи, но не делает составную операцию атомарной. Для счётчика нужен `AtomicInteger`, lock или другая синхронизация.",
+    explain: "Остальные варианты — рабочие техники в своих условиях. Но ошибка `volatile++` именно в том, что инкремент состоит из чтения, вычисления и записи, а другой поток может вклиниться между ними.",
     refs: [
       { topicId: "threads", sectionId: "memory-model", label: "Потоки и память JVM → Memory model" },
       { topicId: "threads", sectionId: "cas", label: "Потоки и память JVM → CAS" }
     ]
   },
   {
-    id: "executors-queue-growth",
-    level: "Senior",
-    area: "Многопоточность",
-    topicId: "executors",
-    sectionId: "growth-model",
-    question: "`ThreadPoolExecutor` создан с `corePoolSize = 4`, `maximumPoolSize = 20` и неограниченной очередью. Почему под нагрузкой потоков всё равно может остаться 4?",
+    id: "looper-update-ui",
+    level: "Middle+",
+    area: "Looper",
+    topicId: "looper-handler",
+    sectionId: "event-loop",
+    question: "Фоновый поток получил результат и должен обновить `TextView`. Какой ход отвечает именно за переход на UI-поток?",
     options: [
-      "При неограниченной очереди новые задачи встают в queue после заполнения core, поэтому пулу не нужно расти до maximum.",
-      "`maximumPoolSize` сработает первым: executor всегда добирает потоки до maximum, а очередь использует только после этого.",
-      "Пул не растёт, потому что `keepAliveTime` по умолчанию равен нулю и запрещает создавать non-core потоки.",
-      "Чтобы пул рос до 20, достаточно вызвать `prestartAllCoreThreads()`: это запускает и core, и maximum workers."
+      "`Handler(Looper.getMainLooper()).post { ... }` или `Dispatchers.Main`: работа попадёт в очередь главного Looper.",
+      "`HandlerThread` создаёт отдельный поток с Looper для последовательной фоновой очереди.",
+      "`postDelayed` ставит сообщение на будущее время, а `removeCallbacks` помогает снять устаревшую работу.",
+      "`Choreographer` синхронизирует callback-и кадра с VSYNC."
     ],
     answer: 0,
-    gap: "Модель роста ThreadPoolExecutor и роль очереди.",
-    explain: "ThreadPoolExecutor сначала заполняет core, затем кладёт задачи в очередь. До maximum он растёт, когда очередь не принимает задачу; с unbounded queue этот момент может не наступить.",
+    gap: "Main Looper: обновление UI проходит через очередь главного потока.",
+    explain: "Все варианты про реальные механизмы Looper-мира, но TextView можно трогать только с главного потока. Поэтому нужен hop в Main queue, а не просто «ещё один Looper».",
+    refs: [
+      { topicId: "looper-handler", sectionId: "event-loop", label: "Looper и Handler → Event loop" },
+      { topicId: "looper-handler", sectionId: "handler-thread", label: "Looper и Handler → HandlerThread" }
+    ]
+  },
+  {
+    id: "executors-unbounded-queue",
+    level: "Senior",
+    area: "Executor",
+    topicId: "executors",
+    sectionId: "growth-model",
+    question: "`ThreadPoolExecutor(4, 20, ..., LinkedBlockingQueue())` под нагрузкой остаётся на 4 потоках. Что объясняет это поведение?",
+    options: [
+      "После заполнения core новые задачи принимает неограниченная очередь, поэтому до `maximumPoolSize` пул не дорастает.",
+      "Ограниченная очередь или `SynchronousQueue` меняют баланс между ростом пула, очередью и backpressure.",
+      "`CallerRunsPolicy` может притормозить producer-а, потому что часть задач выполнится в вызывающем потоке.",
+      "`prestartAllCoreThreads()` заранее запускает core-потоки, чтобы первые задачи не платили за старт worker-а."
+    ],
+    answer: 0,
+    gap: "ThreadPoolExecutor: порядок core → queue → maximum.",
+    explain: "`maximumPoolSize` не означает «расти до 20 при любой нагрузке». Executor растёт сверх core, когда очередь не принимает задачу; unbounded queue почти всегда принимает.",
     refs: [
       { topicId: "executors", sectionId: "growth-model", label: "Executor и пулы → Модель роста" },
       { topicId: "executors", sectionId: "queues", label: "Executor и пулы → Очереди" }
     ]
   },
   {
-    id: "coroutines-async-await",
+    id: "coroutines-immediate-await",
     level: "Middle+",
     area: "Корутины",
     topicId: "coroutines",
     sectionId: "launch-async",
-    question: "В коде два сетевых запроса запускают так: `val a = async { loadA() }.await(); val b = async { loadB() }.await()`. Почему параллелизма почти нет?",
+    question: "Код делает `val a = async { loadA() }.await(); val b = async { loadB() }.await()`. Почему это почти не параллелизм?",
     options: [
-      "`async` параллелит только CPU-задачи; сетевые suspend-функции внутри него всё равно выполняются последовательно.",
-      "Первый `await()` сразу ждёт завершения первой корутины, и только потом создаётся вторая.",
-      "Нужно добавить `CoroutineStart.LAZY`: ленивый старт гарантирует, что оба запроса начнутся одновременно на первом `await()`.",
-      "Нужно обернуть оба вызова в `withContext(Dispatchers.IO)`: тогда порядок `await()` уже не влияет на параллелизм."
+      "Первый `await()` сразу ждёт результат, поэтому вторая корутина создаётся только после первой.",
+      "`coroutineScope` связывает дочерние корутины с родителем и ждёт их завершения.",
+      "`supervisorScope` меняет распространение ошибок между дочерними задачами.",
+      "`awaitAll()` удобен, когда уже есть несколько `Deferred` и нужно дождаться результатов."
     ],
-    answer: 1,
-    gap: "`async/await` и реальный параллелизм.",
-    explain: "Параллелизм появляется, когда обе корутины стартовали до ожидания результата: `val a = async { ... }; val b = async { ... }; a.await(); b.await()`. Немедленный await превращает код почти в последовательный.",
+    answer: 0,
+    gap: "Параллелизм появляется между стартом `async` и `await`, а не от слова `async` само по себе.",
+    explain: "Остальные варианты описывают полезные инструменты корутин, но причина здесь проще: нет окна, где две работы идут одновременно. Сначала стартуют оба `async`, потом делают `await`.",
     refs: [
-      { topicId: "coroutines", sectionId: "launch-async", label: "Корутины и Flow → launch / async" }
+      { topicId: "coroutines", sectionId: "launch-async", label: "Корутины и Flow → launch vs async" },
+      { topicId: "coroutines", sectionId: "structured-concurrency", label: "Корутины и Flow → Structured concurrency" }
     ]
   },
   {
-    id: "coroutines-cancellation",
+    id: "coroutines-cpu-cancellation",
     level: "Middle+",
     area: "Корутины",
     topicId: "coroutines",
     sectionId: "cancellation",
-    question: "Корутина крутит тяжёлый CPU-цикл без suspend-вызовов. Scope отменили, а цикл досчитался до конца. Что забыли?",
+    question: "Тяжёлый CPU-цикл без suspend-вызовов досчитался до конца после отмены scope. Что забыли в теле цикла?",
     options: [
-      "Отмена у корутин кооперативная: в CPU-цикле нужны `isActive`, `ensureActive()` или `yield()`.",
-      "Нужно завернуть цикл в `NonCancellable`, чтобы отмена стала жёсткой.",
-      "Нужно ловить `CancellationException` внутри цикла и продолжать: после catch корутина узнает об отмене.",
-      "Нужно переключить цикл на `Dispatchers.Default`: этот dispatcher сам прерывает CPU-задачу при отмене scope."
+      "Кооперативную проверку отмены: `ensureActive()`, `isActive` или `yield()` в разумных точках.",
+      "`NonCancellable` полезен для короткой suspend-очистки в `finally` после отмены.",
+      "`withTimeout` отменяет блок через `TimeoutCancellationException`, когда истёк лимит времени.",
+      "Отмена parent scope отменяет дочерние корутины, если они участвуют в structured concurrency."
     ],
     answer: 0,
-    gap: "Кооперативная отмена и suspension points.",
-    explain: "Отмена проверяется в точках приостановки или вручную. Долгий вычислительный цикл без проверок не увидит `cancel()` и продолжит работу.",
+    gap: "Отмена корутин кооперативная.",
+    explain: "Структурная отмена выставит Job в cancelled, но CPU-код должен сам проверять этот факт. Без suspension point или ручной проверки цикл спокойно добежит до конца.",
     refs: [
-      { topicId: "coroutines", sectionId: "cancellation", label: "Корутины и Flow → Отмена" }
+      { topicId: "coroutines", sectionId: "cancellation", label: "Корутины и Flow → Кооперативная отмена" }
     ]
   },
   {
-    id: "flow-stateflow-events",
+    id: "flow-events-stateflow",
     level: "Middle+",
     area: "Flow",
     topicId: "coroutines",
     sectionId: "flow",
-    question: "ViewModel отправляет навигацию через `MutableStateFlow<NavEvent?>`. Иногда повторная навигация не приходит. Что здесь концептуально не так?",
+    question: "ViewModel шлёт навигацию через `MutableStateFlow<NavEvent?>`; повторное событие иногда не видно. Какой перенос чинит модель, а не симптом?",
     options: [
-      "Проблема только в nullable-типе: если заменить `NavEvent?` на non-null sealed class с `Idle`, StateFlow станет событийным потоком.",
-      "StateFlow представляет состояние и конфлейтит значения; одноразовые события лучше отдавать через SharedFlow/Channel.",
-      "Нужно после каждого события писать `null`: это полностью гарантирует доставку двух одинаковых навигаций подряд.",
-      "Нужно хранить в StateFlow список уже отправленных событий и чистить его после обработки в UI."
+      "Навигацию вынести в `SharedFlow(replay=0)` или `Channel`; `StateFlow` оставить для текущего UI-state.",
+      "`StateFlow` отлично подходит для состояния экрана: у него всегда есть последнее значение.",
+      "`distinctUntilChanged()` полезен для state-шумов, но для одинаковых событий он только подчеркнёт проблему.",
+      "Сброс в `null` после события встречается в legacy-коде, но создаёт гонки с lifecycle и повторной доставкой."
     ],
-    answer: 1,
-    gap: "StateFlow vs SharedFlow для состояния и событий.",
-    explain: "StateFlow хранит текущее состояние и пропускает равные значения. Для навигации, snackbar и других one-shot событий нужен поток событий без модели «последнее состояние».",
+    answer: 0,
+    gap: "StateFlow — состояние, а не очередь событий.",
+    explain: "Событие и состояние отвечают на разные вопросы. Состояние можно перечитать после поворота; событие нужно доставить один раз в правильный момент. Поэтому меняют носитель, а не подбирают сбросы.",
     refs: [
       { topicId: "coroutines", sectionId: "flow", label: "Корутины и Flow → Flow" },
-      { topicId: "coroutines", sectionId: "state-share-in", label: "Корутины и Flow → StateFlow / SharedFlow" }
+      { topicId: "architecture", sectionId: "event-carriers", label: "Архитектура и DI → Носитель события" }
     ]
   },
   {
-    id: "stateflow-update-atomic",
+    id: "flow-statein-ui",
     level: "Senior",
     area: "Flow",
     topicId: "coroutines",
     sectionId: "state-share-in",
-    question: "Во ViewModel несколько корутин могут увеличить счётчик внутри `_uiState: MutableStateFlow<UiState>`. Какая запись безопаснее для read-modify-write?",
+    question: "Репозиторий отдаёт холодный `Flow<List<Item>>`, а экрану нужен текущий UI-state во ViewModel. Какой ход ближе к канону?",
     options: [
-      "`_uiState.update { it.copy(count = it.count + 1) }` — обновление делается атомарно через текущий value.",
-      "`val current = _uiState.value; _uiState.value = current.copy(count = current.count + 1)` — одно чтение value убирает гонку.",
-      "`_uiState.emit(_uiState.value.copy(count = _uiState.value.count + 1))` — suspend-вызов делает read-modify-write последовательным.",
-      "`withContext(Dispatchers.Main) { _uiState.value = _uiState.value.copy(...) }` — Main dispatcher сам превращает обновление в CAS."
+      "`stateIn(viewModelScope, SharingStarted.WhileSubscribed(...), initial)`: появляется `StateFlow` с текущим значением.",
+      "`shareIn(...)` удобен, когда нескольким подписчикам нужен общий горячий поток без обязательного current state.",
+      "Ручной `collect` в `init` и запись в `MutableStateFlow` возможны, но это больше кода и больше мест для ошибки.",
+      "Холодный `Flow` хорош на границе репозитория: он начинает работу только при сборе."
     ],
     answer: 0,
-    gap: "Атомарное обновление `MutableStateFlow` через `update`.",
-    explain: "`value = value.copy(...)` распадается на чтение и запись; две корутины могут прочитать один и тот же старый state и потерять инкремент. `update { ... }` повторяет функцию поверх актуального значения и закрывает этот read-modify-write сценарий.",
+    gap: "`stateIn`/`shareIn`: состояние экрана нуждается в текущем значении.",
+    explain: "Во ViewModel обычно нужен observable state: есть initial value, есть последнее значение для нового коллектора, есть политика старта. Это как раз `stateIn`; `shareIn` решает соседнюю, но другую задачу.",
     refs: [
-      { topicId: "coroutines", sectionId: "state-share-in", label: "Корутины и Flow → StateFlow / SharedFlow" }
+      { topicId: "coroutines", sectionId: "state-share-in", label: "Корутины и Flow → stateIn / shareIn" },
+      { topicId: "architecture", sectionId: "reactive", label: "Архитектура и DI → Reactive-слой" }
     ]
   },
   {
-    id: "flow-state-in-signature",
-    level: "Middle+",
-    area: "Flow",
-    topicId: "coroutines",
-    sectionId: "state-share-in",
-    question: "Репозиторий отдаёт `Flow<List<Item>>`, а UI нужен `StateFlow<List<Item>>` во ViewModel. Какая запись ближе к канону для UI-state?",
-    options: [
-      "`repo.items().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())`.",
-      "`MutableStateFlow(emptyList()).also { repo.items().onEach(it::emit) }`, потому что StateFlow лучше создавать руками.",
-      "`repo.items().shareIn(viewModelScope, emptyList(), SharingStarted.Eagerly)`.",
-      "`repo.items().stateIn(GlobalScope, SharingStarted.Eagerly, emptyList())`, чтобы поток жил независимо от экрана."
-    ],
-    answer: 0,
-    gap: "Синтаксис `stateIn` и параметры `scope / started / initialValue`.",
-    explain: "`stateIn` превращает cold Flow в StateFlow: нужен scope жизни, стратегия старта и initial value. Для UI-state часто берут `viewModelScope + WhileSubscribed(5_000)`, чтобы пережить короткий разрыв подписки на повороте и остановить upstream при реальном уходе с экрана.",
-    refs: [
-      { topicId: "coroutines", sectionId: "state-share-in", label: "Корутины и Flow → StateFlow / SharedFlow" },
-      { topicId: "architecture", sectionId: "reactive", label: "Архитектура и DI → Реактивный UI-state" }
-    ]
-  },
-  {
-    id: "compose-recomposition",
+    id: "compose-mutable-model",
     level: "Senior",
     area: "Compose",
     topicId: "compose",
     sectionId: "recomposition",
-    question: "Composable получает большой mutable-объект параметром, внутри меняется поле, но UI не обновляется предсказуемо. Какая мысль ближе к правде?",
+    question: "Composable получил mutable-модель, внутри поменяли поле, а UI не обновился предсказуемо. Что нарушено?",
     options: [
-      "Если объект передан параметром, Compose увидит любую мутацию его полей при следующем кадре через snapshot-систему.",
-      "Рекомпозиция опирается на чтение Compose State и стабильность параметров; обычная мутация поля может остаться невидимой.",
-      "Нужно завернуть объект в `remember { mutableStateOf(obj) }`, а затем менять поля внутри него: wrapper отследит внутренние мутации.",
-      "Достаточно сделать класс `data class`: Compose начнёт наблюдать за изменениями его `MutableList`-полей."
+      "Compose отслеживает чтения Snapshot-state; обычная мутация поля вне state не создаёт надёжную invalidation.",
+      "`remember` кэширует значение между рекомпозициями, но не превращает произвольные поля объекта в observable state.",
+      "`key(...)` помогает сохранить идентичность элементов в списках, но не делает модель наблюдаемой.",
+      "`@Stable` — это обещание контракта компилятору; оно не должно маскировать скрытую мутабельность."
     ],
-    answer: 1,
-    gap: "Compose state, стабильность и границы рекомпозиции.",
-    explain: "Compose инвалидирует области, которые прочитали observable state. Обычная мутация поля не становится событием для runtime; состояние надо хранить в snapshot state/Flow и передавать стабильные данные.",
+    answer: 0,
+    gap: "Compose state и invalidation: наблюдается не всё подряд.",
+    explain: "Для Compose важна наблюдаемая запись. Либо состояние живёт в `mutableStateOf`/snapshot-коллекциях, либо вы отдаёте новый immutable state через `copy`. Скрытая мутация ломает саму модель рекомпозиции.",
     refs: [
       { topicId: "compose", sectionId: "state", label: "Jetpack Compose → State" },
       { topicId: "compose", sectionId: "recomposition", label: "Jetpack Compose → Рекомпозиция" }
     ]
   },
   {
-    id: "compose-effect-key",
+    id: "compose-launched-effect-key",
     level: "Middle+",
     area: "Compose",
     topicId: "compose",
     sectionId: "effects",
-    question: "`LaunchedEffect(userId)` грузит профиль. Что произойдёт, когда `userId` изменится?",
+    question: "`LaunchedEffect(userId)` грузит профиль. Что именно произойдёт при изменении `userId`?",
     options: [
-      "Старый effect продолжит работу, а новый запустится параллельно: ключ нужен только для `remember`.",
-      "Старая корутина будет отменена, и effect перезапустится с новым ключом.",
-      "Effect не перезапустится, но внутри него автоматически обновится захваченный `userId` через `rememberUpdatedState`.",
-      "Смена ключа пересоздаст весь composable и все его родительские state, поэтому загрузка начнётся с чистого экрана."
-    ],
-    answer: 1,
-    gap: "Ключи side-effect API в Compose.",
-    explain: "Ключи задают срок жизни effect. Когда ключ меняется, Compose отменяет старую корутину и запускает новую, связанную с актуальной композицией.",
-    refs: [
-      { topicId: "compose", sectionId: "effects", label: "Jetpack Compose → Side effects" }
-    ]
-  },
-  {
-    id: "compose-collect-lifecycle",
-    level: "Middle+",
-    area: "Compose",
-    topicId: "compose",
-    sectionId: "viewmodel",
-    question: "Composable получает `StateFlow<UiState>` из ViewModel. Какой вызов обычно выбирают на Android, чтобы сбор учитывал lifecycle экрана?",
-    options: [
-      "`val state by vm.state.collectAsStateWithLifecycle()`.",
-      "`val state = vm.state.collect()` прямо в теле composable.",
-      "`val state by vm.state.collectAsState()` — lifecycle здесь не нужен, композиции достаточно.",
-      "`val state by remember { mutableStateOf(vm.state.value) }` — текущее значение уже есть, подписка не нужна."
+      "Старая coroutine эффекта отменится, и блок запустится заново с новым ключом.",
+      "`rememberCoroutineScope` подходит для jobs, которые стартуют из callback-а пользователя.",
+      "`DisposableEffect` нужен, когда вместе со стартом эффекта требуется симметричная очистка.",
+      "`SideEffect` публикует данные во внешний объект после успешной композиции."
     ],
     answer: 0,
-    gap: "Lifecycle-aware сбор Flow в Compose.",
-    explain: "`collectAsStateWithLifecycle()` конвертирует Flow в Compose State и останавливает сбор, когда lifecycle ниже активного состояния. Прямой `collect` в теле composable нельзя вызвать, а обычный `collectAsState()` не учитывает Android lifecycle.",
+    gap: "Ключи effect API в Compose.",
+    explain: "Effect API различаются не названием, а lifetime. `LaunchedEffect(key)` живёт до ухода из композиции или смены key; поэтому ключ должен выражать ровно зависимость эффекта.",
     refs: [
-      { topicId: "compose", sectionId: "viewmodel", label: "Jetpack Compose → ViewModel и UDF" },
-      { topicId: "coroutines", sectionId: "flow-compose", label: "Корутины и Flow → Flow + Compose" }
+      { topicId: "compose", sectionId: "effects", label: "Jetpack Compose → Side-effects" },
+      { topicId: "compose", sectionId: "composition-lifecycle", label: "Jetpack Compose → Lifecycle композиции" }
     ]
   },
   {
-    id: "compose-derived-state-syntax",
+    id: "compose-derived-state-scroll",
     level: "Middle+",
     area: "Compose",
     topicId: "compose",
     sectionId: "state",
-    question: "Кнопку «наверх» нужно показывать только когда `listState.firstVisibleItemIndex > 0`. Какая запись уменьшает лишние рекомпозиции при скролле?",
+    question: "Кнопка «наверх» зависит от `listState.firstVisibleItemIndex > 0`; индекс меняется постоянно, флаг редко. Что выбрать?",
     options: [
-      "`val showButton by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 } }`.",
-      "`val showButton = remember { listState.firstVisibleItemIndex > 0 }`.",
-      "`val showButton = mutableStateOf(listState.firstVisibleItemIndex > 0)` без чтения `listState` дальше.",
-      "`val showButton = listState.firstVisibleItemIndex > 0` в верхнем composable, чтобы Compose сам всё закешировал."
+      "`remember { derivedStateOf { listState.firstVisibleItemIndex > 0 } }`: пересчитываем производный флаг по snapshot-state.",
+      "`remember { ... }` сам по себе кэширует объект, но не описывает зависимость от меняющегося scroll-state.",
+      "`snapshotFlow { listState.firstVisibleItemIndex }` удобен для side-effect pipeline на Flow.",
+      "Стабильные параметры помогают skipping, но не заменяют производное состояние с порогом."
     ],
     answer: 0,
-    gap: "Синтаксис `derivedStateOf` для производного Compose-state.",
-    explain: "`derivedStateOf` полезен, когда исходный state меняется часто, а результат нужен реже. При скролле индекс может обновляться много раз, но булевый флаг меняется только на переходе `0 ↔ больше 0`; именно это и стоит подписать на рекомпозицию.",
+    gap: "`derivedStateOf`: частые входы, редкие изменения результата.",
+    explain: "При скролле индекс меняется много раз, а булевый ответ меняется только на границе `0 ↔ больше 0`. `derivedStateOf` подписывает UI на результат, а не на каждое промежуточное значение индекса.",
     refs: [
       { topicId: "compose", sectionId: "state", label: "Jetpack Compose → State" },
       { topicId: "compose", sectionId: "perf", label: "Jetpack Compose → Производительность" }
     ]
   },
   {
-    id: "compose-hilt-savedstate",
+    id: "architecture-hilt-nav-arg",
     level: "Senior",
-    area: "Architecture + Compose",
+    area: "Архитектура",
     topicId: "architecture",
     sectionId: "navigation",
-    question: "В Navigation Compose есть destination `composable<ProfileRoute>`. Как получить Hilt ViewModel и аргумент `userId` через `SavedStateHandle`?",
+    question: "В `@HiltViewModel` нужен `userId` из navigation argument. Где ему место, если это маленький сериализуемый аргумент экрана?",
     options: [
-      "В composable: `val vm: ProfileViewModel = hiltViewModel()`. Во ViewModel: `@HiltViewModel` + `@Inject constructor(savedStateHandle: SavedStateHandle, ...)`, аргумент читать через `savedStateHandle.toRoute<ProfileRoute>()` или `get`.",
-      "В composable создать `SavedStateHandle()` руками и передать его в `ProfileViewModel(...)` через `remember`.",
-      "Передать `userId` обычным `String` в конструктор `@HiltViewModel`; Hilt сам поймёт, что это navigation argument.",
-      "Получить `backStackEntry.toRoute<ProfileRoute>()` в composable и передать `userId` в метод `vm.init(userId)` при каждой композиции."
+      "`SavedStateHandle` в конструкторе ViewModel; читать по ключу или через typed route, если он используется в проекте.",
+      "`hiltViewModel()` в composable получает ViewModel через Hilt-backed factory и текущий owner.",
+      "Assisted injection полезен для runtime-объектов, которые не приходят из nav args и не сериализуются в Bundle.",
+      "`@ActivityRetainedScoped` подходит зависимостям, которые должны переживать configuration change вместе с retained scope."
     ],
     answer: 0,
     gap: "Compose + Hilt + `SavedStateHandle`: кто создаёт ViewModel и откуда берутся nav-аргументы.",
-    explain: "В Compose с Hilt ViewModel не создают руками: `hiltViewModel()` берёт Hilt-backed factory и текущий `ViewModelStoreOwner` навигационной записи. `SavedStateHandle` Hilt/Navigation передают в конструктор, а аргументы destination читаются из него по ключу или через type-safe `toRoute<T>()`.",
+    explain: "`hiltViewModel()` отвечает за получение VM, но сам аргумент внутри VM должен прийти через `SavedStateHandle`. Так значение переживает process death как часть saved state, а Hilt не требует биндинг обычной строки.",
     refs: [
       { topicId: "architecture", sectionId: "navigation", label: "Архитектура и DI → Navigation Compose" },
       { topicId: "architecture", sectionId: "state-survival", label: "Архитектура и DI → SavedStateHandle" },
@@ -512,151 +516,151 @@ const INTERVIEW_TEST_QUESTIONS = [
     ]
   },
   {
-    id: "rendering-jank",
-    level: "Middle+",
-    area: "UI performance",
-    topicId: "rendering",
-    sectionId: "jank",
-    question: "Список скроллится рывками. В `onBind` синхронно декодируют bitmap и форматируют большие строки. Что это за класс проблемы?",
-    options: [
-      "Jank: работа на пути кадра не укладывается в бюджет, поэтому кадры пропускаются.",
-      "Memory leak: старые bitmap удерживаются адаптером, поэтому каждый bind обязан запускать GC и кадр пропадает.",
-      "StrictMode: он ловит тяжёлый bind и в production завершает приложение, поэтому пользователь видит рывки.",
-      "GPU bottleneck: раз кадр рисуется на RenderThread, CPU-код в `onBind` не может быть основной причиной."
-    ],
-    answer: 0,
-    gap: "Путь кадра, jank и работа на Main.",
-    explain: "Кадр должен пройти input, layout/draw и отправку команд быстро. Тяжёлая работа в bind/композиции забивает Main и даёт пропущенные кадры; её выносят, кэшируют и измеряют профилировщиком.",
-    refs: [
-      { topicId: "rendering", sectionId: "jank", label: "Рендеринг и кадры → Jank" },
-      { topicId: "rendering", sectionId: "lists", label: "Рендеринг и кадры → Списки" }
-    ]
-  },
-  {
-    id: "storage-datastore",
+    id: "storage-room-migration",
     level: "Middle+",
     area: "Данные",
     topicId: "storage",
-    sectionId: "datastore",
-    question: "Для пользовательских настроек команда выбирает между SharedPreferences и DataStore. Что обычно сильнее всего говорит в пользу DataStore?",
+    sectionId: "room",
+    question: "В Room v2 добавляют `created_at INTEGER NOT NULL` к таблице с данными. Прод должен сохранить строки. Что делать?",
     options: [
-      "DataStore хранит данные только в памяти, поэтому он быстрее любого файла.",
-      "DataStore даёт асинхронный транзакционный API на Flow и не заставляет блокировать Main.",
-      "DataStore автоматически шифрует все значения через Keystore.",
-      "DataStore заменяет Room для сложных relational-запросов."
+      "Написать `Migration(1, 2)` с `ALTER TABLE ... ADD COLUMN ... NOT NULL DEFAULT ...`, добавить индекс и проверить через `MigrationTestHelper`.",
+      "Destructive migration допустима, когда потеря локальных данных разрешена продуктом или это debug-сценарий.",
+      "AutoMigration удобна для поддержанных простых изменений схемы; сложный backfill может потребовать spec или manual migration.",
+      "DataStore лучше подходит для простых настроек, а не для реляционной истории с запросами."
     ],
-    answer: 1,
-    gap: "DataStore vs SharedPreferences.",
-    explain: "DataStore хорош для настроек и небольших typed/proto-данных: асинхронная запись, Flow-наблюдение и транзакционная модель. Шифрование и relational-модель — отдельные задачи.",
+    answer: 0,
+    gap: "Room migration без потери данных.",
+    explain: "Ключевое ограничение — production-данные нужно сохранить. Поэтому destructive path не подходит, а not-null колонка требует дефолт или backfill, иначе старые строки не смогут удовлетворить схему.",
     refs: [
-      { topicId: "storage", sectionId: "datastore", label: "Хранение данных → DataStore" },
-      { topicId: "storage", sectionId: "choose", label: "Хранение данных → Что выбирать" }
+      { topicId: "storage", sectionId: "room", label: "Хранение данных → Room" },
+      { topicId: "storage", sectionId: "tasks", label: "Хранение данных → Задачи по миграциям" }
     ]
   },
   {
-    id: "network-retry-idempotency",
+    id: "network-okhttp-interceptor",
     level: "Middle+",
     area: "Сеть",
     topicId: "network",
-    sectionId: "http",
-    question: "Клиент не получил ответ на запрос создания платежа и хочет автоматически повторить HTTP-запрос. Какой вопрос нужно задать первым?",
+    sectionId: "okhttp",
+    question: "Нужно добавить `Authorization` один раз на логический запрос OkHttp, до возможных redirects/retries. Куда ближе всего эта логика?",
     options: [
-      "Есть ли у операции идемпотентный ключ или другой контракт, который защитит от двойного создания?",
-      "Можно ли повторять запрос только при timeout, но не при HTTP 500: так мы точно не создадим дубль.",
-      "Можно ли сделать локальный retry только один раз: одиночный повтор безопасен даже без серверной дедупликации.",
-      "Можно ли заменить POST на PUT без изменения серверного контракта: сам HTTP-метод сделает операцию идемпотентной."
+      "Application interceptor: он видит логический call до сетевых follow-up попыток.",
+      "Network interceptor: он видит каждый реальный network exchange после установления соединения.",
+      "`Authenticator`: он строит follow-up request, когда сервер ответил `401` и нужен refresh credentials.",
+      "`EventListener`: он полезен для таймингов DNS/connect/request/response и диагностики сети."
     ],
     answer: 0,
-    gap: "Идемпотентность, retries и контракт API.",
-    explain: "При сетевой ошибке клиент может не знать, дошёл ли запрос до сервера. Для небезопасных операций нужен идемпотентный ключ или серверный контракт дедупликации, иначе retry создаст дубль.",
+    gap: "OkHttp interceptors: logical call vs network attempt.",
+    explain: "Network interceptor полезен, когда важна физическая сеть и каждый redirect/retry. Для политики на уровне запроса приложения — заголовки, общая авторизация, логический tracing — обычно берут application interceptor.",
     refs: [
-      { topicId: "network", sectionId: "http", label: "Сеть → HTTP" },
-      { topicId: "terminology", sectionId: "idempotency", label: "Терминология → Идемпотентность" }
+      { topicId: "network", sectionId: "okhttp", label: "Сеть → OkHttp" },
+      { topicId: "network", sectionId: "errors", label: "Сеть → Ошибки и retry" }
     ]
   },
   {
-    id: "security-keystore",
+    id: "security-hardcoded-key",
     level: "Middle+",
     area: "Безопасность",
     topicId: "security",
     sectionId: "keystore",
-    question: "В приложении лежит AES-ключ строкой в коде, им шифруют токены. Почему это плохая защита?",
+    question: "В APK лежит строковый AES-ключ, им шифруют токен в файле. Какой риск главный?",
     options: [
-      "Строковый ключ можно извлечь из APK/памяти; ключи нужно хранить через Android Keystore или не держать секрет на клиенте.",
-      "Проблема только в режиме AES: если перейти на GCM, строковый ключ в APK уже не будет секретом.",
-      "Достаточно включить minify и resource shrinking: после обфускации строку нельзя надёжно восстановить.",
-      "Если токен дополнительно хранить в SharedPreferences, hardcoded AES-ключ становится приемлемым компромиссом."
+      "Секрет клиента извлекается из APK или памяти; ключ должен быть неэкспортируемым через Keystore либо проверка уходит на сервер.",
+      "TLS защищает токен в пути между клиентом и сервером.",
+      "R8/обфускация повышает стоимость reverse engineering, но не превращает строку в надёжное хранилище секрета.",
+      "Шифрование at rest защищает файл от простого чтения, но не от кода, который уже выполняется в процессе приложения."
     ],
     answer: 0,
-    gap: "Модель угроз клиента и Android Keystore.",
-    explain: "Клиентское приложение контролирует пользователь и атакующий с устройством. Хардкод-секреты достаются из APK или рантайма; Keystore уменьшает поверхность атаки, но не превращает клиент в доверенную среду.",
+    gap: "Модель угроз клиента: hardcoded secret не секрет.",
+    explain: "Клиентское приложение находится на устройстве пользователя, а значит атакующий может анализировать APK и runtime. Keystore снижает извлекаемость ключа, но даже он не делает клиент полностью доверенной средой.",
     refs: [
       { topicId: "security", sectionId: "keystore", label: "Безопасность → Keystore" },
       { topicId: "security", sectionId: "reverse", label: "Безопасность → Reverse engineering" }
     ]
   },
   {
-    id: "testing-run-test",
+    id: "profiling-leak-rotation",
     level: "Middle+",
-    area: "Тесты",
-    topicId: "testing",
-    sectionId: "coroutines",
-    question: "JVM-тест ViewModel падает: `Dispatchers.Main` не инициализирован, а `delay(1000)` реально ждёт секунду. Какой набор ближе к нормальному решению?",
+    area: "Профилирование",
+    topicId: "profiling",
+    sectionId: "memory",
+    question: "После каждого поворота число старых `Activity` в памяти растёт. Какой следующий шаг лучше доказывает утечку?",
     options: [
-      "`runBlocking`, реальный `Dispatchers.IO` и `Thread.sleep(1000)`: так тест ближе к production.",
-      "`runTest`, `TestDispatcher`, подмена Main через `Dispatchers.setMain()`/JUnit rule и виртуальное время.",
-      "`runTest` без подмены Main: виртуальное время само создаст Android Main dispatcher в JVM.",
-      "`StandardTestDispatcher` только для репозитория, а ViewModel оставить на реальном Main: так меньше тестового кода."
-    ],
-    answer: 1,
-    gap: "Тестирование корутин и виртуальное время.",
-    explain: "`runTest` даёт TestScope и виртуальное время, а MainDispatcherRule подменяет Android Main в JVM-тесте. Это делает тест быстрым и детерминированным.",
-    refs: [
-      { topicId: "testing", sectionId: "coroutines", label: "Тестирование → Корутины" },
-      { topicId: "coroutines", sectionId: "testing", label: "Корутины и Flow → Тестирование" }
-    ]
-  },
-  {
-    id: "testing-debounce-virtual-time",
-    level: "Middle+",
-    area: "Тесты",
-    topicId: "testing",
-    sectionId: "coroutines",
-    question: "В `runTest` нужно проверить `debounce(300)`: первый ввод отменяется, второй проходит. Чем промотать ожидание без реального sleep?",
-    options: [
-      "`advanceTimeBy(301)` и затем при необходимости `advanceUntilIdle()`.",
-      "`delay(301)` внутри production ViewModel: тестовый scheduler увидит только задержки, которые запущены в самом тесте.",
-      "`Thread.sleep(301)` после второго ввода: debounce использует реальный clock, даже если тест в `runTest`.",
-      "`advanceUntilIdle()` сразу после первого ввода: он промотает debounce и всё равно оставит шанс отменить первый запрос вторым вводом."
+      "Снять heap dump после forced GC или дождаться LeakCanary: смотреть retained object и цепочку сильных ссылок от GC root.",
+      "Memory Profiler полезен для ручного графика аллокаций и общего роста heap.",
+      "StrictMode хорошо ловит main-thread I/O и некоторые leaked closable-ресурсы в debug.",
+      "OOM/Crash reports показывают симптом на парке устройств, но редко сразу дают конкретную цепочку удержания Activity."
     ],
     answer: 0,
-    gap: "Виртуальное время в тестах корутин: `advanceTimeBy` / `advanceUntilIdle`.",
-    explain: "`runTest` даёт тестовый scheduler: `advanceTimeBy` двигает виртуальные часы, а не ждёт стеночное время. Для debounce обычно перешагивают окно и затем дают очереди выполниться через `advanceUntilIdle()` или `runCurrent()`.",
+    gap: "Memory leak: нужен retained path, а не просто рост счётчика.",
+    explain: "Старая Activity может коротко жить до ближайшего GC. Утечкой она становится, когда после GC её держит сильная цепочка ссылок. Именно эту цепочку и надо увидеть в heap dump/LeakCanary.",
+    refs: [
+      { topicId: "profiling", sectionId: "memory", label: "Профилирование → Память и утечки" },
+      { topicId: "profiling", sectionId: "tools", label: "Профилирование → Инструменты" }
+    ]
+  },
+  {
+    id: "rendering-bind-jank",
+    level: "Middle+",
+    area: "Рендеринг",
+    topicId: "rendering",
+    sectionId: "jank",
+    question: "Список дёргается: в `onBind` синхронно декодируют bitmap и форматируют строки. Что чинить первым?",
+    options: [
+      "Убрать тяжёлую работу с пути кадра: декодировать/форматировать заранее, кэшировать и мерить FrameTiming.",
+      "Baseline Profile помогает старту и JIT/AOT-пути, но не заменяет исправление тяжёлого bind.",
+      "Overdraw оптимизируют, когда trace показывает GPU/fill-rate bottleneck.",
+      "DiffUtil снижает лишние rebind-ы, но не делает дорогой `onBind` дешёвым."
+    ],
+    answer: 0,
+    gap: "Jank: работа на main thread не укладывается в бюджет кадра.",
+    explain: "В условии уже указана горячая точка: каждый bind попадает в скролл и съедает кадр. Сначала убираем CPU/I/O/аллокации из bind, потом проверяем цифрами.",
+    refs: [
+      { topicId: "rendering", sectionId: "jank", label: "Рендеринг и кадры → Jank" },
+      { topicId: "rendering", sectionId: "lists", label: "Рендеринг и кадры → Списки" },
+      { topicId: "profiling", sectionId: "ui-jank", label: "Профилирование → UI и jank" }
+    ]
+  },
+  {
+    id: "testing-run-test-main",
+    level: "Middle+",
+    area: "Тесты",
+    topicId: "testing",
+    sectionId: "coroutines",
+    question: "JVM-тест ViewModel падает: `Dispatchers.Main` не инициализирован, а `delay(1000)` ждёт реально. Какой набор закрывает обе проблемы?",
+    options: [
+      "`runTest`, `TestDispatcher`, JUnit rule с `Dispatchers.setMain(...)` и управление виртуальным временем.",
+      "Turbine удобен для проверки последовательности элементов Flow.",
+      "Fake-репозиторий часто делает тест поведения ViewModel проще и устойчивее, чем глубокий mock.",
+      "Instrumented-тест нужен, когда проверяется настоящий Android framework, device state или UI toolkit."
+    ],
+    answer: 0,
+    gap: "Виртуальное время и подмена Main dispatcher в JVM-тестах.",
+    explain: "Turbine и fake решают соседние задачи, но не создают Android Main в JVM и не ускоряют `delay` сами по себе. Нужен тестовый scheduler плюс явная подмена Main.",
     refs: [
       { topicId: "testing", sectionId: "coroutines", label: "Тестирование → Корутины" },
-      { topicId: "testing", sectionId: "flow", label: "Тестирование → Flow" },
       { topicId: "coroutines", sectionId: "testing", label: "Корутины и Flow → Тестирование" }
     ]
   },
   {
-    id: "gradle-ksp-kapt",
+    id: "gradle-r8-reflection",
     level: "Middle+",
     area: "Сборка",
     topicId: "gradle-build",
-    sectionId: "annotation",
-    question: "Почему Kotlin-проект часто мигрирует annotation processing с kapt на KSP, если библиотека это поддерживает?",
+    sectionId: "r8",
+    question: "В debug JSON через Gson работает, в release после R8 поля пустые. Какой фикс бьёт в причину?",
     options: [
-      "KSP работает с Kotlin symbols напрямую, обычно уменьшает слой Java-stub и лучше ложится на Kotlin-код.",
-      "KSP полностью убирает кодогенерацию: процессоры начинают работать в runtime через reflection.",
-      "KSP ускорит любой processor автоматически, даже если библиотека официально поддерживает только kapt.",
-      "KSP нужен в основном для Java-only проектов; Kotlin-коду он даёт те же Java-stubs, что и kapt."
+      "Точечные keep-правила для reflective members или явные `@SerializedName`, чтобы R8 не сломал имена, по которым читает Gson.",
+      "`mapping.txt` нужен, чтобы деобфусцировать stacktrace конкретного release-билда.",
+      "Временное отключение minify помогает подтвердить, что проблема связана с R8.",
+      "KSP/kapt влияют на annotation processing на сборке, но не являются keep-правилом для runtime reflection."
     ],
     answer: 0,
-    gap: "kapt vs KSP и стоимость кодогенерации.",
-    explain: "kapt строит Java-stub-слой для Java-oriented processors. KSP работает ближе к Kotlin-модели символов; миграция снижает лишнюю работу, но возможна только если конкретный processor поддерживает KSP.",
+    gap: "R8 и reflection: release ломается не как debug.",
+    explain: "R8 может переименовать или удалить то, к чему библиотека обращается по строковому имени. Для Gson это поля модели; чинят контракт сериализации, а не весь R8 целиком.",
     refs: [
-      { topicId: "gradle-build", sectionId: "annotation", label: "Gradle и сборка → Annotation processing" },
-      { topicId: "gradle-build", sectionId: "speed", label: "Gradle и сборка → Ускорение сборки" }
+      { topicId: "gradle-build", sectionId: "r8", label: "Gradle и сборка → R8" },
+      { topicId: "profiling", sectionId: "apk-size", label: "Профилирование → APK size и R8" }
     ]
   },
   {
@@ -665,16 +669,16 @@ const INTERVIEW_TEST_QUESTIONS = [
     area: "System design",
     topicId: "system-design",
     sectionId: "offline",
-    question: "Просят спроектировать offline-first ленту. Какой каркас ответа звучит наиболее зрело?",
+    question: "Offline-first лента: сеть упала во время refresh, но кэш есть. Какой инвариант архитектуры важнее всего?",
     options: [
-      "UI всегда читает локальную БД как single source of truth, сеть синхронизирует БД, ошибки/конфликты и freshness показываются явно.",
-      "UI сначала ждёт сеть, а если запрос упал — читает Room. Так данные свежее, а offline всё равно есть.",
-      "UI читает Room, но синхронизация идёт только вручную по pull-to-refresh: фоновый outbox не нужен.",
-      "UI читает локальный cache как SSOT, но stale/error/conflict состояния скрываем, чтобы не усложнять экран."
+      "UI читает локальную БД как source of truth; refresh обновляет БД, а ошибка/freshness показываются отдельным состоянием.",
+      "HTTP cache headers уменьшают трафик и помогают не качать неизменившиеся ответы.",
+      "Outbox нужен для пользовательских write-операций, которые надо отправить позже.",
+      "Paging keys и remote mediator помогают связать локальные страницы с сетевой пагинацией."
     ],
     answer: 0,
     gap: "Offline-first: source of truth, синхронизация и конфликты.",
-    explain: "Зрелый ответ разделяет чтение и синхронизацию: экран наблюдает локальное состояние, фоновые процессы обновляют его из сети, а продуктовые состояния stale/error/conflict не прячутся.",
+    explain: "Остальные пункты часто входят в хороший дизайн, но главный инвариант — экран не зависит от успешности текущего network call. Он наблюдает локальную модель, а синхронизация меняет её и отдельно сообщает о свежести/ошибке.",
     refs: [
       { topicId: "system-design", sectionId: "offline", label: "Системный дизайн → Offline-first" },
       { topicId: "system-design", sectionId: "caching", label: "Системный дизайн → Кэширование" }
@@ -686,21 +690,310 @@ const INTERVIEW_TEST_QUESTIONS = [
     area: "Поведенческое",
     topicId: "behavioral",
     sectionId: "star",
-    question: "Интервьюер просит рассказать про конфликт с коллегой. Какой ответ ближе к STAR?",
+    question: "Интервьюер просит за 90 секунд рассказать про конфликт с коллегой. Какой каркас лучше держит ответ?",
     options: [
-      "Я объясню, почему коллега был неправ, и сразу перейду к выводу: теперь я заранее фиксирую договорённости.",
-      "Кратко: контекст и задача, что именно сделал я, чем закончилось и какой вывод забрал в процесс.",
-      "Расскажу всю историю команды: кто с кем спорил, как менялись требования и почему конфликт вообще возник.",
-      "Скажу, что конфликтов не было, но были сложные обсуждения: так ответ звучит позитивнее и безопаснее."
+      "Коротко: ситуация, моя задача, мои действия, результат и вывод для процесса.",
+      "Начать с контекста компании полезно, когда вопрос про мотивацию или выбор работодателя.",
+      "Разбор root cause конфликта полезен на ретро, если есть время разобрать систему целиком.",
+      "Формулировка через «мы» помогает не обвинять команду, но вклад кандидата всё равно нужно назвать."
     ],
-    answer: 1,
+    answer: 0,
     gap: "STAR-структура и конкретика в behavioral-ответах.",
-    explain: "STAR держит ответ проверяемым: ситуация, задача, действие кандидата, результат. Интервьюеру важны вклад, trade-off и вывод, а не героический пересказ без фактов.",
+    explain: "STAR держит рассказ коротким и проверяемым. В конфликтном вопросе особенно важны личное действие и результат: интервьюер ищет договороспособность, а не длинный пересказ чужих ошибок.",
     refs: [
       { topicId: "behavioral", sectionId: "star", label: "Поведенческое интервью → STAR" },
       { topicId: "behavioral", sectionId: "bank", label: "Поведенческое интервью → Банк историй" }
     ]
   }
+];
+
+/*
+ * REVIEW_CATALOG — единый реестр учебных карточек повторения по всем главам.
+ * Каждая запись соответствует одной .study-card[data-review-id] на странице главы.
+ * Это источник правды для домашней поверхности «Сегодня»: главная не грузит все
+ * страницы глав, а берёт список карточек отсюда. Тело карточки (вопрос + разбор)
+ * живёт в HTML главы; здесь — только метаданные и текст лицевой стороны (front).
+ *   id        — совпадает с data-review-id карточки на странице.
+ *   topicId   — id главы (TOPICS[].id), sectionId — id параграфа (section.id).
+ *   kind      — тип карточки: mechanism | api-choice | edge-case | bug | oral.
+ *   front     — вопрос карточки (markdown-инлайн: `код`).
+ * Карточки из проваленных вопросов теста добавляются в очередь динамически
+ * (allTestMisses), их в каталоге нет.
+ */
+const REVIEW_KIND = {
+  "mechanism": "Механизм",
+  "api-choice": "Выбор API",
+  "edge-case": "Крайний случай",
+  "bug": "Типичный баг",
+  "oral": "Устный вопрос"
+};
+const REVIEW_CATALOG = [
+  { id:"coroutines-suspend-continuation", topicId:"coroutines", sectionId:"suspend", kind:"mechanism",
+    front:"Если `delay(1000)` не блокирует поток, где корутина хранит место, с которого потом продолжит выполнение?" },
+  { id:"coroutines-async-immediate-await", topicId:"coroutines", sectionId:"launch-async", kind:"bug",
+    front:"Почему `async { repo.load() }.await()` сразу в следующей строке обычно хуже прямого `repo.load()`?" },
+  { id:"coroutines-stateflow-events", topicId:"coroutines", sectionId:"flow", kind:"api-choice",
+    front:"Почему `StateFlow` плохо подходит для навигации и snackbar-событий?" },
+  { id:"coroutines-statein-while-subscribed", topicId:"coroutines", sectionId:"state-share-in", kind:"api-choice",
+    front:"Почему для UI-state часто выбирают `SharingStarted.WhileSubscribed(5_000)`, а не `Eagerly`?" },
+  { id:"terminology-coupling-not-zero", topicId:"terminology", sectionId:"design", kind:"oral",
+    front:"«Цель — слабая связанность» часто понимают как «связанность к нулю». Почему это неверно, и к какому концу шкалы `data → stamp → control → common → content` на самом деле стремятся?" },
+  { id:"terminology-demeter-builder", topicId:"terminology", sectionId:"contract-lsp-coupling", kind:"edge-case",
+    front:"Цепочка `a.getB().getC().doThing()` нарушает закон Деметры, а `builder.setX().setY().build()` — нет, хотя обе выглядят как «train wreck». В чём разница?" },
+  { id:"terminology-cas-aba", topicId:"terminology", sectionId:"concurrency", kind:"mechanism",
+    front:"CAS успешно отрабатывает, потому что текущее значение ячейки совпало с ожидаемым A. Почему это ещё не значит, что ячейку никто не трогал, и как называется этот дефект?" },
+  { id:"terminology-ssot-stateflow", topicId:"terminology", sectionId:"perf", kind:"bug",
+    front:"В офлайн-first приложении источником истины сделали `StateFlow` в ViewModel, а данные хранятся в Room. Что сломается, когда прилетит пуш или фоновый воркер запишет в БД?" },
+  { id:"terminology-spki-pinning", topicId:"terminology", sectionId:"netsec", kind:"api-choice",
+    front:"Нужно настроить pinning. Почему обычно пинят хэш публичного ключа (SPKI), а не сам сертификат, и какой главный операционный риск заставляет Android отговаривать от pinning вообще?" },
+  { id:"terminology-idempotency-key-race", topicId:"terminology", sectionId:"idempotency", kind:"bug",
+    front:"Сервер защищает `POST` от задвоения через `Idempotency-Key`: «нет ключа — выполнить и сохранить». Почему два параллельных ретрая с одним ключом всё равно могут списать дважды, и как это починить?" },
+  { id:"oop-solid-final-default", topicId:"oop-solid", sectionId:"pillars", kind:"mechanism",
+    front:"Класс в Kotlin по умолчанию `final`. Какую проблему это закрывает и какой баг возникает, если открыть базовый класс, не спроектированный под наследование?" },
+  { id:"oop-solid-delegate-self-call", topicId:"oop-solid", sectionId:"composition", kind:"bug",
+    front:"Класс-обёртка делает `class A(b: B) : I by b` и переопределяет `m()`. Другой метод делегата внутри зовёт `m()`. Чью реализацию `m()` он вызовет и почему?" },
+  { id:"oop-solid-lsp-precondition", topicId:"oop-solid", sectionId:"solid", kind:"edge-case",
+    front:"Базовый `normalize(input: String)` принимал любую строку. Наследник в `override` добавил `require(input.isNotEmpty())`. Почему это уже нарушение LSP, хотя сигнатура совпадает?" },
+  { id:"oop-solid-object-vs-const", topicId:"oop-solid", sectionId:"patterns", kind:"api-choice",
+    front:"Чем Kotlin `object` как Singleton отличается от `const val` / `public static val` и от `@Singleton` в Hilt?" },
+  { id:"oop-solid-strategy-vs-state", topicId:"oop-solid", sectionId:"strategy-state-decorator", kind:"oral",
+    front:"Strategy и State дают одинаковую диаграмму классов. По какому признаку их различают на практике и где в Android каждый из них живёт?" },
+  { id:"oop-solid-when-abstract", topicId:"oop-solid", sectionId:"solid-cost", kind:"oral",
+    front:"По какому критерию вводить интерфейс, а не плодить абстракции «ради DIP», когда требований ещё нет?" },
+  { id:"kotlin-platform-npe", topicId:"kotlin", sectionId:"null-safety", kind:"bug",
+    front:"Java-метод без аннотаций вернул `null`, а вы присвоили результат в `val name: String`. Код компилируется — где и почему прилетит NPE?" },
+  { id:"kotlin-data-var-hashset", topicId:"kotlin", sectionId:"classes", kind:"edge-case",
+    front:"Вы положили `data class` с полем `var` в первичном конструкторе в `HashSet`, потом изменили это поле. Почему элемент «теряется»?" },
+  { id:"kotlin-nothing-smartcast", topicId:"kotlin", sectionId:"type-system", kind:"mechanism",
+    front:"Почему после `val addr = company.address ?: fail(\"нет адреса\")` тип `addr` — это `String`, а не `String?`, хотя `fail` ничего не возвращает?" },
+  { id:"kotlin-extension-static-dispatch", topicId:"kotlin", sectionId:"extensions-inline", kind:"oral",
+    front:"Объявлены `fun A.who()` и `fun B.who()` при `B : A`. Для `val ref: A = B()` вызов `ref.who()` вернёт «A» или «B» и почему?" },
+  { id:"kotlin-scope-choose", topicId:"kotlin", sectionId:"scope-fns", kind:"api-choice",
+    front:"Нужно вычислить число из объекта. Почему `val n = sb.apply { length }` вернёт не длину, а сам `StringBuilder` — и какую функцию взять вместо `apply`?" },
+  { id:"kotlin-list-mutation-leak", topicId:"kotlin", sectionId:"interop", kind:"bug",
+    front:"Вы отдали Kotlin `List<String>` (от `listOf`) в Java-метод, который вызывает `list.add(...)`. Почему это компилируется, но падает в рантайме?" },
+  { id:"components-service-thread", topicId:"components", sectionId:"service", kind:"bug",
+    front:"Коллега говорит: «вынес тяжёлую загрузку в `Service`, теперь она не на main-потоке». В чём он ошибается и где на самом деле начнётся фон?" },
+  { id:"components-wm-reboot", topicId:"components", sectionId:"workmanager", kind:"mechanism",
+    front:"За счёт чего работа из `WorkManager` переживает перезапуск приложения и перезагрузку устройства?" },
+  { id:"components-onreceive-coroutine", topicId:"components", sectionId:"receiver", kind:"edge-case",
+    front:"В `onReceive()` запустили обычную корутину и сразу вышли из метода. Почему работа может не доделаться и что меняет `goAsync()`?" },
+  { id:"components-provider-init", topicId:"components", sectionId:"provider", kind:"mechanism",
+    front:"Библиотека (WorkManager, Firebase) поднимается сама, без вашего кода в `Application`. Через какой механизм и чем это бьёт по холодному старту?" },
+  { id:"components-binder-mainthread", topicId:"components", sectionId:"ipc-binder", kind:"oral",
+    front:"Зачем клиенту `linkToDeath` и почему синхронный AIDL-вызов с главного потока опасен, если сервер повиснет?" },
+  { id:"components-aidl-vs-messenger", topicId:"components", sectionId:"ipc-aidl", kind:"api-choice",
+    front:"Нужен IPC к своему сервису. Когда брать AIDL, а когда хватает `Messenger`, и чем это отличается по параллелизму?" },
+  { id:"activity-pause-not-invisible", topicId:"activity", sectionId:"lifecycle", kind:"mechanism",
+    front:"Экран ещё виден, но уже не в фокусе — какой это lifecycle-state, и почему отсюда нельзя делать вывод, что Activity уходит с экрана?" },
+  { id:"activity-flags-not-finalization", topicId:"activity", sectionId:"finishing", kind:"edge-case",
+    front:"Можно ли полагаться на `onDestroy()` с проверкой `isFinishing`, чтобы гарантированно зачистить состояние при уходе пользователя?" },
+  { id:"activity-viewmodel-vs-process-death", topicId:"activity", sectionId:"saved-state", kind:"oral",
+    front:"Поворот и process death оба ведут к новому `onCreate()`. Почему `ViewModel` переживает первое, но не второе?" },
+  { id:"activity-result-stable-registration", topicId:"activity", sectionId:"activity-result", kind:"api-choice",
+    front:"Почему `registerForActivityResult` нельзя ставить под `if` или менять порядок регистрации между запусками Activity?" },
+  { id:"activity-singletop-stale-intent", topicId:"activity", sectionId:"task-back-stack", kind:"bug",
+    front:"Экран с `singleTop` открыт, из push приходит новый Intent, но код читает данные только в `onCreate()`. Что увидит пользователь и в чём баг?" },
+  { id:"activity-exported-untrusted-input", topicId:"activity", sectionId:"intents", kind:"oral",
+    front:"Почему Activity с intent-filter и `exported=true` нужно считать публичным API и валидировать входящие extras и URI?" },
+  { id:"fragment-not-mini-activity", topicId:"fragment", sectionId:"why-fragments", kind:"oral",
+    front:"Почему Fragment некорректно считать «Activity без manifest», и какое практическое следствие это даёт для кода, трогающего View?" },
+  { id:"fragment-this-vs-viewlifecycleowner", topicId:"fragment", sectionId:"fragment-lifecycle", kind:"bug",
+    front:"Что произойдёт, если подписаться на `viewModel.state` через `this` вместо `viewLifecycleOwner`, а фрагмент потом уйдёт в back stack и вернётся?" },
+  { id:"fragment-parent-vs-child-manager", topicId:"fragment", sectionId:"fragment-manager", kind:"api-choice",
+    front:"Когда брать `childFragmentManager`, а когда `parentFragmentManager`, и чем грозит вложенный flow в общем manager Activity?" },
+  { id:"fragment-allowing-state-loss", topicId:"fragment", sectionId:"back-stack-state-loss", kind:"edge-case",
+    front:"Делает ли `commitAllowingStateLoss()` транзакцию «безопасной», и когда его вообще уместно применять?" },
+  { id:"fragment-result-api-vs-viewmodel", topicId:"fragment", sectionId:"communication", kind:"api-choice",
+    front:"Почему Fragment Result API не годится, когда важно каждое событие, и что взять вместо него?" },
+  { id:"fragment-findfragmentbytag-direct-call", topicId:"fragment", sectionId:"failure-modes", kind:"mechanism",
+    front:"Чем плох приём «найду получателя через `findFragmentByTag()` и напрямую дёрну его метод», даже если в демо это работает?" },
+  { id:"background-work-bg-service-dead", topicId:"background-work", sectionId:"limits", kind:"bug",
+    front:"Почему старый рецепт «фоновый `Service` + `WakeLock` + `Thread` с циклом синхронизации» на современном Android не работает?" },
+  { id:"background-work-retry-vs-failure", topicId:"background-work", sectionId:"workmanager", kind:"edge-case",
+    front:"Что произойдёт, если в `doWork()` вернуть `Result.retry()` на неустранимой ошибке (битые данные), и наоборот — `Result.failure()` на сетевом таймауте?" },
+  { id:"background-work-fgs-start-from-bg", topicId:"background-work", sectionId:"foreground-service", kind:"mechanism",
+    front:"Приложение в фоне по таймеру пытается поднять foreground service и ловит `ForegroundServiceStartNotAllowedException`. Почему так и как корректно разбудить сервис?" },
+  { id:"background-work-exact-alarm-throttle", topicId:"background-work", sectionId:"alarmmanager", kind:"edge-case",
+    front:"`setExactAndAllowWhileIdle()` пробивает Doze. Можно ли через него делать частые точные напоминания, например десять алармов на ближайшую минуту?" },
+  { id:"background-work-push-as-signal", topicId:"background-work", sectionId:"fcm", kind:"mechanism",
+    front:"FCM — best-effort: пуш может прийти дважды, с задержкой или быть схлопнут. Как проектировать обработчик, чтобы не терять и не дублировать события?" },
+  { id:"background-work-tool-choice-axes", topicId:"background-work", sectionId:"choose", kind:"oral",
+    front:"По каким двум осям выбирают между WorkManager, foreground service, AlarmManager и FCM, и куда по ним ложится каждый инструмент?" },
+  { id:"algorithms-amortized-growth", topicId:"algorithms", sectionId:"bigo", kind:"mechanism",
+    front:"Почему амортизированный `O(1)` у `ArrayList.add` держится при росте ёмкости в разы (×1.5, ×2), но ломается до `O(n)`, если растить на фиксированную добавку (+10)?" },
+  { id:"algorithms-mutable-key", topicId:"algorithms", sectionId:"hashmap", kind:"bug",
+    front:"Что произойдёт, если положить в `HashMap` мутабельный ключ, а потом изменить поле, входящее в его `hashCode`?" },
+  { id:"algorithms-map-choice", topicId:"algorithms", sectionId:"linked-tree-map", kind:"api-choice",
+    front:"Нужны диапазонные запросы «ближайший ключ ≥ x» и упорядоченный обход. Какую из `HashMap` / `LinkedHashMap` / `TreeMap` взять и какой ценой?" },
+  { id:"algorithms-chm-check-then-act", topicId:"algorithms", sectionId:"concurrent", kind:"bug",
+    front:"Почему `if (!map.containsKey(k)) map.put(k, v)` на `ConcurrentHashMap` — это всё равно гонка, хотя сама мапа потокобезопасна?" },
+  { id:"algorithms-readonly-not-immutable", topicId:"algorithms", sectionId:"kotlin-collections", kind:"edge-case",
+    front:"Гарантирует ли тип `List<Int>` в Kotlin, что лежащую за ним коллекцию никто не изменит?" },
+  { id:"algorithms-lru-get-write-lock", topicId:"algorithms", sectionId:"lru", kind:"oral",
+    front:"В LRU на `LinkedHashMap(accessOrder = true)` почему `get` нельзя защищать read-локом — ведь это «просто чтение»?" },
+  { id:"threads-start-vs-run", topicId:"threads", sectionId:"thread-runnable", kind:"bug",
+    front:"Чем отличается вызов `run()` от `start()` у `Thread` и что будет при повторном `start()` на том же объекте?" },
+  { id:"threads-volatile-increment", topicId:"threads", sectionId:"race", kind:"bug",
+    front:"Два потока инкрементируют `@Volatile var count` через `count++`. Почему итог почти всегда меньше ожидаемого, хотя поле volatile?" },
+  { id:"threads-happens-before-scope", topicId:"threads", sectionId:"memory-model", kind:"oral",
+    front:"Объясните, почему запись в одну `volatile`-переменную делает видимыми и обычные, не-volatile поля, записанные до неё." },
+  { id:"threads-coffman-conditions", topicId:"threads", sectionId:"deadlock", kind:"edge-case",
+    front:"Deadlock требует всех четырёх условий Коффмана. Сколько из них нужно сломать, чтобы взаимоблокировка стала невозможной, и какой приём ломает circular wait?" },
+  { id:"threads-atomiclong-vs-longadder", topicId:"threads", sectionId:"cas", kind:"api-choice",
+    front:"Счётчик инкрементируется из многих потоков очень часто, а читается редко. Что выбрать — `AtomicLong` или `LongAdder` — и почему?" },
+  { id:"threads-cooperative-cancel", topicId:"threads", sectionId:"lifecycle", kind:"mechanism",
+    front:"Что на самом деле делает `interrupt()` и почему нельзя «проглотить» пойманный `InterruptedException`?" },
+  { id:"looper-handler-anr-while-looping", topicId:"looper-handler", sectionId:"event-loop", kind:"mechanism",
+    front:"Если `Looper.loop()` — бесконечный цикл, который никогда не возвращается, почему сам факт его работы не считается «поток вечно занят» и не вызывает ANR?" },
+  { id:"looper-handler-order-delayed", topicId:"looper-handler", sectionId:"message-queue", kind:"edge-case",
+    front:"Вызвали `postDelayed(r, 100)`, а сразу за ним `post(r2)`. В каком порядке выполнятся `r` и `r2` и почему?" },
+  { id:"looper-handler-dispatch-order", topicId:"looper-handler", sectionId:"dispatch", kind:"oral",
+    front:"У `Handler` переопределён `handleMessage()`, задан `Callback` из конструктора, и сообщение отправили через `post()`. Какая из трёх веток сработает?" },
+  { id:"looper-handler-nonstatic-weakref", topicId:"looper-handler", sectionId:"handler-leak", kind:"bug",
+    front:"Разработчик оставил `Handler` нестатическим внутренним классом, но завернул ссылку на Activity в `WeakReference`. Спасёт ли это от утечки?" },
+  { id:"looper-handler-postdelayed-sleep", topicId:"looper-handler", sectionId:"time-base", kind:"api-choice",
+    front:"Нужно надёжное напоминание ровно через 10 минут настенного времени, даже если устройство уснёт. Подойдёт ли `postDelayed` и почему?" },
+  { id:"executors-submit-vs-execute", topicId:"executors", sectionId:"executor-basics", kind:"bug",
+    front:"Задача, отправленная через `submit()`, упала с исключением, но `Future.get()` по ней никто не вызвал. Где окажется это исключение и почему это опасно?" },
+  { id:"executors-unbounded-queue-max", topicId:"executors", sectionId:"growth-model", kind:"mechanism",
+    front:"Пулу задали `corePoolSize=4`, `maximumPoolSize=50` и неограниченную очередь. Под лавиной задач сколько потоков он реально поднимет и почему?" },
+  { id:"executors-callerruns-ui", topicId:"executors", sectionId:"rejection", kind:"edge-case",
+    front:"Какой скрытый побочный эффект у `CallerRunsPolicy` и почему её опасно вешать на пул, в который задачи шлёт главный поток?" },
+  { id:"executors-await-without-shutdown", topicId:"executors", sectionId:"shutdown", kind:"api-choice",
+    front:"Вы зовёте `awaitTermination(60, SECONDS)` без предварительного `shutdown()`. Что вернётся и почему?" },
+  { id:"executors-starvation-deadlock", topicId:"executors", sectionId:"starvation-deadlock", kind:"oral",
+    front:"Объясните thread starvation deadlock и почему он особенно коварен на пуле размером больше единицы." },
+  { id:"executors-happens-before-shared", topicId:"executors", sectionId:"memory-visibility", kind:"edge-case",
+    front:"Результат вы забираете через `Future.get()`, но задача параллельно с другими задачами дописывает в общий `ArrayList`. Достаточно ли `get()` для корректности?" },
+  { id:"compose-derivedstateof-vs-remember", topicId:"compose", sectionId:"state", kind:"mechanism",
+    front:"Кнопку «scroll-to-top» показывают по условию `firstVisibleItemIndex > 0`. Почему чтение этого условия напрямую тормозит скролл, и что меняет обёртка в `derivedStateOf`?" },
+  { id:"compose-key-reorder", topicId:"compose", sectionId:"slot-table", kind:"mechanism",
+    front:"В `LazyColumn` без `key` при вставке элемента в начало списка «съезжают» состояние и анимации строк. Какой механизм это вызывает и как `key` его чинит?" },
+  { id:"compose-unstable-list-skipping", topicId:"compose", sectionId:"recomposition", kind:"bug",
+    front:"Composable принимает параметр `List<Post>` и рекомпозируется «за компанию» при любом изменении родителя. В чём причина и какие есть способы починки?" },
+  { id:"compose-launchedeffect-vs-scope", topicId:"compose", sectionId:"effects", kind:"api-choice",
+    front:"Нужно запустить корутину из `onClick`. Почему здесь не подойдёт `LaunchedEffect` и что берут вместо него?" },
+  { id:"compose-deferred-read-phases", topicId:"compose", sectionId:"layout", kind:"edge-case",
+    front:"Анимируем смещение: `Modifier.padding(start = offsetX)` вызывает рекомпозицию на каждый кадр, а `Modifier.offset { IntOffset(offsetX.roundToPx(), 0) }` — нет. За счёт чего?" },
+  { id:"compose-static-vs-dynamic-local", topicId:"compose", sectionId:"composition-local", kind:"oral",
+    front:"Объясните разницу между `compositionLocalOf` и `staticCompositionLocalOf` по механике инвалидации и когда брать каждый." },
+  { id:"rendering-dropped-frame", topicId:"rendering", sectionId:"pipeline", kind:"mechanism",
+    front:"Кадр не успел подготовиться к следующему VSYNC, опоздав на 1 мс. Покажет ли Choreographer его «с небольшим опозданием»?" },
+  { id:"rendering-renderthread-idle", topicId:"rendering", sectionId:"renderthread", kind:"bug",
+    front:"Вы синхронно распарсили большой JSON в обработчике клика, и кадр уронен. Виноват ли в этом RenderThread или GPU?" },
+  { id:"rendering-jankstats-vs-macro", topicId:"rendering", sectionId:"jank", kind:"api-choice",
+    front:"Нужно понять, рвётся ли список в проде у реальных пользователей, и отдельно — стабильно воспроизвести просадку для поиска причины. Какие инструменты под какую задачу?" },
+  { id:"rendering-lazycolumn-key", topicId:"rendering", sectionId:"lists", kind:"edge-case",
+    front:"В `LazyColumn` вы поставили `key = { it }` по позиции элемента (его индексу). Что не так и что произойдёт при вставке элемента в начало списка?" },
+  { id:"rendering-baseline-aot", topicId:"rendering", sectionId:"baseline", kind:"oral",
+    front:"Откуда вообще берётся jank на первом запуске после установки, если код вашего приложения не менялся, и за счёт чего baseline profile его убирает?" },
+  { id:"architecture-mvi-reducer", topicId:"architecture", sectionId:"presentation", kind:"mechanism",
+    front:"Почему в MVI `reducer` делают чистой функцией `(State, Action) -> State`, а навигацию и тост не кладут в тот же `State`?" },
+  { id:"architecture-effect-carrier", topicId:"architecture", sectionId:"event-carriers", kind:"api-choice",
+    front:"Нужно доставить событие «токен протух, разлогиньтесь» сразу нескольким активным экранам. Что взять — `Channel.receiveAsFlow()` или `SharedFlow` — и почему?" },
+  { id:"architecture-repo-interface-location", topicId:"architecture", sectionId:"clean", kind:"oral",
+    front:"Интерфейс репозитория объявлен в `data`, рядом с `RepositoryImpl`. Что это ломает в Clean Architecture и почему правильнее держать интерфейс в `domain`?" },
+  { id:"architecture-binds-vs-provides", topicId:"architecture", sectionId:"di-hilt", kind:"api-choice",
+    front:"Когда в Hilt-модуле берут `@Binds`, а когда `@Provides`, и почему модуль с `@Binds` должен быть `abstract`, а не `object`?" },
+  { id:"architecture-whilesubscribed", topicId:"architecture", sectionId:"reactive", kind:"mechanism",
+    front:"Почему состояние из ViewModel шарят через `stateIn(scope, SharingStarted.WhileSubscribed(5000), initial)`, а не через `Eagerly`/`Lazily`?" },
+  { id:"architecture-process-death", topicId:"architecture", sectionId:"state-survival", kind:"edge-case",
+    front:"Состояние лежит только в `MutableStateFlow` внутри ViewModel. Что с ним станет при повороте экрана, а что — при system-initiated process death, и в чём ловушка?" },
+  { id:"storage-apply-anr", topicId:"storage", sectionId:"sharedprefs", kind:"bug",
+    front:"Почему утверждение «`apply()` не блокирует UI-поток» — только полуправда?" },
+  { id:"storage-key-invalidated", topicId:"storage", sectionId:"encrypted", kind:"edge-case",
+    front:"Ключ Keystore создан с `setUserAuthenticationRequired(true)`. Что с ним случится, если пользователь добавит новый отпечаток, и как это правильно обработать?" },
+  { id:"storage-flow-invalidation", topicId:"storage", sectionId:"room", kind:"mechanism",
+    front:"Как Flow-запрос Room узнаёт, что таблицу изменили, и почему он может переэмитить «лишний раз»?" },
+  { id:"storage-replace-cascade", topicId:"storage", sectionId:"room-relations", kind:"bug",
+    front:"Чем опасен `@Insert(onConflict = REPLACE)` при внешних ключах и почему `@Upsert` часто корректнее?" },
+  { id:"storage-wal-concurrency", topicId:"storage", sectionId:"room-concurrency", kind:"oral",
+    front:"Объясните, как режим WAL влияет на конкурентность чтения и записи в Room, и что он при этом НЕ меняет." },
+  { id:"storage-choose-token", topicId:"storage", sectionId:"choose", kind:"api-choice",
+    front:"Где хранить auth-токен и почему обычный `SharedPreferences` здесь не подходит даже как временное решение?" },
+  { id:"network-idempotent-retry", topicId:"network", sectionId:"http", kind:"api-choice",
+    front:"Почему автоматический retry при разрыве соединения безопасен для `PUT` и `DELETE`, но опасен для `POST`?" },
+  { id:"network-tls-asymmetric", topicId:"network", sectionId:"tls", kind:"oral",
+    front:"Зачем в TLS вообще нужна асимметричная криптография, если весь трафик потом шифруется симметричным ключом?" },
+  { id:"network-app-vs-network-interceptor", topicId:"network", sectionId:"okhttp", kind:"api-choice",
+    front:"Куда вешать auth-токен, а куда — логгер «по проводу»: на `addInterceptor` или `addNetworkInterceptor`, и почему?" },
+  { id:"network-swallow-cancellation", topicId:"network", sectionId:"errors", kind:"bug",
+    front:"Что сломается, если общий `catch` в `safeApiCall` поймает и проглотит `CancellationException`?" },
+  { id:"network-gson-npe", topicId:"network", sectionId:"serialization", kind:"edge-case",
+    front:"Как Gson умудряется положить `null` в non-null Kotlin-поле и проигнорировать его значение по умолчанию?" },
+  { id:"network-ws-half-open", topicId:"network", sectionId:"websockets", kind:"edge-case",
+    front:"Сокет «открыт», `onFailure` не сработал, но сообщения не идут уже минуту. Что произошло и чем это ловят заранее?" },
+  { id:"security-gcm-iv-reuse", topicId:"security", sectionId:"crypto-basics", kind:"mechanism",
+    front:"Почему для AES-GCM повтор одного IV под одним ключом — это катастрофа, а не мелкая небрежность, и кто отвечает за уникальность IV?" },
+  { id:"security-strongbox-fallback", topicId:"security", sectionId:"keystore", kind:"api-choice",
+    front:"Вы запросили `setIsStrongBoxBacked(true)`, но не каждое устройство поддерживает StrongBox. Что произойдёт и как корректно отработать этот случай?" },
+  { id:"security-cryptoobject-vs-flag", topicId:"security", sectionId:"biometric", kind:"mechanism",
+    front:"Почему привязка операции к `CryptoObject` сильнее, чем доверие булеву результату «биометрия пройдена»?" },
+  { id:"security-client-detection-race", topicId:"security", sectionId:"reverse", kind:"oral",
+    front:"Объясните, почему root- и Frida-детект на клиенте — это «гонка, которую защищающийся не выигрывает», и что тогда делает критичное решение надёжным." },
+  { id:"security-mapping-leak", topicId:"security", sectionId:"obfuscation", kind:"bug",
+    front:"Чем опасна утечка `mapping.txt` для защиты бинаря и как при этом сохранить читаемые стектрейсы?" },
+  { id:"security-flag-secure-limits", topicId:"security", sectionId:"screen-leaks", kind:"edge-case",
+    front:"Вы повесили `FLAG_SECURE` на экран с балансом. От какого способа «сфотографировать» данные он принципиально не спасает, и что это говорит о границах метода?" },
+  { id:"profiling-profiler-vs-benchmark", topicId:"profiling", sectionId:"tools", kind:"api-choice",
+    front:"Когда вы возьмёте `Profiler`, а когда `Macrobenchmark`, и почему замер на debug-сборке бессмысленен?" },
+  { id:"profiling-gc-pressure", topicId:"profiling", sectionId:"art-gc-lifecycle", kind:"mechanism",
+    front:"Почему поток мелких аллокаций в `onBindViewHolder` бьёт по плавности сильнее, чем одна крупная утечка?" },
+  { id:"profiling-ttid-ttfd", topicId:"profiling", sectionId:"startup", kind:"oral",
+    front:"Чем `TTID` отличается от `TTFD` и зачем вообще нужен ручной вызов `reportFullyDrawn()`?" },
+  { id:"profiling-avg-fps-trap", topicId:"profiling", sectionId:"ui-jank", kind:"edge-case",
+    front:"Почему высокий средний FPS не противоречит ощутимому jank, и какую метрику измерять вместо среднего?" },
+  { id:"profiling-r8-keep", topicId:"profiling", sectionId:"apk-size", kind:"bug",
+    front:"Включили `isMinifyEnabled = true` — и приложение падает только в release. Какой класс кода чаще всего ломает R8 и как это лечить?" },
+  { id:"profiling-anr-broadcast-thread", topicId:"profiling", sectionId:"anr", kind:"mechanism",
+    front:"Почему синхронный I/O в `onReceive` у `BroadcastReceiver` грозит ANR, и как правильно вынести работу?" },
+  { id:"testing-fake-vs-mock", topicId:"testing", sectionId:"pyramid", kind:"api-choice",
+    front:"Гугл советует для своих репозиториев и data source предпочитать fake, а не mock с `verify`. Какой недостаток mock это убирает?" },
+  { id:"testing-setmain-rule", topicId:"testing", sectionId:"coroutines", kind:"bug",
+    front:"ViewModel-тест на JVM падает на корутине из `viewModelScope` ещё до ассертов. Почему и что добавить в `@Before`/`@After`?" },
+  { id:"testing-stateflow-conflation", topicId:"testing", sectionId:"flow", kind:"edge-case",
+    front:"Тест на `StateFlow` через Turbine иногда пропускает `Loading`, хотя код «работает». В чём причина и как сделать тест детерминированным?" },
+  { id:"testing-compose-vs-espresso", topicId:"testing", sectionId:"instrumented", kind:"api-choice",
+    front:"Тебе нужно надёжно найти кнопку в Compose-тесте, который не должен падать при правке текста или локализации. Что выбрать и почему?" },
+  { id:"testing-replay0-subscribe-order", topicId:"testing", sectionId:"events", kind:"bug",
+    front:"Тест события на `SharedFlow` с `replay=0` то ловит эмиссию, то нет. Где ловушка и как гарантировать порядок?" },
+  { id:"testing-mutation-vs-coverage", topicId:"testing", sectionId:"test-quality", kind:"oral",
+    front:"Объясни, почему 100% покрытия не значит «нет багов», и что меряет mutation score, чего не видит покрытие." },
+  { id:"gradle-build-config-runs-always", topicId:"gradle-build", sectionId:"model", kind:"mechanism",
+    front:"Почему тяжёлый код на верхнем уровне `build.gradle` (чтение файла, сетевой запрос) замедляет даже `./gradlew help`, а не только сборку?" },
+  { id:"gradle-build-variants-explode", topicId:"gradle-build", sectionId:"variants", kind:"edge-case",
+    front:"Как из build types и product flavors получается число вариантов, и почему добавление одного измерения флейворов бьёт по скорости сборки?" },
+  { id:"gradle-build-two-caches", topicId:"gradle-build", sectionId:"speed", kind:"api-choice",
+    front:"Configuration cache и build cache — какой из них что ускоряет, и взаимоисключающие ли они?" },
+  { id:"gradle-build-ksp-vs-kapt", topicId:"gradle-build", sectionId:"annotation", kind:"oral",
+    front:"Почему kapt принципиально медленнее KSP — что лишнего он делает на сборке?" },
+  { id:"gradle-build-api-vs-impl", topicId:"gradle-build", sectionId:"modularization", kind:"api-choice",
+    front:"Почему дефолт — `implementation`, а не `api`, и как это влияет на перекомпиляцию потребителей?" },
+  { id:"gradle-build-keep-class-overkill", topicId:"gradle-build", sectionId:"r8", kind:"bug",
+    front:"Gson возвращает объект с пустыми полями после R8. `-keep class Foo { *; }` чинит краш — почему это плохое решение и что точнее?" },
+  { id:"system-design-loading-state", topicId:"system-design", sectionId:"architecture", kind:"mechanism",
+    front:"UI читает только из Room через `Flow`, а сеть пишет в Room. Откуда тогда экран берёт состояния «идёт загрузка» и «ошибка сети» — их ведь нет в данных БД?" },
+  { id:"system-design-tombstones", topicId:"system-design", sectionId:"api-data", kind:"edge-case",
+    front:"Дельта-синхронизация по `updatedSince` тянет созданное и изменённое. Как клиент узнает, что запись удалили на сервере, если её просто нет в дельте?" },
+  { id:"system-design-idempotency", topicId:"system-design", sectionId:"offline", kind:"bug",
+    front:"Воркер дренирует outbox и делает `POST /like` с ретраями. Какой баг гарантированно появится без `Idempotency-Key` и почему?" },
+  { id:"system-design-remotemediator", topicId:"system-design", sectionId:"paging", kind:"api-choice",
+    front:"Когда брать `RemoteMediator + PagingSource` из Room, а когда хватит одного `PagingSource` напрямую из сети? Что ломается во втором варианте?" },
+  { id:"system-design-jitter", topicId:"system-design", sectionId:"realtime", kind:"oral",
+    front:"Объясните, зачем в reconnect-backoff нужен jitter, если экспонента и так разносит попытки во времени." },
+  { id:"system-design-request-dedup", topicId:"system-design", sectionId:"case-image-loader", kind:"mechanism",
+    front:"Десять элементов списка одновременно грузят один и тот же URL. Каким механизмом не сходить в сеть десять раз?" },
+  { id:"behavioral-star-action", topicId:"behavioral", sectionId:"star", kind:"mechanism",
+    front:"В ответе по STAR на какой из четырёх блоков должна приходиться львиная доля рассказа и почему именно на него?" },
+  { id:"behavioral-bank-contexts", topicId:"behavioral", sectionId:"bank", kind:"oral",
+    front:"Почему рискованно набирать весь банк из 6–8 историй вокруг одного проекта, даже если каждая отвечает на несколько вопросов?" },
+  { id:"behavioral-fake-weakness", topicId:"behavioral", sectionId:"antipatterns", kind:"bug",
+    front:"На вопрос про слабые стороны кандидат отвечает «я перфекционист / слишком много работаю». Почему это провальный ответ, хотя формально это про недостаток?" },
+  { id:"behavioral-bias-for-action-limit", topicId:"behavioral", sectionId:"ambiguity", kind:"edge-case",
+    front:"Bias for action хвалят как достоинство. В каком случае «быстро начал делать в условиях неопределённости» — это минус, и как показать, что вы видите эту границу?" },
+  { id:"behavioral-leadership-no-title", topicId:"behavioral", sectionId:"leadership", kind:"api-choice",
+    front:"На senior-собесе просят историю про лидерство, а формальной роли лида у вас не было. Какую историю выбрать и почему отсутствие должности здесь не проблема?" },
 ];
 
 const LS_KEY = "aip-progress-v1";
@@ -756,6 +1049,51 @@ function formatReviewDate(key){
   return due.toLocaleDateString("ru-RU", { day:"2-digit", month:"2-digit" });
 }
 function isReviewDue(entry){ return !entry || !entry.due || entry.due <= localDateKey(); }
+
+// Записать результат повторения для любого reviewId (карточка главы или test:<qid>).
+function scheduleReview(reviewId, result){
+  const days = REVIEW_DELAYS[result] || REVIEW_DELAYS.again;
+  const state = getReviewState();
+  state[reviewId] = { due: dateKeyAfter(days), last: localDateKey(), result };
+  setReviewState(state);
+}
+
+// Все провалы интервью-теста как элементы повторения (только отвеченные неверно).
+// Считаем по полному набору вопросов, не завися от режима пересдачи.
+function allTestMisses(state){
+  const st = state || getInterviewState();
+  if (!st.finished) return [];
+  return INTERVIEW_TEST_QUESTIONS
+    .filter(q => hasInterviewAnswer(st, q.id) && interviewAnswer(st, q.id) !== q.answer)
+    .map(q => ({
+      id: `test:${q.id}`,
+      topicId: q.topicId,
+      sectionId: q.sectionId,
+      kind: "test",
+      source: "test",
+      front: q.gap || q.question,
+      refs: q.refs || []
+    }));
+}
+
+// Единый список карточек: авторские из каталога + динамические из провалов теста.
+function allReviewItems(){
+  const cards = REVIEW_CATALOG.map(c => ({ ...c, source: "card" }));
+  return cards.concat(allTestMisses());
+}
+
+// Только то, что нужно повторить сегодня (нет записи или срок наступил).
+function dueReviewItems(){
+  const state = getReviewState();
+  return allReviewItems().filter(it => isReviewDue(state[it.id]));
+}
+
+// Ссылка с карточки на параграф главы.
+function reviewItemHref(item){
+  const t = topicById(item.topicId);
+  if (!t) return rel("index");
+  return rel(t.file) + (item.sectionId ? `#${item.sectionId}` : "");
+}
 
 /* ---------- theme ---------- */
 function getStoredTheme(){
@@ -1537,15 +1875,7 @@ function setupStudyCards(){
     card.dataset.studyReady = "1";
     card.querySelectorAll("[data-review-result]").forEach(btn => {
       btn.addEventListener("click", () => {
-        const result = btn.dataset.reviewResult || "again";
-        const days = REVIEW_DELAYS[result] || REVIEW_DELAYS.again;
-        const state = getReviewState();
-        state[card.dataset.reviewId] = {
-          due: dateKeyAfter(days),
-          last: localDateKey(),
-          result
-        };
-        setReviewState(state);
+        scheduleReview(card.dataset.reviewId, btn.dataset.reviewResult || "again");
         updateStudyCards();
       });
     });
@@ -1598,6 +1928,112 @@ function updateStudyCards(){
   document.querySelectorAll("[data-study-scheduled]").forEach(el => el.textContent = String(scheduledCount));
 }
 
+/* ---------- домашняя поверхность «Сегодня» (кросс-главная очередь) ---------- */
+const TODAY_DUE_LIMIT = 8;
+
+function reviewItemKindLabel(item){
+  return item.source === "test" ? "Из теста" : (REVIEW_KIND[item.kind] || "Карточка");
+}
+
+function setupTodayReview(){
+  const root = document.querySelector("[data-today-review]");
+  if (!root || root.dataset.todayReady) return;
+  root.dataset.todayReady = "1";
+  root.addEventListener("click", e => {
+    const sched = e.target.closest("[data-today-result]");
+    if (sched){
+      scheduleReview(sched.dataset.reviewId, sched.dataset.todayResult || "good");
+      renderTodayReview(root);
+      return;
+    }
+    const reset = e.target.closest("[data-today-reset]");
+    if (reset){
+      const state = getReviewState();
+      allReviewItems().forEach(it => delete state[it.id]);
+      setReviewState(state);
+      renderTodayReview(root);
+    }
+  });
+  renderTodayReview(root);
+}
+
+function renderTodayReview(root){
+  const all = allReviewItems();
+  if (!all.length){ root.hidden = true; return; }
+  root.hidden = false;
+
+  const state = getReviewState();
+  const due = all.filter(it => isReviewDue(state[it.id]));
+  const scheduled = all.length - due.length;
+
+  // следующий срок, если на сегодня всё повторено
+  let nextDue = "";
+  if (!due.length){
+    const dates = all.map(it => state[it.id] && state[it.id].due).filter(Boolean).sort();
+    if (dates.length) nextDue = formatReviewDate(dates[0]);
+  }
+
+  // слабые главы: больше всего карточек к повторению
+  const byTopic = new Map();
+  due.forEach(it => byTopic.set(it.topicId, (byTopic.get(it.topicId) || 0) + 1));
+  const weak = [...byTopic.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([topicId, n]) => {
+      const t = topicById(topicId);
+      return `<a class="today-weak-chip" href="${reviewItemHref({ topicId })}">${esc(t ? t.title : topicId)} <b>${n}</b></a>`;
+    }).join("");
+
+  const visible = due.slice(0, TODAY_DUE_LIMIT);
+  const restCount = due.length - visible.length;
+
+  const cardsHtml = visible.map(it => {
+    const t = topicById(it.topicId);
+    return `
+      <article class="today-card">
+        <div class="today-card-top">
+          <span class="today-kind ${it.source === "test" ? "from-test" : ""}">${esc(reviewItemKindLabel(it))}</span>
+          <span class="today-chapter">${esc(t ? t.title : it.topicId)}</span>
+        </div>
+        <p class="today-q">${formatInline(it.front)}</p>
+        <div class="today-card-foot">
+          <a class="study-btn ghost" href="${reviewItemHref(it)}">Открыть и ответить →</a>
+          <div class="today-grade" aria-label="Запланировать повторение">
+            <button class="study-btn" type="button" data-today-result="again" data-review-id="${esc(it.id)}">Ещё раз</button>
+            <button class="study-btn" type="button" data-today-result="good" data-review-id="${esc(it.id)}">3 дня</button>
+            <button class="study-btn" type="button" data-today-result="easy" data-review-id="${esc(it.id)}">Неделя</button>
+          </div>
+        </div>
+      </article>`;
+  }).join("");
+
+  const dueWord = pluralRu(due.length, "карточка", "карточки", "карточек");
+  const body = due.length
+    ? `
+      <div class="today-list">${cardsHtml}</div>
+      ${restCount > 0 ? `<p class="today-more">…и ещё ${restCount} ${pluralRu(restCount, "карточка", "карточки", "карточек")} в очереди — ответьте на эти, остальные подтянутся.</p>` : ""}
+      ${weak ? `<div class="today-weak"><span class="study-label">Слабые главы</span><div class="today-weak-row">${weak}</div></div>` : ""}
+    `
+    : `<div class="today-empty"><strong>На сегодня всё повторено 💚</strong><p>${scheduled ? `Следующее повторение: ${esc(nextDue || "позже")}. Можно пройти интервью-тест или взяться за новую главу.` : "Очередь пуста — отвечайте на карточки в главах, они появятся здесь по расписанию."}</p></div>`;
+
+  root.innerHTML = `
+    <div class="today-head">
+      <div>
+        <span class="study-label">Учебный цикл</span>
+        <h2 class="today-title">Что повторить сегодня</h2>
+        <p class="today-sub">Интервальные карточки по всем главам и пробелы из интервью-теста — в одной очереди.</p>
+      </div>
+      <div class="today-meters" aria-label="Статус повторения">
+        <div class="study-meter"><b data-today-due-count>${due.length}</b><span>${dueWord} на сегодня</span></div>
+        <div class="study-meter"><b>${scheduled}</b><span>отложено</span></div>
+        <div class="study-meter"><b>${all.length}</b><span>всего</span></div>
+      </div>
+    </div>
+    ${body}
+    ${all.length ? `<div class="today-actions"><a class="study-btn" href="${rel("interview-test.html")}">Интервью-тест →</a><button class="study-btn ghost" type="button" data-today-reset>Сбросить расписание</button></div>` : ""}
+  `;
+}
+
 function setupCaseCards(){
   document.querySelectorAll("[data-case]").forEach(card => {
     if (card.dataset.caseReady) return;
@@ -1622,7 +2058,7 @@ function setupCaseCards(){
 }
 
 /* ---------- тестовое собеседование ---------- */
-function freshInterviewState(){ return { answers: {}, finished: false, updatedAt: 0 }; }
+function freshInterviewState(){ return { answers: {}, finished: false, updatedAt: 0, retry: null }; }
 function getInterviewState(){
   try {
     const raw = JSON.parse(localStorage.getItem(INTERVIEW_TEST_KEY)) || {};
@@ -1631,10 +2067,19 @@ function getInterviewState(){
       finished: !!raw.finished,
       updatedAt: raw.updatedAt || 0,
       finishedAt: raw.finishedAt || 0,
+      retry: Array.isArray(raw.retry) && raw.retry.length ? raw.retry : null,
     };
   } catch(e){
     return freshInterviewState();
   }
+}
+// В режиме пересдачи тест показывает только ранее проваленные вопросы.
+function interviewQuestions(state){
+  if (state && Array.isArray(state.retry) && state.retry.length){
+    const set = new Set(state.retry);
+    return INTERVIEW_TEST_QUESTIONS.filter(q => set.has(q.id));
+  }
+  return INTERVIEW_TEST_QUESTIONS;
 }
 function setInterviewState(state){
   try { localStorage.setItem(INTERVIEW_TEST_KEY, JSON.stringify(state)); } catch(e){}
@@ -1699,7 +2144,7 @@ function uniqueInterviewRefs(refs){
   });
 }
 function interviewResult(state){
-  const questions = INTERVIEW_TEST_QUESTIONS;
+  const questions = interviewQuestions(state);
   const misses = questions.filter(q => !hasInterviewAnswer(state, q.id) || interviewAnswer(state, q.id) !== q.answer);
   const answered = questions.filter(q => hasInterviewAnswer(state, q.id)).length;
   const correct = questions.length - misses.length;
@@ -1758,6 +2203,31 @@ function setupInterviewTest(){
       return;
     }
 
+    if (action === "retry"){
+      const ids = interviewResult(state).misses.map(q => q.id);
+      if (!ids.length){ showToast("Ошибок нет — пересдавать нечего"); return; }
+      state.retry = ids;
+      ids.forEach(id => delete state.answers[id]);
+      state.finished = false;
+      state.finishedAt = 0;
+      state.updatedAt = Date.now();
+      setInterviewState(state);
+      render();
+      showToast(`Пересдача: ${ids.length} ${pluralRu(ids.length, "вопрос", "вопроса", "вопросов")}`);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
+    if (action === "retry-exit"){
+      state.retry = null;
+      state.finished = false;
+      state.finishedAt = 0;
+      state.updatedAt = Date.now();
+      setInterviewState(state);
+      render();
+      return;
+    }
+
     if (action === "reset"){
       setInterviewState(freshInterviewState());
       render();
@@ -1777,14 +2247,16 @@ function renderInterviewTest(state){
     : `${result.answered}/${total} отвечено`;
   const finishLabel = state.finished ? "Показать пробелы" : "Завершить и показать пробелы";
   const canFinish = result.answered > 0;
+  const retrying = Array.isArray(state.retry) && state.retry.length;
 
   return `
+    ${retrying ? `<div class="quiz-retry-banner"><span>Режим пересдачи: только ${total} ${questionWord}, которые были провалены.</span><button class="study-btn ghost" type="button" data-quiz-action="retry-exit">Вернуться ко всем вопросам</button></div>` : ""}
     <div class="quiz-panel">
       <div class="quiz-intro">
         <div>
           <span class="study-label">Интервью-тест</span>
           <p class="quiz-title">${total} ${questionWord} по ключевым главам</p>
-          <p class="quiz-copy">Формат специально похож на быстрый скрининг: короткий вопрос, четыре варианта, один лучший ответ.</p>
+          <p class="quiz-copy">Формат ближе к быстрому скринингу: короткий сценарий, четыре корректных варианта, один лучший ответ. Нормальный темп — 45–90 минут.</p>
         </div>
         <div class="quiz-meters" aria-label="Статус теста">
           <div class="study-meter"><b>${total}</b><span>${questionWord}</span></div>
@@ -1880,7 +2352,12 @@ function renderInterviewResults(state){
         <p>${esc(grade)}</p>
       </div>
       ${result.misses.length
-        ? `<p class="subhead">Пробелы по главам</p>
+        ? `<div class="quiz-result-actions">
+            <button class="study-btn primary" type="button" data-quiz-action="retry">Пересдать ошибочные (${result.misses.length})</button>
+            <a class="study-btn" href="${rel("index")}#today">Открыть очередь повторения →</a>
+          </div>
+          <p class="quiz-queue-note">Эти ${result.misses.length} ${pluralRu(result.misses.length, "пробел", "пробела", "пробелов")} добавлены в очередь «Сегодня» на главной — с карточкой и ссылкой на параграф.</p>
+          <p class="subhead">Пробелы по главам</p>
           <div class="gap-list">
             ${[...missesByTopic.entries()].map(([topicId, items]) => renderGapGroup(topicId, items, state)).join("")}
           </div>`
@@ -2157,6 +2634,7 @@ function init(){
   setupRunnable();
   setupStudyCards();
   setupCaseCards();
+  setupTodayReview();
   setupInterviewTest();
   if (page && page !== "home") annotateGlossary();
 }

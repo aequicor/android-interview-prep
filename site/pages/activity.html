@@ -17,7 +17,7 @@
   <title>Activity · Android-собес</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../assets/style.css?v=20260621-13">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
 <body data-page="activity">
@@ -37,8 +37,41 @@
           </div>
         </header>
 
+        <div class="study-lab">
+          <div class="study-lab-copy">
+            <span class="study-label">Тренажёр главы</span>
+            <p class="study-title">Сначала пробуем ответить, потом читаем разбор.</p>
+            <p class="study-copy">Карточки разбросаны по главе: они проверяют не определение, а механизм, выбор API и типичные баги. После ответа ставьте дату следующего повторения.</p>
+          </div>
+          <div class="study-lab-side" aria-label="Статистика тренажёра">
+            <div class="study-meter"><b data-study-due>0</b><span>на сегодня</span></div>
+            <div class="study-meter"><b data-study-scheduled>0</b><span>отложено</span></div>
+            <div class="study-meter"><b data-study-total>0</b><span>всего</span></div>
+          </div>
+          <div class="study-lab-actions">
+            <button class="study-btn primary" type="button" data-study-scroll-due>К карточке на сегодня</button>
+            <button class="study-btn" type="button" data-study-reset>Сбросить тренажёр главы</button>
+          </div>
+        </div>
+
         <section class="section" id="lifecycle">
           <h2>Lifecycle: что означает каждый callback</h2>
+          <div class="study-card" data-review-id="activity-pause-not-invisible">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Экран ещё виден, но уже не в фокусе — какой это lifecycle-state, и почему отсюда нельзя делать вывод, что Activity уходит с экрана?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Это STARTED: видна, но не в фокусе. <code>onPause()</code> срабатывает от системного диалога, split-screen или прозрачной Activity поверх — экран при этом всё ещё виден. Невидимость наступает только на <code>onStop()</code>, поэтому ресурсы видимости отпускают там, а не в <code>onPause()</code>.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Жизненный цикл Activity читается парами: <code>onCreate/onDestroy</code> — всё время жизни экземпляра, <code>onStart/onStop</code> — видимость, <code>onResume/onPause</code> — интерактивность и фокус. На интервью важно не просто перечислить методы, а объяснить, куда привязывать ресурсы: камеру и сенсоры обычно поднимают рядом с видимостью, а короткие UI-подписки — рядом с интерактивным состоянием.</p>
 
           <div class="diagram">
@@ -81,6 +114,22 @@ end note
 
         <section class="section" id="finishing">
           <h2><code>isFinishing</code>, <code>isChangingConfigurations</code> и настоящее закрытие</h2>
+          <div class="study-card" data-review-id="activity-flags-not-finalization">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Можно ли полагаться на <code>onDestroy()</code> с проверкой <code>isFinishing</code>, чтобы гарантированно зачистить состояние при уходе пользователя?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Нет. При убийстве процесса в фоне Android не обязан вызвать <code>onDestroy()</code> вообще, и оба флага могут не прийти. Флаги нужны для развилки «ушёл навсегда или будет новый экземпляр», а не как гарантия финализации. Всё, что должно пережить process death, кладут в <code>SavedStateHandle</code>/<code>onSaveInstanceState</code> или в постоянное хранилище.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p><code>onDestroy()</code> сам по себе не отвечает на главный вопрос: Activity закрывается навсегда или пересоздаётся из-за конфигурации? Для этого нужны флаги. <code>isFinishing</code> становится <code>true</code>, когда Activity завершили через <code>finish()</code>, Back или системное завершение task. <code>isChangingConfigurations</code> показывает, что текущий экземпляр умирает из-за configuration change: поворот, смена языка, темы, размера окна.</p>
 
           <div class="table-wrap">
@@ -132,6 +181,22 @@ end note
 
         <section class="section" id="saved-state">
           <h2>Configuration change, process death и сохранение состояния</h2>
+          <div class="study-card" data-review-id="activity-viewmodel-vs-process-death">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Поворот и process death оба ведут к новому <code>onCreate()</code>. Почему <code>ViewModel</code> переживает первое, но не второе?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>При повороте процесс жив: framework переносит <code>ViewModelStore</code> через non-configuration state от старой Activity к новой, поэтому новый экземпляр получает ту же ViewModel. При process death памяти процесса больше нет — вместе с ним исчезает и <code>ViewModelStore</code>. Новая Activity стартует в новом процессе и получает только то, что было сохранено в Bundle, плюс данные из хранилища.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Поворот экрана и смерть процесса часто смешивают, но это разные аварии. При configuration change процесс жив, Activity пересоздаётся, а <code>ViewModel</code> остаётся в <code>ViewModelStore</code>. При process death умирает весь процесс: <code>ViewModel</code> исчезает, и восстановить UI можно только из сериализованного состояния или постоянного хранилища.</p>
 
           <div class="table-wrap">
@@ -175,6 +240,22 @@ end note
 
         <section class="section" id="activity-result">
           <h2>Activity Result API вместо <code>onActivityResult</code></h2>
+          <div class="study-card" data-review-id="activity-result-stable-registration">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Почему <code>registerForActivityResult</code> нельзя ставить под <code>if</code> или менять порядок регистрации между запусками Activity?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Registry сопоставляет результат, вернувшийся после пересоздания, с нужным callback. Если регистрировать launchers условно или в разном порядке, результат может прийти не туда или потеряться. Поэтому launcher держат как поле и регистрируют стабильно при создании Activity/Fragment; условным остаётся только момент <code>launch()</code>.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Старый <code>startActivityForResult()/onActivityResult()</code> завязан на <code>requestCode</code>, плохо масштабируется и легко ломается при пересоздании. Activity Result API регистрирует контракт заранее, возвращает типизированный результат и привязывает callback к lifecycle owner. Важная деталь: launcher регистрируют как поле или до старта lifecycle, а запускают позже, когда действие реально нужно.</p>
 
           <div class="code-label">ProfileActivity.kt</div>
@@ -211,6 +292,22 @@ end note
 
         <section class="section" id="task-back-stack">
           <h2>Task, back stack, launchMode и <code>onNewIntent</code></h2>
+          <div class="study-card" data-review-id="activity-singletop-stale-intent">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Экран с <code>singleTop</code> открыт, из push приходит новый Intent, но код читает данные только в <code>onCreate()</code>. Что увидит пользователь и в чём баг?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Повторный запуск экрана на вершине не вызывает <code>onCreate()</code> — новый Intent приходит в <code>onNewIntent()</code>, поэтому старые данные так и остаются на экране. Обработку выносят в общий <code>handleIntent()</code>, который зовут и из <code>onCreate()</code>, и из <code>onNewIntent()</code>. Плюс обязателен <code>setIntent(intent)</code>, иначе последующий <code>getIntent()</code> вернёт старый Intent.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Activity живёт не просто «в приложении», а в task — стеке экранов, который пользователь видит в Recents. Обычно каждый запуск создаёт новый экземпляр на вершине, но launch modes и Intent-флаги могут переиспользовать старый экземпляр, очистить часть стека или вынести Activity в отдельную задачу. Это сильная магия. Её лучше применять точечно.</p>
 
           <div class="table-wrap">
@@ -270,6 +367,22 @@ E --> F["handleIntent(B)"]
 
         <section class="section" id="intents">
           <h2>Intent, deep links и экспортированная поверхность</h2>
+          <div class="study-card" data-review-id="activity-exported-untrusted-input">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Почему Activity с intent-filter и <code>exported=true</code> нужно считать публичным API и валидировать входящие extras и URI?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Как только появился intent-filter, экран становится входной точкой снаружи процесса: другое приложение может запустить его и передать неожиданный id, огромный Bundle или Intent redirection payload. Поэтому входящие <code>data</code>, размер extras и права вызывающего проверяют как недоверенные, а внутренние экраны держат <code>exported=false</code>.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Explicit Intent называет конкретный компонент; implicit Intent описывает действие, данные и категории, а систему просит найти получателя. Как только появляется intent-filter, Activity становится входной точкой. Внутренний экран с <code>exported=true</code> — это уже публичный API вашего приложения, даже если вы не планировали его документировать.</p>
 
           <div class="code-label">IntentExamples.kt</div>
@@ -443,7 +556,7 @@ if (share.resolveActivity(packageManager) != null) {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/glossary.js?v=20260621-13"></script>
-  <script src="../assets/app.js?v=20260621-13"></script>
+  <script src="../assets/glossary.js?v=20260621-16"></script>
+  <script src="../assets/app.js?v=20260621-16"></script>
 </body>
 </html>

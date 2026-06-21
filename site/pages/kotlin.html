@@ -9,7 +9,7 @@
   <title>Язык Kotlin · Android-собес</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../assets/style.css?v=20260621-13">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-16">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
 <body data-page="kotlin">
@@ -29,8 +29,41 @@
           </div>
         </header>
 
+        <div class="study-lab">
+          <div class="study-lab-copy">
+            <span class="study-label">Тренажёр главы</span>
+            <p class="study-title">Сначала пробуем ответить, потом читаем разбор.</p>
+            <p class="study-copy">Карточки разбросаны по главе: они проверяют не определение, а механизм, выбор API и типичные баги. После ответа ставьте дату следующего повторения.</p>
+          </div>
+          <div class="study-lab-side" aria-label="Статистика тренажёра">
+            <div class="study-meter"><b data-study-due>0</b><span>на сегодня</span></div>
+            <div class="study-meter"><b data-study-scheduled>0</b><span>отложено</span></div>
+            <div class="study-meter"><b data-study-total>0</b><span>всего</span></div>
+          </div>
+          <div class="study-lab-actions">
+            <button class="study-btn primary" type="button" data-study-scroll-due>К карточке на сегодня</button>
+            <button class="study-btn" type="button" data-study-reset>Сбросить тренажёр главы</button>
+          </div>
+        </div>
+
         <section class="section" id="null-safety">
           <h2>Null-safety: система типов против NPE</h2>
+          <div class="study-card" data-review-id="kotlin-platform-npe">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Java-метод без аннотаций вернул <code>null</code>, а вы присвоили результат в <code>val name: String</code>. Код компилируется — где и почему прилетит NPE?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Тип без <code>@Nullable</code>/<code>@NonNull</code> Kotlin видит как платформенный <code>String!</code> и отключает проверки, поэтому присваивание в non-null проходит компиляцию. Под non-null присваивание компилятор вставляет assertion, и NPE прилетает сразу после Java-вызова, при сохранении результата, а стектрейс укажет на Kotlin-код, а не на Java-источник. Защита — явно принять nullable-тип или поставить корректные Java-аннотации.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Kotlin делит типы на <strong>nullable</strong> (<code>String?</code>) и <strong>non-null</strong> (<code>String</code>) на уровне компилятора. Это не рантайм-проверка, а статическая гарантия: нельзя присвоить <code>null</code> в non-null переменную, нельзя вызвать метод на nullable-ссылке без явной проверки — компилятор не пропустит.</p>
           <div class="code-label">NullSafety.kt</div>
 <pre><code class="language-kotlin">val a: String = "ok"
@@ -148,6 +181,22 @@ fun main() {
 
         <section class="section" id="classes">
           <h2>Классы: data, sealed, value, object</h2>
+          <div class="study-card" data-review-id="kotlin-data-var-hashset">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Вы положили <code>data class</code> с полем <code>var</code> в первичном конструкторе в <code>HashSet</code>, потом изменили это поле. Почему элемент «теряется»?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>equals</code>/<code>hashCode</code> у data class генерируются по полям первичного конструктора. Изменение <code>var</code>-поля после вставки меняет <code>hashCode</code> объекта: он лежит в корзине по старому хешу, а поиск идёт по новому — найти или удалить его уже нельзя. Поэтому поля первичного конструктора в data class держат <code>val</code>, а изменяемые объекты не кладут в hash-коллекции.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p class="subhead"><code>data class</code>: что именно генерируется</p>
           <p>Компилятор по свойствам <strong>первичного конструктора</strong> генерирует: <code>equals()</code>/<code>hashCode()</code> (структурное равенство), <code>toString()</code>, <code>copy()</code> и функции <code>component1()</code>…<code>componentN()</code> для деструктуризации. Свойства, объявленные в теле класса, в эти методы <strong>не попадают</strong> — ни в сравнение, ни в копирование.</p>
           <div class="code-label">DataClass.kt</div>
@@ -277,6 +326,22 @@ fun main() {
 
         <section class="section" id="type-system">
           <h2>Тип-система: Any, Unit, Nothing</h2>
+          <div class="study-card" data-review-id="kotlin-nothing-smartcast">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Почему после <code>val addr = company.address ?: fail("нет адреса")</code> тип <code>addr</code> — это <code>String</code>, а не <code>String?</code>, хотя <code>fail</code> ничего не возвращает?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>У <code>fail</code> возвращаемый тип <code>Nothing</code> — нижний тип без значений, означающий «функция не вернёт управление нормально». Компилятор знает, что после <code>Nothing</code>-ветки код недостижим, поэтому правая часть Elvis не даёт <code>null</code>, и весь результат сужается до non-null <code>String</code>. По той же причине <code>throw</code> (тип <code>Nothing</code>) совместим с любым ожидаемым типом.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Три специальных типа формируют вершину и дно иерархии Kotlin и регулярно появляются на собеседованиях — особенно <code>Nothing</code>, который многие знают только по названию.</p>
 
           <p class="subhead">Any</p>
@@ -344,6 +409,22 @@ val value = map["key"] ?: error("Ключ не найден")</code></pre>
 
         <section class="section" id="extensions-inline">
           <h2>Extension-функции, inline и операторные конвенции</h2>
+          <div class="study-card" data-review-id="kotlin-extension-static-dispatch">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Объявлены <code>fun A.who()</code> и <code>fun B.who()</code> при <code>B : A</code>. Для <code>val ref: A = B()</code> вызов <code>ref.who()</code> вернёт «A» или «B» и почему?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Вернёт «A». Extension компилируется в статический метод с приёмником первым аргументом, поэтому резолюция статическая — по объявленному типу переменной (<code>A</code>), а не по рантайм-классу (<code>B</code>). Extension'ы не участвуют в полиморфизме. Отдельное следствие: если у класса есть метод-член с той же сигнатурой, член всегда побеждает extension.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p class="subhead">Extension'ы — статическая диспетчеризация</p>
           <p>Extension-функция не модифицирует класс и не имеет доступа к его <code>private</code>-членам. Компилятор превращает её в <strong>статический метод</strong>, где приёмник передаётся первым аргументом. Отсюда два следствия: резолюция статическая — по объявленному типу переменной, а не по рантайм-классу; если у класса есть метод-член с той же сигнатурой, <strong>член всегда победит</strong>.</p>
           <div class="code-label">Extensions.kt</div>
@@ -428,6 +509,22 @@ println(triple(5))   // 15 — вызов через invoke без явного 
 
         <section class="section" id="scope-fns">
           <h2>Scope-функции: let / run / with / apply / also</h2>
+          <div class="study-card" data-review-id="kotlin-scope-choose">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Нужно вычислить число из объекта. Почему <code>val n = sb.apply { length }</code> вернёт не длину, а сам <code>StringBuilder</code> — и какую функцию взять вместо <code>apply</code>?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p><code>apply</code> возвращает сам приёмник, а не результат лямбды, поэтому значение блока (<code>length</code>) отбрасывается и тип-вывод молча проглатывает ошибку. Когда считаете значение <em>из</em> объекта — берите функцию, возвращающую результат лямбды: <code>let</code>/<code>run</code>/<code>with</code>. <code>apply</code> и <code>also</code> возвращают объект и нужны для настройки и side-эффектов в цепочке.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p>Пять функций различаются по двум осям: как они ссылаются на объект (<code>this</code> — неявный приёмник vs аргумент <code>it</code>) и что возвращают (сам объект vs результат лямбды). Понимание этих осей снимает большую часть путаницы.</p>
           <div class="table-wrap">
             <table>
@@ -670,6 +767,22 @@ fun main() {
 
         <section class="section" id="interop">
           <h2>Интероп с Java: коллекции, SAM и аннотации</h2>
+          <div class="study-card" data-review-id="kotlin-list-mutation-leak">
+            <div class="study-card-top">
+              <span class="study-label">Перед чтением</span>
+              <span class="study-state" data-study-state>к повторению сегодня</span>
+            </div>
+            <p class="study-question">Вы отдали Kotlin <code>List&lt;String&gt;</code> (от <code>listOf</code>) в Java-метод, который вызывает <code>list.add(...)</code>. Почему это компилируется, но падает в рантайме?</p>
+            <details class="study-answer">
+              <summary>Показать разбор</summary>
+              <div class="ans"><p>Read-only <code>List</code> и <code>MutableList</code> различаются только на стороне Kotlin; на JVM оба отображаются в один <code>java.util.List</code>. Java видит обычный <code>java.util.List</code> со всеми мутирующими методами, и компилятор это не запретит. Под <code>listOf</code> лежит неизменяемый список, поэтому <code>add</code> бросает <code>UnsupportedOperationException</code> в рантайме. Защита — отдавать в Java явную копию (<code>ArrayList(list)</code>) или документировать контракт.</p></div>
+            </details>
+            <div class="study-actions" aria-label="Запланировать повторение">
+              <button class="study-btn" type="button" data-review-result="again">Ещё раз</button>
+              <button class="study-btn" type="button" data-review-result="good">Через 3 дня</button>
+              <button class="study-btn" type="button" data-review-result="easy">Через неделю</button>
+            </div>
+          </div>
           <p class="subhead">SAM-конвертация</p>
           <p>Java API полон функциональных интерфейсов (<em>Single Abstract Method</em>): <code>Runnable</code>, <code>Callable</code>, <code>Comparator</code>, слушатели в Android. Kotlin позволяет передавать лямбду туда, где ожидается SAM-интерфейс — компилятор автоматически оборачивает её в анонимный класс-реализацию. Если лямбда не захватывает переменные из внешнего контекста, анонимный объект <strong>создаётся один раз</strong> и переиспользуется.</p>
           <div class="code-label">SAM.kt</div>
@@ -1186,7 +1299,7 @@ fun main() {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/glossary.js?v=20260621-13"></script>
-  <script src="../assets/app.js?v=20260621-13"></script>
+  <script src="../assets/glossary.js?v=20260621-16"></script>
+  <script src="../assets/app.js?v=20260621-16"></script>
 </body>
 </html>
