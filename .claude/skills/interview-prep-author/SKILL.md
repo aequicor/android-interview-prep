@@ -1,16 +1,14 @@
 ---
 name: interview-prep-author
 description: >-
-  Author and extend technical interview-prep study material — especially the Android
-  interview-prep site in this project (an index.html + site/pages/*.html multi-page
-  guide with a shared style.css / app.js). Use this skill whenever the user wants to add
-  a new topic page, expand or refine an existing section, build a study guide / "методичка",
-  or produce consistent learning content with diagrams, comparison tables, Kotlin code
-  examples, Q&A cards, timestamped video cards and cited sources. Trigger for requests like
-  "добавь страницу про X", "расширь раздел Y", "сделай новую тему для сайта подготовки",
-  "напиши конспект по Z", "собери методичку", or any interview-prep content work — even if
-  the user doesn't say the word "skill". Research the facts first, then build from the
-  templates, then run the review checklist.
+  Use when a request creates or changes Android interview-prep content in this repo:
+  add a new глава/page, expand or rewrite a параграф, assemble a методичка/конспект,
+  add Q&A cards, Kotlin examples, sources, video cards, comparison tables, Mermaid
+  diagrams, or fix page authoring/navigation. This skill owns the site/page contract:
+  HTML skeleton, `data-page`/TOPICS wiring, component snippets, single-level параграфы,
+  code escaping, `.ytcard` videos, Mermaid placement, sources, and the review checklist.
+  Do not use it for pure prose polishing without page markup; use tech-author and
+  ru-humanizer instead.
 ---
 
 # Interview Prep Author

@@ -1,12 +1,13 @@
 ---
 name: ru-humanizer
 description: >
-  Чистит русскоязычный текст от признаков ИИ-генерации и канцелярита,
-  переписывает в живой человеческий стиль с сохранением смысла и фактов.
-  Использовать, когда пользователь просит "убрать ИИ-стиль", "очеловечить",
-  "сделать живым", "убрать канцелярит/воду", отредактировать сгенерированный
-  текст или присылает текст с шаблонными связками и просит переписать.
-  НЕ использовать для кода, таблиц и технических спецификаций.
+  Use when a request touches Russian prose style: "убрать ИИ-стиль", "очеловечить",
+  "сделать живым", "убрать канцелярит/воду", "почистить от штампов", or rewrite an
+  obviously generated draft. This skill rewrites prose into a human-sounding Russian
+  technical style while preserving facts, terms, numbers, and meaning. Use it as the
+  final style pass after writing or editing Russian content. Do not use it to rewrite
+  code, tables, API signatures, or technical specifications; only polish the surrounding
+  prose.
 ---
 
 # ru-humanizer

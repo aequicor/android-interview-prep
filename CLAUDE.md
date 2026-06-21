@@ -2,21 +2,30 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## AUTO-LOAD: skill contracts (auto-imported into context)
+## Skill Routing (No Auto-Load)
 
-The skill contracts below are pulled into context **automatically** at session start via Claude Code's `@`-import — their full text is already loaded, so you do **not** need to open them with Read. They are always on for **every request** involving content (new pages, section edits, study material, конспекты, методички), even when the user doesn't say "use the skill".
+Do **not** preload `.claude/skills/**` at session start. The core contracts are summarized
+here so routine requests can start from `CLAUDE.md`; load a skill only when the user's task
+matches its YAML `description` or explicitly names it. When a skill triggers, read only its
+`SKILL.md` and the referenced files needed for the current task.
 
-@.claude/skills/interview-prep-author/SKILL.md
-@.claude/skills/interview-prep-author/references/components.md
-@.claude/skills/tech-author/SKILL.md
-@.claude/skills/infographic-author/SKILL.md
-@.claude/skills/ru-humanizer/SKILL.md
-
-What each governs — the four skills compose: `interview-prep-author` (the first two imports) governs the markup (HTML skeleton, components, nav wiring — *where* a diagram goes), `tech-author` governs the writing (factual accuracy + no AI markers in prose and captions), `infographic-author` governs the visualization itself (*is* the diagram good), and `ru-humanizer` governs the Russian prose style (human-sounding, no AI markers).
-
-Only the contracts above are auto-imported. Their deeper `references/` (fact-discipline, ai-markers, completeness, diagram-types, design-system, anti-slop, the review-checklists) are **not** — pull those with Read when a task actually needs them.
-
-> Note: `@`-import is a Claude Code feature. The `AGENTS.md` mirror (for Codex) keeps the plain "read these files" instruction instead — don't copy these `@` lines there.
+- `interview-prep-author` — use for Android interview-prep pages and study material:
+  new/edited главы, параграфы, Q&A, Kotlin code examples, comparison tables, video cards,
+  Mermaid diagrams, sources, or page/navigation wiring. It owns the markup contract:
+  thin chapter pages, `data-page`/`TOPICS` consistency, single-level параграфы, existing
+  components, escaped code, `.ytcard` videos, Mermaid placement, and the page checklist.
+- `tech-author` — use for technical prose: writing, expanding, fact-checking, or removing
+  AI markers from explanations, captions, chapters, конспекты, and методички. It owns
+  factual discipline and depth: verify API names, signatures, versions, numbers, defaults,
+  and deprecated status; write at Middle+/Senior level with mechanisms, edge cases,
+  trade-offs, failure modes, and follow-up questions.
+- `infographic-author` — use when creating, choosing, reviewing, or fixing diagrams and
+  infographics. It owns visual quality: choose the type by the task, prefer Mermaid for
+  standard flow/sequence/state/class diagrams, use semantic CSS-token colors, keep the
+  diagram restrained, accessible, readable in both themes, and free of visual AI markers.
+- `ru-humanizer` — use for Russian prose polishing: remove AI-style turns and канцелярит
+  while preserving facts, terms, and technical meaning. It is a style pass for prose, not
+  a tool for rewriting code, tables, or technical specifications.
 
 ## What this is
 
@@ -88,9 +97,13 @@ Edits to `.html`/`.css`/`.js` show up on reload (mind the cache-busting note bel
 - **TOC + scrollspy**: `buildTOC` auto-generates the right-hand TOC from `.section > h2` headings — one link per **параграф** (single-level; no `<h3>` sub-level) — and tracks the active one via `IntersectionObserver`. Content only appears in the TOC if wrapped in `<section class="section">` with a real `<h2>`.
 - **Theming**: all colors are CSS custom properties on `:root` (dark) overridden by `[data-theme="light"]` in `site/assets/style.css`. Use the variables (`--accent`, `--panel`, `--text`, `--border`, …), never literal colors, so both themes stay correct.
 
-## Authoring / extending content — use the skill
+## Authoring / Extending Content — On Demand
 
-When the task is to **add a глава, expand a параграф, or write study content**, four skills are the authoritative spec — read them first rather than reinventing markup, prose, or diagrams. `interview-prep-author` governs the *markup*, `tech-author` governs the *writing*, `infographic-author` governs the *diagrams/infographics*, and `ru-humanizer` governs *Russian prose style*.
+When the task is to **add a глава, expand a параграф, or write study content**, use the
+skill-routing section above to decide which skill(s) to load. Do not load every contract
+up front. `interview-prep-author` governs the *markup*, `tech-author` governs the *writing*,
+`infographic-author` governs the *diagrams/infographics*, and `ru-humanizer` governs
+*Russian prose style*.
 
 Markup (`interview-prep-author`):
 - `.claude/skills/interview-prep-author/SKILL.md` — the mandatory page skeleton, workflow (research facts first → build from templates → run the checklist), and the navigation-wiring steps.
@@ -113,7 +126,7 @@ Visuals (`infographic-author`) — apply when designing, adding, or fixing any d
 Russian style (`ru-humanizer`) — apply as the last pass over any Russian prose you wrote or edited, on top of `tech-author`:
 - `.claude/skills/ru-humanizer/SKILL.md` — how to strip AI-style and канцелярит so the text reads as human-written (this is the whole skill — no `references/`).
 
-The hard rules from that skill that, if violated, break rendering:
+Hard rendering rules:
 - **Escape `<`, `>`, `&`** inside `<code>`/`<pre>` as `&lt; &gt; &amp;` — otherwise Kotlin generics (`List&lt;T&gt;`) are parsed as HTML tags.
 - **Mermaid blocks have no leading indentation** (directive starts at column 0); quote node labels containing `(){}:,<`.
 - **Videos use the `.ytcard` link card, never `<iframe>`** — some videos block embedding (error 153); the card always works and opens YouTube at a timestamp.
