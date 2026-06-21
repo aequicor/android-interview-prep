@@ -84,10 +84,10 @@ const INTERVIEW_TEST_QUESTIONS = [
     sectionId: "solid",
     question: "Во ViewModel внутри конструктора создаётся `RetrofitClient.create()` и конкретный `UserRepositoryImpl`. Какая проблема здесь важнее всего для собеса?",
     options: [
-      "Класс нарушает инкапсуляцию, потому что Retrofit лучше хранить в `companion object`.",
+      "Проблема только в том, что Retrofit создаётся заново на каждый экран; если сделать его singleton, архитектура станет нормальной.",
       "ViewModel жёстко зависит от детали реализации: зависимость нельзя заменить fake-ом, а тест полезет в сеть.",
-      "Такой код всегда создаёт memory leak, потому что Retrofit держит Activity.",
-      "Проблемы нет: ViewModel должна сама знать, откуда брать данные."
+      "Достаточно вынести `RetrofitClient.create()` в `UserRepositoryImpl`, даже если сама ViewModel продолжит создавать `UserRepositoryImpl` руками.",
+      "Это допустимо, если ViewModel не хранит `Context`: зависимость от конкретного репозитория не влияет на тесты."
     ],
     answer: 1,
     gap: "DIP, DI и тестируемость зависимостей.",
@@ -105,10 +105,10 @@ const INTERVIEW_TEST_QUESTIONS = [
     sectionId: "interop",
     question: "Java-метод без nullability-аннотаций возвращает `String`, а Kotlin видит результат как platform type `String!`. Какой ответ безопаснее?",
     options: [
-      "Kotlin автоматически считает такой тип non-null, поэтому NPE невозможен.",
+      "Присвоить в `String` можно, значит Kotlin уже гарантирует non-null и дополнительная проверка не нужна.",
       "Это тип с неизвестной nullability: на границе с Java значение нужно проверить или явно принять риск.",
-      "Platform type всегда превращается в `String?`, иначе код не скомпилируется.",
-      "Нужно заменить все Java-вызовы на `lateinit`, чтобы компилятор не ругался."
+      "Лучше сразу привести к `String?` через `as String?`: так компилятор сам найдёт все места, где Java может вернуть null.",
+      "Достаточно поставить `!!` в одном месте после Java-вызова: дальше значение считается проверенным для всех будущих вызовов этого API."
     ],
     answer: 1,
     gap: "Null-safety на Java/Kotlin-границе.",
@@ -116,6 +116,26 @@ const INTERVIEW_TEST_QUESTIONS = [
     refs: [
       { topicId: "kotlin", sectionId: "null-safety", label: "Kotlin → Null-safety" },
       { topicId: "kotlin", sectionId: "interop", label: "Kotlin → Java interop" }
+    ]
+  },
+  {
+    id: "kotlin-lateinit-check",
+    level: "Middle+",
+    area: "Kotlin",
+    topicId: "kotlin",
+    sectionId: "null-safety",
+    question: "В классе есть `lateinit var presenter: Presenter`. Как корректно проверить, что свойство уже инициализировано?",
+    options: [
+      "`if (::presenter.isInitialized) presenter.attach()` — через property reference, без вызова функции.",
+      "`if (presenter != null) presenter.attach()` — `lateinit` всё равно nullable под капотом.",
+      "`if (presenter.isInitialized()) presenter.attach()` — у объекта появляется метод проверки.",
+      "`if (::presenter.get() != null) presenter.attach()` — getter безопасно вернёт null до первой инициализации."
+    ],
+    answer: 0,
+    gap: "Точный синтаксис проверки `lateinit`.",
+    explain: "`lateinit`-свойство non-nullable, поэтому проверка через `!= null` не выражает контракт. Kotlin даёт property reference: `::presenter.isInitialized`. Если прочитать свойство раньше присваивания, будет `UninitializedPropertyAccessException`.",
+    refs: [
+      { topicId: "kotlin", sectionId: "null-safety", label: "Kotlin → Null-safety" }
     ]
   },
   {
@@ -139,6 +159,26 @@ const INTERVIEW_TEST_QUESTIONS = [
     ]
   },
   {
+    id: "kotlin-scope-apply-let",
+    level: "Middle+",
+    area: "Kotlin",
+    topicId: "kotlin",
+    sectionId: "scope-fns",
+    question: "Нужно создать объект, настроить его свойства в блоке и вернуть сам объект: `User().___ { name = value }`. Какая scope-функция подходит и почему?",
+    options: [
+      "`apply`: внутри блок получает receiver `this`, а наружу возвращается исходный объект.",
+      "`let`: внутри объект доступен как `it`, а наружу всегда возвращается исходный объект.",
+      "`also`: внутри блок получает receiver `this`, а наружу возвращается результат последней строки.",
+      "`run`: внутри объект доступен как `it`, а наружу возвращается исходный объект."
+    ],
+    answer: 0,
+    gap: "Scope-функции: receiver/аргумент и возвращаемое значение.",
+    explain: "`apply` читается как настройка объекта: блок работает с receiver `this`, а результатом всей цепочки остаётся сам receiver. `let`/`run` возвращают результат блока, `also` возвращает receiver, но передаёт его как `it`, поэтому чаще подходит для логирования и побочных действий.",
+    refs: [
+      { topicId: "kotlin", sectionId: "scope-fns", label: "Kotlin → Scope-функции" }
+    ]
+  },
+  {
     id: "activity-process-death",
     level: "Middle+",
     area: "Платформа Android",
@@ -149,7 +189,7 @@ const INTERVIEW_TEST_QUESTIONS = [
       "ViewModel переживает и поворот, и process death; ошибка точно в `onResume()`.",
       "Поворот проверяет только configuration change. Для process death нужен `SavedStateHandle`, `onSaveInstanceState` или постоянное хранилище.",
       "`onDestroy()` гарантированно вызывается перед убийством процесса, значит фильтр нужно сохранять там.",
-      "Фильтр нужно хранить в singleton, тогда процесс восстановит его автоматически."
+      "Достаточно писать фильтр в поле ViewModel из `onStop()`: при восстановлении процесса Android вернёт тот же экземпляр ViewModel."
     ],
     answer: 1,
     gap: "Разница между configuration change и process death.",
@@ -165,16 +205,16 @@ const INTERVIEW_TEST_QUESTIONS = [
     area: "Платформа Android",
     topicId: "fragment",
     sectionId: "fragment-lifecycle",
-    question: "Во Fragment подписка на Flow обновляет binding после `onDestroyView()`, и приложение падает. Как исправлять корень проблемы?",
+    question: "Во Fragment Flow собирают с lifecycle самого Fragment. Экран ушёл в back stack: `onDestroyView()` уже вызван, но новый emit пытается обновить старый binding и падает. Какая правка исправляет причину?",
     options: [
-      "Подписываться на `this` как `LifecycleOwner`, потому что Fragment живёт дольше view.",
-      "Использовать `viewLifecycleOwner` и запускать сбор в lifecycle view, а binding очищать в `onDestroyView()`.",
-      "Сделать binding static, чтобы он переживал пересоздание view.",
-      "Перенести всю подписку в `onAttach()`, пока Fragment ещё не отрисован."
+      "Оставить подписку на `this`: Fragment живёт дольше View, поэтому binding тоже будет доступен.",
+      "Собирать Flow в `viewLifecycleOwner.lifecycleScope` через `repeatOnLifecycle(...)`, а binding очищать в `onDestroyView()`.",
+      "Перенести сбор в `fragment.lifecycleScope` и добавить `repeatOnLifecycle(STARTED)`: lifecycle Fragment сам совпадёт со сроком жизни binding.",
+      "Очищать binding в `onStop()`, а подписку оставить прежней: после `onStop()` новых emit уже не будет."
     ],
     answer: 1,
-    gap: "Два lifecycle у Fragment и срок жизни view.",
-    explain: "У Fragment есть lifecycle самого Fragment и отдельный lifecycle его view. UI-подписки должны жить ровно столько же, сколько view, иначе они держат старый binding и стреляют после уничтожения разметки.",
+    gap: "Fragment lifecycle vs view lifecycle: `viewLifecycleOwner`.",
+    explain: "Проблема не в Flow, а во владельце lifecycle. Fragment может жить без View в back stack, поэтому подписка на lifecycle Fragment переживает `onDestroyView()` и трогает мёртвый binding. UI-сбор привязывают к `viewLifecycleOwner` в `onViewCreated()`, а binding чистят в `onDestroyView()`.",
     refs: [
       { topicId: "fragment", sectionId: "fragment-lifecycle", label: "Fragment → Два lifecycle" },
       { topicId: "fragment", sectionId: "failure-modes", label: "Fragment → Failure modes" }
@@ -188,10 +228,10 @@ const INTERVIEW_TEST_QUESTIONS = [
     sectionId: "choose",
     question: "Нужно гарантированно выгрузить накопленные логи, можно подождать сеть и зарядку, точное время не важно. Что выбрать?",
     options: [
-      "Foreground service: пользователь не обязан видеть работу, но так надёжнее.",
+      "Foreground service: если работа важная, можно показать техническую нотификацию и держать процесс до конца выгрузки.",
       "WorkManager с constraints: работа отложенная, гарантированная и переживает перезапуск.",
-      "AlarmManager exact alarm: он лучше для любой фоновой задачи.",
-      "Обычный `Thread` из `Application`, потому что процесс всё равно останется жив."
+      "AlarmManager exact alarm: поставить будильник на ближайшее окно, а сеть и зарядку проверить внутри callback.",
+      "JobScheduler напрямую: он тоже умеет constraints, поэтому WorkManager здесь лишний слой и ничего не добавляет."
     ],
     answer: 1,
     gap: "Выбор WorkManager / FGS / AlarmManager.",
@@ -209,9 +249,9 @@ const INTERVIEW_TEST_QUESTIONS = [
     sectionId: "anr",
     question: "В `onClick` синхронно читается большой файл, экран зависает, иногда прилетает ANR. Что здесь происходит?",
     options: [
-      "Looper сам перенесёт чтение файла в фон, если операция долгая.",
+      "`Handler.post { readFile() }` решит проблему, потому что работа станет асинхронной относительно клика.",
       "Main thread занят блокирующим I/O, очередь сообщений не обрабатывается, кадры и input ждут.",
-      "ANR возникает только от бесконечного цикла, файловый I/O не считается.",
+      "Проблема в StrictMode: в release он выключен, поэтому реального ANR от файлового I/O не будет.",
       "Проблема решается заменой `Handler` на `HandlerThread`, даже если чтение всё ещё запускается из `onClick` на Main."
     ],
     answer: 1,
@@ -231,9 +271,9 @@ const INTERVIEW_TEST_QUESTIONS = [
     question: "Поле `@Volatile var counter = 0` инкрементируют из нескольких потоков через `counter++`. Почему результат всё равно может быть неверным?",
     options: [
       "`@Volatile` даёт видимость, но `counter++` остаётся read-modify-write из нескольких операций без атомарности.",
-      "`@Volatile` работает только для `Boolean`, а для `Int` игнорируется JVM.",
-      "Проблема только в Android: на обычной JVM `counter++` с volatile атомарен.",
-      "Нужно заменить `var` на `val`, и инкремент станет потокобезопасным."
+      "`@Volatile` делает атомарными только чтение и запись поля, поэтому надо заменить `counter++` на `counter = counter + 1`.",
+      "Проблема исчезнет, если читать `counter` в локальную переменную перед инкрементом: volatile-гарантия уже сработала.",
+      "Нужно добавить `@Synchronized` только на getter: инкремент начнёт выполняться под монитором."
     ],
     answer: 0,
     gap: "Visibility vs atomicity в Java/Kotlin memory model.",
@@ -252,9 +292,9 @@ const INTERVIEW_TEST_QUESTIONS = [
     question: "`ThreadPoolExecutor` создан с `corePoolSize = 4`, `maximumPoolSize = 20` и неограниченной очередью. Почему под нагрузкой потоков всё равно может остаться 4?",
     options: [
       "При неограниченной очереди новые задачи встают в queue после заполнения core, поэтому пулу не нужно расти до maximum.",
-      "`maximumPoolSize` работает только у `ScheduledExecutorService`.",
-      "JVM запрещает создавать больше потоков, чем ядер CPU.",
-      "Пул растёт только если задачи бросают исключения."
+      "`maximumPoolSize` сработает первым: executor всегда добирает потоки до maximum, а очередь использует только после этого.",
+      "Пул не растёт, потому что `keepAliveTime` по умолчанию равен нулю и запрещает создавать non-core потоки.",
+      "Чтобы пул рос до 20, достаточно вызвать `prestartAllCoreThreads()`: это запускает и core, и maximum workers."
     ],
     answer: 0,
     gap: "Модель роста ThreadPoolExecutor и роль очереди.",
@@ -272,10 +312,10 @@ const INTERVIEW_TEST_QUESTIONS = [
     sectionId: "launch-async",
     question: "В коде два сетевых запроса запускают так: `val a = async { loadA() }.await(); val b = async { loadB() }.await()`. Почему параллелизма почти нет?",
     options: [
-      "`async` всегда запускается лениво, пока не вызвать `start()`.",
+      "`async` параллелит только CPU-задачи; сетевые suspend-функции внутри него всё равно выполняются последовательно.",
       "Первый `await()` сразу ждёт завершения первой корутины, и только потом создаётся вторая.",
-      "Сетевые запросы нельзя запускать в корутинах, нужен только `Thread`.",
-      "`async` работает параллельно только внутри `GlobalScope`."
+      "Нужно добавить `CoroutineStart.LAZY`: ленивый старт гарантирует, что оба запроса начнутся одновременно на первом `await()`.",
+      "Нужно обернуть оба вызова в `withContext(Dispatchers.IO)`: тогда порядок `await()` уже не влияет на параллелизм."
     ],
     answer: 1,
     gap: "`async/await` и реальный параллелизм.",
@@ -294,8 +334,8 @@ const INTERVIEW_TEST_QUESTIONS = [
     options: [
       "Отмена у корутин кооперативная: в CPU-цикле нужны `isActive`, `ensureActive()` или `yield()`.",
       "Нужно завернуть цикл в `NonCancellable`, чтобы отмена стала жёсткой.",
-      "Нужно ловить `CancellationException` и игнорировать её.",
-      "Корутины вообще не поддерживают отмену CPU-задач."
+      "Нужно ловить `CancellationException` внутри цикла и продолжать: после catch корутина узнает об отмене.",
+      "Нужно переключить цикл на `Dispatchers.Default`: этот dispatcher сам прерывает CPU-задачу при отмене scope."
     ],
     answer: 0,
     gap: "Кооперативная отмена и suspension points.",
@@ -312,10 +352,10 @@ const INTERVIEW_TEST_QUESTIONS = [
     sectionId: "flow",
     question: "ViewModel отправляет навигацию через `MutableStateFlow<NavEvent?>`. Иногда повторная навигация не приходит. Что здесь концептуально не так?",
     options: [
-      "StateFlow подходит только для списков, но не для sealed classes.",
+      "Проблема только в nullable-типе: если заменить `NavEvent?` на non-null sealed class с `Idle`, StateFlow станет событийным потоком.",
       "StateFlow представляет состояние и конфлейтит значения; одноразовые события лучше отдавать через SharedFlow/Channel.",
-      "Нужно заменить `NavEvent` на `String`, тогда StateFlow перестанет конфлейтить.",
-      "Нужно сделать `replay = 10` у StateFlow."
+      "Нужно после каждого события писать `null`: это полностью гарантирует доставку двух одинаковых навигаций подряд.",
+      "Нужно хранить в StateFlow список уже отправленных событий и чистить его после обработки в UI."
     ],
     answer: 1,
     gap: "StateFlow vs SharedFlow для состояния и событий.",
@@ -326,6 +366,47 @@ const INTERVIEW_TEST_QUESTIONS = [
     ]
   },
   {
+    id: "stateflow-update-atomic",
+    level: "Senior",
+    area: "Flow",
+    topicId: "coroutines",
+    sectionId: "state-share-in",
+    question: "Во ViewModel несколько корутин могут увеличить счётчик внутри `_uiState: MutableStateFlow<UiState>`. Какая запись безопаснее для read-modify-write?",
+    options: [
+      "`_uiState.update { it.copy(count = it.count + 1) }` — обновление делается атомарно через текущий value.",
+      "`val current = _uiState.value; _uiState.value = current.copy(count = current.count + 1)` — одно чтение value убирает гонку.",
+      "`_uiState.emit(_uiState.value.copy(count = _uiState.value.count + 1))` — suspend-вызов делает read-modify-write последовательным.",
+      "`withContext(Dispatchers.Main) { _uiState.value = _uiState.value.copy(...) }` — Main dispatcher сам превращает обновление в CAS."
+    ],
+    answer: 0,
+    gap: "Атомарное обновление `MutableStateFlow` через `update`.",
+    explain: "`value = value.copy(...)` распадается на чтение и запись; две корутины могут прочитать один и тот же старый state и потерять инкремент. `update { ... }` повторяет функцию поверх актуального значения и закрывает этот read-modify-write сценарий.",
+    refs: [
+      { topicId: "coroutines", sectionId: "state-share-in", label: "Корутины и Flow → StateFlow / SharedFlow" }
+    ]
+  },
+  {
+    id: "flow-state-in-signature",
+    level: "Middle+",
+    area: "Flow",
+    topicId: "coroutines",
+    sectionId: "state-share-in",
+    question: "Репозиторий отдаёт `Flow<List<Item>>`, а UI нужен `StateFlow<List<Item>>` во ViewModel. Какая запись ближе к канону для UI-state?",
+    options: [
+      "`repo.items().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())`.",
+      "`MutableStateFlow(emptyList()).also { repo.items().onEach(it::emit) }`, потому что StateFlow лучше создавать руками.",
+      "`repo.items().shareIn(viewModelScope, emptyList(), SharingStarted.Eagerly)`.",
+      "`repo.items().stateIn(GlobalScope, SharingStarted.Eagerly, emptyList())`, чтобы поток жил независимо от экрана."
+    ],
+    answer: 0,
+    gap: "Синтаксис `stateIn` и параметры `scope / started / initialValue`.",
+    explain: "`stateIn` превращает cold Flow в StateFlow: нужен scope жизни, стратегия старта и initial value. Для UI-state часто берут `viewModelScope + WhileSubscribed(5_000)`, чтобы пережить короткий разрыв подписки на повороте и остановить upstream при реальном уходе с экрана.",
+    refs: [
+      { topicId: "coroutines", sectionId: "state-share-in", label: "Корутины и Flow → StateFlow / SharedFlow" },
+      { topicId: "architecture", sectionId: "reactive", label: "Архитектура и DI → Реактивный UI-state" }
+    ]
+  },
+  {
     id: "compose-recomposition",
     level: "Senior",
     area: "Compose",
@@ -333,10 +414,10 @@ const INTERVIEW_TEST_QUESTIONS = [
     sectionId: "recomposition",
     question: "Composable получает большой mutable-объект параметром, внутри меняется поле, но UI не обновляется предсказуемо. Какая мысль ближе к правде?",
     options: [
-      "Compose отслеживает любые поля любых объектов через reflection.",
+      "Если объект передан параметром, Compose увидит любую мутацию его полей при следующем кадре через snapshot-систему.",
       "Рекомпозиция опирается на чтение Compose State и стабильность параметров; обычная мутация поля может остаться невидимой.",
-      "Нужно вызвать `notifyDataSetChanged()`, как в RecyclerView.",
-      "Любой `data class` автоматически observable, даже если внутри mutable list."
+      "Нужно завернуть объект в `remember { mutableStateOf(obj) }`, а затем менять поля внутри него: wrapper отследит внутренние мутации.",
+      "Достаточно сделать класс `data class`: Compose начнёт наблюдать за изменениями его `MutableList`-полей."
     ],
     answer: 1,
     gap: "Compose state, стабильность и границы рекомпозиции.",
@@ -354,16 +435,80 @@ const INTERVIEW_TEST_QUESTIONS = [
     sectionId: "effects",
     question: "`LaunchedEffect(userId)` грузит профиль. Что произойдёт, когда `userId` изменится?",
     options: [
-      "Старый effect продолжит работу, новый не запустится, потому что `LaunchedEffect` стартует один раз.",
+      "Старый effect продолжит работу, а новый запустится параллельно: ключ нужен только для `remember`.",
       "Старая корутина будет отменена, и effect перезапустится с новым ключом.",
-      "Compose выполнит загрузку синхронно на UI thread до конца композиции.",
-      "Ключ влияет только на `remember`, но не на `LaunchedEffect`."
+      "Effect не перезапустится, но внутри него автоматически обновится захваченный `userId` через `rememberUpdatedState`.",
+      "Смена ключа пересоздаст весь composable и все его родительские state, поэтому загрузка начнётся с чистого экрана."
     ],
     answer: 1,
     gap: "Ключи side-effect API в Compose.",
     explain: "Ключи задают срок жизни effect. Когда ключ меняется, Compose отменяет старую корутину и запускает новую, связанную с актуальной композицией.",
     refs: [
       { topicId: "compose", sectionId: "effects", label: "Jetpack Compose → Side effects" }
+    ]
+  },
+  {
+    id: "compose-collect-lifecycle",
+    level: "Middle+",
+    area: "Compose",
+    topicId: "compose",
+    sectionId: "viewmodel",
+    question: "Composable получает `StateFlow<UiState>` из ViewModel. Какой вызов обычно выбирают на Android, чтобы сбор учитывал lifecycle экрана?",
+    options: [
+      "`val state by vm.state.collectAsStateWithLifecycle()`.",
+      "`val state = vm.state.collect()` прямо в теле composable.",
+      "`val state by vm.state.collectAsState()` — lifecycle здесь не нужен, композиции достаточно.",
+      "`val state by remember { mutableStateOf(vm.state.value) }` — текущее значение уже есть, подписка не нужна."
+    ],
+    answer: 0,
+    gap: "Lifecycle-aware сбор Flow в Compose.",
+    explain: "`collectAsStateWithLifecycle()` конвертирует Flow в Compose State и останавливает сбор, когда lifecycle ниже активного состояния. Прямой `collect` в теле composable нельзя вызвать, а обычный `collectAsState()` не учитывает Android lifecycle.",
+    refs: [
+      { topicId: "compose", sectionId: "viewmodel", label: "Jetpack Compose → ViewModel и UDF" },
+      { topicId: "coroutines", sectionId: "flow-compose", label: "Корутины и Flow → Flow + Compose" }
+    ]
+  },
+  {
+    id: "compose-derived-state-syntax",
+    level: "Middle+",
+    area: "Compose",
+    topicId: "compose",
+    sectionId: "state",
+    question: "Кнопку «наверх» нужно показывать только когда `listState.firstVisibleItemIndex > 0`. Какая запись уменьшает лишние рекомпозиции при скролле?",
+    options: [
+      "`val showButton by remember { derivedStateOf { listState.firstVisibleItemIndex > 0 } }`.",
+      "`val showButton = remember { listState.firstVisibleItemIndex > 0 }`.",
+      "`val showButton = mutableStateOf(listState.firstVisibleItemIndex > 0)` без чтения `listState` дальше.",
+      "`val showButton = listState.firstVisibleItemIndex > 0` в верхнем composable, чтобы Compose сам всё закешировал."
+    ],
+    answer: 0,
+    gap: "Синтаксис `derivedStateOf` для производного Compose-state.",
+    explain: "`derivedStateOf` полезен, когда исходный state меняется часто, а результат нужен реже. При скролле индекс может обновляться много раз, но булевый флаг меняется только на переходе `0 ↔ больше 0`; именно это и стоит подписать на рекомпозицию.",
+    refs: [
+      { topicId: "compose", sectionId: "state", label: "Jetpack Compose → State" },
+      { topicId: "compose", sectionId: "perf", label: "Jetpack Compose → Производительность" }
+    ]
+  },
+  {
+    id: "compose-hilt-savedstate",
+    level: "Senior",
+    area: "Architecture + Compose",
+    topicId: "architecture",
+    sectionId: "navigation",
+    question: "В Navigation Compose есть destination `composable<ProfileRoute>`. Как получить Hilt ViewModel и аргумент `userId` через `SavedStateHandle`?",
+    options: [
+      "В composable: `val vm: ProfileViewModel = hiltViewModel()`. Во ViewModel: `@HiltViewModel` + `@Inject constructor(savedStateHandle: SavedStateHandle, ...)`, аргумент читать через `savedStateHandle.toRoute<ProfileRoute>()` или `get`.",
+      "В composable создать `SavedStateHandle()` руками и передать его в `ProfileViewModel(...)` через `remember`.",
+      "Передать `userId` обычным `String` в конструктор `@HiltViewModel`; Hilt сам поймёт, что это navigation argument.",
+      "Получить `backStackEntry.toRoute<ProfileRoute>()` в composable и передать `userId` в метод `vm.init(userId)` при каждой композиции."
+    ],
+    answer: 0,
+    gap: "Compose + Hilt + `SavedStateHandle`: кто создаёт ViewModel и откуда берутся nav-аргументы.",
+    explain: "В Compose с Hilt ViewModel не создают руками: `hiltViewModel()` берёт Hilt-backed factory и текущий `ViewModelStoreOwner` навигационной записи. `SavedStateHandle` Hilt/Navigation передают в конструктор, а аргументы destination читаются из него по ключу или через type-safe `toRoute<T>()`.",
+    refs: [
+      { topicId: "architecture", sectionId: "navigation", label: "Архитектура и DI → Navigation Compose" },
+      { topicId: "architecture", sectionId: "state-survival", label: "Архитектура и DI → SavedStateHandle" },
+      { topicId: "compose", sectionId: "viewmodel", label: "Jetpack Compose → ViewModel и UDF" }
     ]
   },
   {
@@ -375,9 +520,9 @@ const INTERVIEW_TEST_QUESTIONS = [
     question: "Список скроллится рывками. В `onBind` синхронно декодируют bitmap и форматируют большие строки. Что это за класс проблемы?",
     options: [
       "Jank: работа на пути кадра не укладывается в бюджет, поэтому кадры пропускаются.",
-      "Memory leak: все рывки UI всегда вызваны утечкой Activity.",
-      "StrictMode crash: система обязана немедленно завершить приложение.",
-      "Проблема GPU: CPU-код в `onBind` не влияет на скролл."
+      "Memory leak: старые bitmap удерживаются адаптером, поэтому каждый bind обязан запускать GC и кадр пропадает.",
+      "StrictMode: он ловит тяжёлый bind и в production завершает приложение, поэтому пользователь видит рывки.",
+      "GPU bottleneck: раз кадр рисуется на RenderThread, CPU-код в `onBind` не может быть основной причиной."
     ],
     answer: 0,
     gap: "Путь кадра, jank и работа на Main.",
@@ -417,9 +562,9 @@ const INTERVIEW_TEST_QUESTIONS = [
     question: "Клиент не получил ответ на запрос создания платежа и хочет автоматически повторить HTTP-запрос. Какой вопрос нужно задать первым?",
     options: [
       "Есть ли у операции идемпотентный ключ или другой контракт, который защитит от двойного создания?",
-      "Можно ли заменить POST на GET, чтобы сервер точно создал платёж?",
-      "Подключён ли gzip: без него ретраи HTTP запрещены.",
-      "Какой цвет у кнопки оплаты: это влияет на retry policy."
+      "Можно ли повторять запрос только при timeout, но не при HTTP 500: так мы точно не создадим дубль.",
+      "Можно ли сделать локальный retry только один раз: одиночный повтор безопасен даже без серверной дедупликации.",
+      "Можно ли заменить POST на PUT без изменения серверного контракта: сам HTTP-метод сделает операцию идемпотентной."
     ],
     answer: 0,
     gap: "Идемпотентность, retries и контракт API.",
@@ -438,9 +583,9 @@ const INTERVIEW_TEST_QUESTIONS = [
     question: "В приложении лежит AES-ключ строкой в коде, им шифруют токены. Почему это плохая защита?",
     options: [
       "Строковый ключ можно извлечь из APK/памяти; ключи нужно хранить через Android Keystore или не держать секрет на клиенте.",
-      "AES нельзя использовать на Android вообще.",
-      "Проблема только в том, что строка слишком короткая; если сделать её длиннее, всё безопасно.",
-      "R8 гарантированно превратит строку в недоступный секрет."
+      "Проблема только в режиме AES: если перейти на GCM, строковый ключ в APK уже не будет секретом.",
+      "Достаточно включить minify и resource shrinking: после обфускации строку нельзя надёжно восстановить.",
+      "Если токен дополнительно хранить в SharedPreferences, hardcoded AES-ключ становится приемлемым компромиссом."
     ],
     answer: 0,
     gap: "Модель угроз клиента и Android Keystore.",
@@ -458,16 +603,38 @@ const INTERVIEW_TEST_QUESTIONS = [
     sectionId: "coroutines",
     question: "JVM-тест ViewModel падает: `Dispatchers.Main` не инициализирован, а `delay(1000)` реально ждёт секунду. Какой набор ближе к нормальному решению?",
     options: [
-      "`Thread.sleep(1000)` и запуск теста только на эмуляторе.",
+      "`runBlocking`, реальный `Dispatchers.IO` и `Thread.sleep(1000)`: так тест ближе к production.",
       "`runTest`, `TestDispatcher`, подмена Main через `Dispatchers.setMain()`/JUnit rule и виртуальное время.",
-      "`GlobalScope.launch` внутри теста, чтобы корутина жила независимо.",
-      "Отключить все suspend-функции и тестировать только callbacks."
+      "`runTest` без подмены Main: виртуальное время само создаст Android Main dispatcher в JVM.",
+      "`StandardTestDispatcher` только для репозитория, а ViewModel оставить на реальном Main: так меньше тестового кода."
     ],
     answer: 1,
     gap: "Тестирование корутин и виртуальное время.",
     explain: "`runTest` даёт TestScope и виртуальное время, а MainDispatcherRule подменяет Android Main в JVM-тесте. Это делает тест быстрым и детерминированным.",
     refs: [
       { topicId: "testing", sectionId: "coroutines", label: "Тестирование → Корутины" },
+      { topicId: "coroutines", sectionId: "testing", label: "Корутины и Flow → Тестирование" }
+    ]
+  },
+  {
+    id: "testing-debounce-virtual-time",
+    level: "Middle+",
+    area: "Тесты",
+    topicId: "testing",
+    sectionId: "coroutines",
+    question: "В `runTest` нужно проверить `debounce(300)`: первый ввод отменяется, второй проходит. Чем промотать ожидание без реального sleep?",
+    options: [
+      "`advanceTimeBy(301)` и затем при необходимости `advanceUntilIdle()`.",
+      "`delay(301)` внутри production ViewModel: тестовый scheduler увидит только задержки, которые запущены в самом тесте.",
+      "`Thread.sleep(301)` после второго ввода: debounce использует реальный clock, даже если тест в `runTest`.",
+      "`advanceUntilIdle()` сразу после первого ввода: он промотает debounce и всё равно оставит шанс отменить первый запрос вторым вводом."
+    ],
+    answer: 0,
+    gap: "Виртуальное время в тестах корутин: `advanceTimeBy` / `advanceUntilIdle`.",
+    explain: "`runTest` даёт тестовый scheduler: `advanceTimeBy` двигает виртуальные часы, а не ждёт стеночное время. Для debounce обычно перешагивают окно и затем дают очереди выполниться через `advanceUntilIdle()` или `runCurrent()`.",
+    refs: [
+      { topicId: "testing", sectionId: "coroutines", label: "Тестирование → Корутины" },
+      { topicId: "testing", sectionId: "flow", label: "Тестирование → Flow" },
       { topicId: "coroutines", sectionId: "testing", label: "Корутины и Flow → Тестирование" }
     ]
   },
@@ -480,9 +647,9 @@ const INTERVIEW_TEST_QUESTIONS = [
     question: "Почему Kotlin-проект часто мигрирует annotation processing с kapt на KSP, если библиотека это поддерживает?",
     options: [
       "KSP работает с Kotlin symbols напрямую, обычно уменьшает слой Java-stub и лучше ложится на Kotlin-код.",
-      "KSP автоматически переписывает архитектуру приложения на multi-module.",
-      "KSP нужен только для XML layouts и не связан с annotation processing.",
-      "kapt и KSP полностью одинаковы, разница только в названии Gradle-задачи."
+      "KSP полностью убирает кодогенерацию: процессоры начинают работать в runtime через reflection.",
+      "KSP ускорит любой processor автоматически, даже если библиотека официально поддерживает только kapt.",
+      "KSP нужен в основном для Java-only проектов; Kotlin-коду он даёт те же Java-stubs, что и kapt."
     ],
     answer: 0,
     gap: "kapt vs KSP и стоимость кодогенерации.",
@@ -501,9 +668,9 @@ const INTERVIEW_TEST_QUESTIONS = [
     question: "Просят спроектировать offline-first ленту. Какой каркас ответа звучит наиболее зрело?",
     options: [
       "UI всегда читает локальную БД как single source of truth, сеть синхронизирует БД, ошибки/конфликты и freshness показываются явно.",
-      "UI всегда читает только сеть; если сети нет, показываем пустой экран.",
-      "Все ответы API храним в singleton Map, потому что так быстрее Room.",
-      "Offline-first означает, что синхронизация не нужна: пользователь сам перезапустит приложение."
+      "UI сначала ждёт сеть, а если запрос упал — читает Room. Так данные свежее, а offline всё равно есть.",
+      "UI читает Room, но синхронизация идёт только вручную по pull-to-refresh: фоновый outbox не нужен.",
+      "UI читает локальный cache как SSOT, но stale/error/conflict состояния скрываем, чтобы не усложнять экран."
     ],
     answer: 0,
     gap: "Offline-first: source of truth, синхронизация и конфликты.",
@@ -521,10 +688,10 @@ const INTERVIEW_TEST_QUESTIONS = [
     sectionId: "star",
     question: "Интервьюер просит рассказать про конфликт с коллегой. Какой ответ ближе к STAR?",
     options: [
-      "Коллега был неправ, но я быстро всё решил, подробности не важны.",
+      "Я объясню, почему коллега был неправ, и сразу перейду к выводу: теперь я заранее фиксирую договорённости.",
       "Кратко: контекст и задача, что именно сделал я, чем закончилось и какой вывод забрал в процесс.",
-      "Нужно пересказать всю историю команды с самого начала проекта.",
-      "Лучше сказать, что конфликтов никогда не было."
+      "Расскажу всю историю команды: кто с кем спорил, как менялись требования и почему конфликт вообще возник.",
+      "Скажу, что конфликтов не было, но были сложные обсуждения: так ответ звучит позитивнее и безопаснее."
     ],
     answer: 1,
     gap: "STAR-структура и конкретика в behavioral-ответах.",
@@ -1478,6 +1645,35 @@ function hasInterviewAnswer(state, qid){
 function interviewAnswer(state, qid){
   return hasInterviewAnswer(state, qid) ? Number(state.answers[qid]) : null;
 }
+function interviewHash(s){
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++){
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+function shuffledInterviewOptions(q, ordinal){
+  const items = q.options.map((text, idx) => ({ text, idx }));
+  let seed = interviewHash(q.id || q.question || "");
+  for (let i = items.length - 1; i > 0; i--){
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    const j = seed % (i + 1);
+    const tmp = items[i];
+    items[i] = items[j];
+    items[j] = tmp;
+  }
+  if (Number.isInteger(ordinal) && items.length){
+    const target = (ordinal + Math.floor(ordinal / items.length)) % items.length;
+    const current = items.findIndex(opt => opt.idx === q.answer);
+    if (current >= 0 && current !== target){
+      const tmp = items[target];
+      items[target] = items[current];
+      items[current] = tmp;
+    }
+  }
+  return items;
+}
 function formatInline(s){
   return esc(s).replace(/`([^`]+)`/g, "<code>$1</code>");
 }
@@ -1574,6 +1770,7 @@ function setupInterviewTest(){
 function renderInterviewTest(state){
   const result = interviewResult(state);
   const total = result.questions.length;
+  const questionWord = pluralRu(total, "вопрос", "вопроса", "вопросов");
   const progress = Math.round(result.answered / total * 100);
   const statusText = state.finished
     ? `${result.correct}/${total} верно`
@@ -1586,11 +1783,11 @@ function renderInterviewTest(state){
       <div class="quiz-intro">
         <div>
           <span class="study-label">Интервью-тест</span>
-          <p class="quiz-title">22 вопроса по ключевым главам</p>
+          <p class="quiz-title">${total} ${questionWord} по ключевым главам</p>
           <p class="quiz-copy">Формат специально похож на быстрый скрининг: короткий вопрос, четыре варианта, один лучший ответ.</p>
         </div>
         <div class="quiz-meters" aria-label="Статус теста">
-          <div class="study-meter"><b>${total}</b><span>вопроса</span></div>
+          <div class="study-meter"><b>${total}</b><span>${questionWord}</span></div>
           <div class="study-meter"><b>${result.answered}</b><span>отвечено</span></div>
           <div class="study-meter"><b>${state.finished ? result.misses.length : "—"}</b><span>пробелов</span></div>
         </div>
@@ -1626,13 +1823,14 @@ function renderInterviewQuestion(q, i, state){
         <span class="quiz-state">${esc(stateText)}</span>
       </div>
       <div class="quiz-options">
-        ${q.options.map((opt, idx) => renderInterviewOption(q, idx, opt, selected, done)).join("")}
+        ${shuffledInterviewOptions(q, i).map(opt => renderInterviewOption(q, opt, selected, done)).join("")}
       </div>
       ${done ? renderInterviewFeedback(q, selected) : ""}
     </div>
   `;
 }
-function renderInterviewOption(q, idx, opt, selected, done){
+function renderInterviewOption(q, opt, selected, done){
+  const idx = opt.idx;
   const isSelected = selected === idx;
   const isCorrect = idx === q.answer;
   const cls = ["quiz-option"];
@@ -1643,7 +1841,7 @@ function renderInterviewOption(q, idx, opt, selected, done){
     <label class="${cls.join(" ")}">
       <input type="radio" name="${esc(q.id)}" value="${idx}" data-qid="${esc(q.id)}" data-quiz-answer${isSelected ? " checked" : ""}${done ? " disabled" : ""}>
       <span class="quiz-radio" aria-hidden="true"></span>
-      <span>${formatInline(opt)}</span>
+      <span>${formatInline(opt.text)}</span>
     </label>
   `;
 }
