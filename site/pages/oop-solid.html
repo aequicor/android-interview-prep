@@ -17,7 +17,7 @@
   <title>ООП и SOLID · Android-собес</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-6">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
 <body data-page="oop-solid">
@@ -120,6 +120,27 @@ fun log(error: Throwable) { /* overload #2 */ }</code></pre>
             <div class="ans">
               <p>В Kotlin классы и их методы закрыты для наследования по умолчанию: чтобы наследоваться или переопределять, нужны явные <code>open</code> или <code>abstract</code>. Это прямое следование совету Джошуа Блоха из Effective Java — «Design and document for inheritance or else prohibit it». Наследование от класса, который под него не проектировали, легко ломает инварианты, как только меняется база: это и есть проблема хрупкого базового класса.</p>
               <p>Final-по-умолчанию заставляет автора осознанно открыть точку расширения, а не оставить её открытой случайно. Интерфейсы и их методы при этом всегда открыты — там переопределение реализации это нормальный сценарий. Практический эффект простой: язык подталкивает к композиции и явным контрактам вместо случайной иерархии.</p>
+            <p class="run-hint">Запусти: классика хрупкого базового класса — добавили 3 элемента, а счётчик показывает 6. <code>addAll</code> базы внутри зовёт <code>add</code>, а наследник его переопределил. Именно это ловит <code>final</code> по умолчанию.</p>
+            <div class="runnable">
+<code class="kt-run">// базу не проектировали под наследование: addAll внутри зовёт add
+open class CountingBag {
+    var added = 0
+        private set
+    open fun add(x: Int) { added++ }
+    open fun addAll(xs: List&lt;Int&gt;) { xs.forEach { add(it) } }  // self-вызов add
+}
+
+// наследник «логично» считает свои добавления — и ломает базу
+class LoudBag : CountingBag() {
+    override fun add(x: Int) { println("add $x"); super.add(x) }
+    override fun addAll(xs: List&lt;Int&gt;) { xs.forEach { add(it) }; super.addAll(xs) }
+}
+
+fun main() {
+    val bag = LoudBag()
+    bag.addAll(listOf(1, 2, 3))
+    println("added = ${bag.added}")  // 6, а не 3 — двойной учёт через self-call базы
+}</code>
             </div>
           </details>
         </section>
@@ -178,6 +199,27 @@ flowchart TB
             <div class="ans">
               <p>Делегирование <code>class A(b: B) : I by b</code> генерирует методы интерфейса <code>I</code>, которые просто зовут тот же метод на сохранённой ссылке <code>b</code>. Делегат <code>b</code> ничего не знает об обёртке <code>A</code>. Если <code>A</code> переопределяет метод <code>m()</code>, а другой метод делегата внутри себя вызывает <code>m()</code> — вызовется реализация из <code>b</code>, а не <code>override</code> из <code>A</code>. Это не «динамический» self, как при наследовании: <code>b</code> и <code>A</code> — разные объекты, и виртуальная диспетчеризация идёт по <code>b</code>.</p>
               <p>Эффект: попытка частично подменить поведение через <code>override</code> поверх делегата молча не работает для внутренних self-вызовов делегата. Это фундаментальное отличие композиции-делегирования от наследования и причина, почему <code>by</code> нельзя использовать как замену наследованию там, где нужен переопределяемый self-call.</p>
+            <p class="run-hint">Запусти: <code>greet()</code> на обёртке зовёт <code>name()</code>, но печатает «Базовый» — self-вызов делегата идёт по самому делегату, а не по <code>override</code> обёртки.</p>
+            <div class="runnable">
+<code class="kt-run">interface Greeter {
+    fun name(): String
+    fun greet(): String
+}
+
+class Base : Greeter {
+    override fun name() = "Базовый"
+    override fun greet() = "Привет, ${name()}!"   // self-вызов внутри делегата
+}
+
+class Loud(origin: Greeter) : Greeter by origin {
+    override fun name() = "ГРОМКИЙ"               // пытаемся подменить
+}
+
+fun main() {
+    val g = Loud(Base())
+    println(g.name())    // ГРОМКИЙ — прямой вызов попал в override
+    println(g.greet())   // forward в делегат; его name() остался "Базовый"
+}</code>
             </div>
           </details>
         </section>
@@ -298,6 +340,27 @@ class UserRepositoryImpl(private val api: Api) : UserRepository {
             <div class="ans">
               <p>Формально (по Лисков — Уинг): подтип не должен усиливать предусловия и не должен ослаблять постусловия и инварианты базового типа; история-свойство и набор исключений тоже должны сохраняться. Усиление предусловия — это когда подтип принимает более узкий набор входов, чем база. Скажем, базовый метод принимал любой <code>String</code>, а <code>override</code> бросает исключение на пустой строке. Клиент, который писался под контракт базы, законно передаёт значение, валидное для базового типа, — и ломается.</p>
               <p>Клиент при этом не делает ничего «неправильного»: он опирается на опубликованный контракт. Поэтому LSP — про поведенческую совместимость, а не только про совпадение сигнатур: компилятор подстановку разрешит, а рантайм-контракт сломается. Параметры в <code>override</code> должны быть контравариантны, а возвращаемый тип — ковариантен (Kotlin поддерживает ковариантность возвращаемого типа при переопределении).</p>
+            <p class="run-hint">Запусти: клиент написан под контракт <code>Validator</code> (принимает любую строку) и падает на подтипе, который усилил предусловие до «непустая».</p>
+            <div class="runnable">
+<code class="kt-run">open class Validator {
+    // контракт базы: принимает любую строку, включая пустую
+    open fun normalize(input: String): String = input.trim()
+}
+
+class StrictValidator : Validator() {
+    override fun normalize(input: String): String {
+        require(input.isNotEmpty()) { "пустая строка запрещена" }  // усилили предусловие
+        return input.trim()
+    }
+}
+
+// клиент писался под Validator и законно передаёт ""
+fun process(v: Validator): String = v.normalize("")
+
+fun main() {
+    println("Validator: ok, вернул [${process(Validator())}]")          // ok, []
+    println("Strict: ${runCatching { process(StrictValidator()) }}")   // Failure: контракт сломан
+}</code>
             </div>
           </details>
         </section>
@@ -361,6 +424,24 @@ class UserRepositoryImpl(private val api: Api) : UserRepository {
             <div class="ans">
               <p>Kotlin <code>object</code> компилируется в Java-класс со статическим финальным полем <code>INSTANCE</code>, которое создаётся в статическом инициализаторе. Потокобезопасность здесь даёт сама JVM: загрузка и инициализация класса проходят под блокировкой инициализации класса (JLS §12.4), поэтому <code>INSTANCE</code> создаётся ровно один раз и виден всем потокам без ручной синхронизации. Это идиома holder / lazy-class-init.</p>
               <p>Double-checked locking с <code>volatile</code> нужен в другом случае — когда singleton зависит от рантайм-параметра (например, требует <code>Context</code>) и поэтому не может быть простым <code>object</code>: пишется ручная фабрика <code>getInstance(context)</code>. Без <code>volatile</code> и двойной проверки тут возможны гонка и публикация недоинициализированного объекта. То есть <code>object</code> закрывает беспараметрический случай, а DCL — параметризованный; знать надо оба, потому что на Android параметризованный singleton встречается постоянно.</p>
+            <p class="run-hint">Запусти: 50 потоков лезут к <code>object</code> одновременно — инициализатор печатает «init» ровно один раз, и все видят один и тот же экземпляр.</p>
+            <div class="runnable">
+<code class="kt-run">import java.util.concurrent.Executors
+import java.util.concurrent.ConcurrentHashMap
+
+object Config {
+    init { println("init Config") }   // выполнится РОВНО один раз
+    val id = System.nanoTime()
+}
+
+fun main() {
+    val pool = Executors.newFixedThreadPool(8)
+    val seen = ConcurrentHashMap.newKeySet&lt;Long&gt;()
+    repeat(50) { pool.submit { seen.add(Config.id) } }  // гонка за первой инициализацией
+    pool.shutdown()
+    Thread.sleep(200)
+    println("разных экземпляров: ${seen.size}")  // 1 — JVM сериализует class-init
+}</code>
             </div>
           </details>
         </section>
@@ -780,6 +861,7 @@ fun makeAllFly(birds: List&lt;Flyable&gt;) = birds.forEach { it.fly() }</code></
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/app.js?v=20260621-3"></script>
+  <script src="../assets/glossary.js?v=20260621-6"></script>
+  <script src="../assets/app.js?v=20260621-6"></script>
 </body>
 </html>

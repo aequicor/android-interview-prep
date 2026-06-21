@@ -17,7 +17,7 @@
   <title>Алгоритмы и структуры данных · Android-собес</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="../assets/style.css?v=20260621-6">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
 <body data-page="algorithms">
@@ -62,7 +62,24 @@ flowchart LR
             <div class="ic">⚠️</div>
             <div class="bd"><strong>Ловушка на собесе.</strong> <code>list.contains(x)</code> внутри цикла по той же коллекции — это скрытый <code>O(n²)</code>. На 10 000 элементов это 100 млн операций на главном потоке → ANR. Решение: заменить <code>List</code> на <code>HashSet</code> для проверки вхождения и получить <code>O(n)</code>.</div>
           </div>
-          <details class="qa"><summary>Почему амортизированный <code>O(1)</code> у <code>ArrayList.add</code> держится только при росте ёмкости в разы, а при росте на константу (+10) деградирует до <code>O(n)</code>? <span class="q-badge">★</span></summary><div class="ans"><p>Соберём суммарную работу копирования за <code>n</code> вставок и поделим на <code>n</code> — это и есть амортизация методом агрегации. При росте в <code>k</code> раз (<code>k&gt;1</code>) расширения случаются всё реже, а их стоимость складывается в геометрическую прогрессию <code>n + n/k + n/k² + …</code>, которая сходится к константе на <code>n</code>. Итого суммарно <code>O(n)</code>, на вставку — <code>O(1)</code>.</p><p>А теперь растим на фиксированную добавку <code>c</code>. Расширение происходит каждые <code>c</code> вставок, и копировать приходится всё больше: <code>c + 2c + 3c + …</code> — арифметическая прогрессия, то есть <code>~O(n²/c)</code> суммарно, или <code>O(n)</code> на одну вставку. Вот почему <code>java.util.ArrayList</code> растёт в 1.5 раза (<code>oldCapacity + (oldCapacity &gt;&gt; 1)</code>), а не на десяток ячеек: стоимость очередного копирования обязана быть пропорциональна уже накопленной работе, чтобы «размазаться» по серии, а не догонять её.</p></div></details>
+          <details class="qa"><summary>Почему амортизированный <code>O(1)</code> у <code>ArrayList.add</code> держится только при росте ёмкости в разы, а при росте на константу (+10) деградирует до <code>O(n)</code>? <span class="q-badge">★</span></summary><div class="ans"><p>Соберём суммарную работу копирования за <code>n</code> вставок и поделим на <code>n</code> — это и есть амортизация методом агрегации. При росте в <code>k</code> раз (<code>k&gt;1</code>) расширения случаются всё реже, а их стоимость складывается в геометрическую прогрессию <code>n + n/k + n/k² + …</code>, которая сходится к константе на <code>n</code>. Итого суммарно <code>O(n)</code>, на вставку — <code>O(1)</code>.</p><p>А теперь растим на фиксированную добавку <code>c</code>. Расширение происходит каждые <code>c</code> вставок, и копировать приходится всё больше: <code>c + 2c + 3c + …</code> — арифметическая прогрессия, то есть <code>~O(n²/c)</code> суммарно, или <code>O(n)</code> на одну вставку. Вот почему <code>java.util.ArrayList</code> растёт в 1.5 раза (<code>oldCapacity + (oldCapacity &gt;&gt; 1)</code>), а не на десяток ячеек: стоимость очередного копирования обязана быть пропорциональна уже накопленной работе, чтобы «размазаться» по серии, а не догонять её.</p>
+            <p class="run-hint">Считаем суммарную работу копирования на 50 000 вставок: рост ×2 даёт ~линию, рост на +10 — на порядки больше.</p>
+            <div class="runnable">
+<code class="kt-run">fun totalCopies(n: Int, grow: (Int) -&gt; Int): Long {
+    var cap = 1; var size = 0; var copied = 0L
+    repeat(n) {
+        if (size == cap) { copied += size; cap = grow(cap) }  // расширение копирует всё, что есть
+        size++
+    }
+    return copied
+}
+
+fun main() {
+    val n = 50_000
+    println("рост ×2:  скопировано ${totalCopies(n) { it * 2 }} (≈ $n, линейно)")
+    println("рост +10: скопировано ${totalCopies(n) { it + 10 }} (≈ n²/10, квадратично)")
+}</code>
+            </div></div></details>
         </section>
 
         <section class="section" id="complexity-table">
@@ -83,7 +100,27 @@ flowchart LR
             </table>
           </div>
           <p style="font-size:.86rem;opacity:.75">* — амортизированно (с учётом редких расширений). «сред.» — средний случай при равномерном хешировании.</p>
-          <details class="qa"><summary>В таблице у <code>HashMap</code> стоит средний <code>O(1)</code> — но почему даже без коллизий это не настоящий <code>O(1)</code>, и от чего реально зависит константа? <span class="q-badge">★</span></summary><div class="ans"><p>«Средний <code>O(1)</code>» опирается на гипотезу простого равномерного хеширования: ключи раскладываются по бакетам ровно, средняя длина цепочки <code>n/capacity</code> (это и есть load factor) держится около константы. Слово «средний» тут несёт всю нагрузку — это ожидание при допущениях, а не гарантия худшего случая.</p><p>Что ломает эти допущения на практике: плохой <code>hashCode</code> сваливает всё в один бакет — и получается <code>O(n)</code> (или <code>O(log n)</code> после treeify). Сам вызов <code>hashCode</code> и <code>equals</code> для длинного ключа уже <code>O(длины ключа)</code>, а не <code>O(1)</code> — для строки на сотню символов это заметно. Плюс амортизированная цена rehash при росте. Поэтому строгая формулировка — <em>amortized expected <code>O(1)</code> при равномерном хешировании</em>. Подвох на собесе именно в этом «среднем»: злонамеренный или просто кривой <code>hashCode</code> превращает мапу в список.</p></div></details>
+          <details class="qa"><summary>В таблице у <code>HashMap</code> стоит средний <code>O(1)</code> — но почему даже без коллизий это не настоящий <code>O(1)</code>, и от чего реально зависит константа? <span class="q-badge">★</span></summary><div class="ans"><p>«Средний <code>O(1)</code>» опирается на гипотезу простого равномерного хеширования: ключи раскладываются по бакетам ровно, средняя длина цепочки <code>n/capacity</code> (это и есть load factor) держится около константы. Слово «средний» тут несёт всю нагрузку — это ожидание при допущениях, а не гарантия худшего случая.</p><p>Что ломает эти допущения на практике: плохой <code>hashCode</code> сваливает всё в один бакет — и получается <code>O(n)</code> (или <code>O(log n)</code> после treeify). Сам вызов <code>hashCode</code> и <code>equals</code> для длинного ключа уже <code>O(длины ключа)</code>, а не <code>O(1)</code> — для строки на сотню символов это заметно. Плюс амортизированная цена rehash при росте. Поэтому строгая формулировка — <em>amortized expected <code>O(1)</code> при равномерном хешировании</em>. Подвох на собесе именно в этом «среднем»: злонамеренный или просто кривой <code>hashCode</code> превращает мапу в список.</p>
+            <p class="run-hint">Один и тот же объём данных: при <code>hashCode</code>-константе поиск тысяч ключей на порядки медленнее, чем при нормальном.</p>
+            <div class="runnable">
+<code class="kt-run">class Good(val id: Int) { override fun hashCode() = id
+    override fun equals(o: Any?) = o is Good &amp;&amp; o.id == id }
+class Bad(val id: Int)  { override fun hashCode() = 0   // всё валится в один бакет
+    override fun equals(o: Any?) = o is Bad &amp;&amp; o.id == id }
+
+fun &lt;T&gt; bench(keys: List&lt;T&gt;): Long {
+    val m = HashMap&lt;T, Int&gt;().apply { keys.forEachIndexed { i, k -&gt; put(k, i) } }
+    val t = System.nanoTime()
+    for (k in keys) m[k]                         // N поисков
+    return (System.nanoTime() - t) / 1_000_000
+}
+
+fun main() {
+    val n = 4000
+    println("хороший hashCode: ${bench((0 until n).map { Good(it) })} мс")
+    println("hashCode = 0:     ${bench((0 until n).map { Bad(it) })} мс")  // O(n) на поиск
+}</code>
+            </div></div></details>
         </section>
 
         <section class="section" id="list">
@@ -196,7 +233,21 @@ fun &lt;K, V&gt; lruCache(capacity: Int): LinkedHashMap&lt;K, V&gt; =
               </tbody>
             </table>
           </div>
-          <details class="qa"><summary><code>TreeMap</code> сравнивает ключи через <code>compareTo</code>/<code>Comparator</code> и игнорирует <code>equals</code>. К какому коварному багу это приводит, если <code>compareTo</code> несогласован с <code>equals</code>? <span class="q-badge">★</span></summary><div class="ans"><p><code>TreeMap</code> считает два ключа одним и тем же, если <code>compareTo</code> вернул <code>0</code> — и плевать, что говорит <code>equals</code>. Равенство определяется деревом поиска, а не контрактом объекта.</p><p>Классический капкан — <code>BigDecimal</code>: <code>BigDecimal("1.0").compareTo(BigDecimal("1.00")) == 0</code>, но <code>equals</code> у них <code>false</code>. В обычном <code>HashMap</code> это два разных ключа, а в <code>TreeMap</code> — один: <code>put</code> перезапишет «другой по equals» ключ, а <code>get</code>/<code>containsKey</code> могут не найти то, что в <code>HashMap</code> прекрасно лежит. Документация прямо предупреждает: такой <code>TreeMap</code> нарушает общий контракт <code>Map</code>, который определён в терминах <code>equals</code>. Вывод: <code>Comparator</code> для ключей <code>TreeMap</code> обязан быть <em>consistent with equals</em>, иначе карта тихо схлопывает или теряет записи.</p></div></details>
+          <details class="qa"><summary><code>TreeMap</code> сравнивает ключи через <code>compareTo</code>/<code>Comparator</code> и игнорирует <code>equals</code>. К какому коварному багу это приводит, если <code>compareTo</code> несогласован с <code>equals</code>? <span class="q-badge">★</span></summary><div class="ans"><p><code>TreeMap</code> считает два ключа одним и тем же, если <code>compareTo</code> вернул <code>0</code> — и плевать, что говорит <code>equals</code>. Равенство определяется деревом поиска, а не контрактом объекта.</p><p>Классический капкан — <code>BigDecimal</code>: <code>BigDecimal("1.0").compareTo(BigDecimal("1.00")) == 0</code>, но <code>equals</code> у них <code>false</code>. В обычном <code>HashMap</code> это два разных ключа, а в <code>TreeMap</code> — один: <code>put</code> перезапишет «другой по equals» ключ, а <code>get</code>/<code>containsKey</code> могут не найти то, что в <code>HashMap</code> прекрасно лежит. Документация прямо предупреждает: такой <code>TreeMap</code> нарушает общий контракт <code>Map</code>, который определён в терминах <code>equals</code>. Вывод: <code>Comparator</code> для ключей <code>TreeMap</code> обязан быть <em>consistent with equals</em>, иначе карта тихо схлопывает или теряет записи.</p>
+            <p class="run-hint">Те же два ключа <code>1.0</code> и <code>1.00</code>: в <code>HashMap</code> — две записи, в <code>TreeMap</code> — одна.</p>
+            <div class="runnable">
+<code class="kt-run">import java.math.BigDecimal
+
+fun main() {
+    val a = BigDecimal("1.0"); val b = BigDecimal("1.00")
+    println("equals: ${a == b}, compareTo: ${a.compareTo(b)}")  // false, но 0
+
+    val hash = HashMap&lt;BigDecimal, String&gt;().apply { put(a, "A"); put(b, "B") }
+    val tree = java.util.TreeMap&lt;BigDecimal, String&gt;().apply { put(a, "A"); put(b, "B") }
+    println("HashMap размер = ${hash.size}")  // 2: разные по equals
+    println("TreeMap размер = ${tree.size}")  // 1: compareTo==0 → ключ перезаписан
+}</code>
+            </div></div></details>
         </section>
 
         <section class="section" id="concurrent">
@@ -235,7 +286,21 @@ flowchart TB
             <div class="ic">⚠️</div>
             <div class="bd"><strong>Нюанс ConcurrentHashMap.</strong> Атомарны только отдельные операции. Связка «проверил-потом-положил» (<code>if (!map.containsKey(k)) map.put(k, v)</code>) — это гонка. Здесь нужны атомарные методы: <code>putIfAbsent()</code>, <code>computeIfAbsent()</code>, <code>merge()</code>. Ещё важная деталь: ключи/значения в нём <strong>не могут быть null</strong>.</div>
           </div>
-          <details class="qa"><summary>Почему итератор <code>ConcurrentHashMap</code> не бросает <code>ConcurrentModificationException</code> и зовётся weakly consistent, а итератор обычного <code>HashMap</code> — fail-fast? Что это значит на практике? <span class="q-badge">★</span></summary><div class="ans"><p>Итераторы <code>HashMap</code>/<code>ArrayList</code> — fail-fast: они держат счётчик структурных изменений <code>modCount</code> и на каждом <code>next()</code> сверяют его с ожидаемым. Любое изменение коллекции мимо самого итератора — даже из того же потока — ломает сверку и кидает <code>ConcurrentModificationException</code>. Это не гарантия безопасности, а ранний детектор багов; документация так и пишет — best-effort.</p><p>Итератор <code>ConcurrentHashMap</code> — weakly consistent: он обходит состояние на момент создания и <code>CME</code> не бросает никогда, но изменения, внесённые после старта итерации, может увидеть, а может и нет — формальной гарантии нет. На практике: <code>HashMap</code> нельзя трогать в обычном for-each (только через <code>iterator.remove()</code>, см. отдельный параграф ниже), а <code>ConcurrentHashMap</code> можно итерировать параллельно с записями и не ловить исключение — ценой того, что итерация видит «примерно текущее» состояние.</p></div></details>
+          <details class="qa"><summary>Почему итератор <code>ConcurrentHashMap</code> не бросает <code>ConcurrentModificationException</code> и зовётся weakly consistent, а итератор обычного <code>HashMap</code> — fail-fast? Что это значит на практике? <span class="q-badge">★</span></summary><div class="ans"><p>Итераторы <code>HashMap</code>/<code>ArrayList</code> — fail-fast: они держат счётчик структурных изменений <code>modCount</code> и на каждом <code>next()</code> сверяют его с ожидаемым. Любое изменение коллекции мимо самого итератора — даже из того же потока — ломает сверку и кидает <code>ConcurrentModificationException</code>. Это не гарантия безопасности, а ранний детектор багов; документация так и пишет — best-effort.</p><p>Итератор <code>ConcurrentHashMap</code> — weakly consistent: он обходит состояние на момент создания и <code>CME</code> не бросает никогда, но изменения, внесённые после старта итерации, может увидеть, а может и нет — формальной гарантии нет. На практике: <code>HashMap</code> нельзя трогать в обычном for-each (только через <code>iterator.remove()</code>, см. отдельный параграф ниже), а <code>ConcurrentHashMap</code> можно итерировать параллельно с записями и не ловить исключение — ценой того, что итерация видит «примерно текущее» состояние.</p>
+            <p class="run-hint">Один поток, никакой конкуренции: правка <code>HashMap</code> в обходе кидает <code>CME</code>, та же правка <code>ConcurrentHashMap</code> — нет.</p>
+            <div class="runnable">
+<code class="kt-run">import java.util.concurrent.ConcurrentHashMap
+
+fun main() {
+    val hash = HashMap(mapOf(1 to "a", 2 to "b"))
+    try { for ((k, _) in hash) hash[k + 100] = "x" }   // структурная правка в обходе
+    catch (e: ConcurrentModificationException) { println("HashMap: поймали CME") }
+
+    val conc = ConcurrentHashMap(mapOf(1 to "a", 2 to "b"))
+    for ((k, _) in conc) conc[k + 100] = "x"           // weakly consistent — не бросает
+    println("ConcurrentHashMap: обход прошёл, размер = ${conc.size}")
+}</code>
+            </div></div></details>
         </section>
 
         <section class="section" id="algorithms">
@@ -311,7 +376,16 @@ fun fibFast(n: Int): Long {
     repeat(n - 1) { val next = a + b; a = b; b = next }
     return b
 }</code></pre>
-          <details class="qa"><summary>Почему запись <code>(lo + hi) / 2</code> в бинарном поиске переполняется на больших индексах, а <code>lo + (hi - lo) / 2</code> эту проблему лечит, давая тот же результат? <span class="q-badge">★</span></summary><div class="ans"><p><code>lo</code> и <code>hi</code> — это <code>int</code>. На очень большом массиве, когда оба близки к <code>Integer.MAX_VALUE</code> (~2.1 млрд), сумма <code>lo + hi</code> вылезает за <code>int</code> и заворачивается в отрицательное число (знаковое переполнение в Java/Kotlin не бросает исключение, а считается по модулю 2³²). Деление даёт неверный отрицательный <code>mid</code> — и <code>ArrayIndexOutOfBoundsException</code>.</p><p>Запись <code>lo + (hi - lo) / 2</code> алгебраически равна <code>(lo + hi) / 2</code>, но промежуточное <code>(hi - lo)</code> — это размер диапазона, он не больше длины массива и в <code>int</code> помещается всегда. Переполнения нет. Знаменитый баг: по признанию Джошуа Блоха, он годами жил в <code>java.util.Arrays.binarySearch</code> и в учебниках. На JVM редко стреляет из-за лимита на размер массива, но как индикатор внимательности спрашивают почти всегда.</p></div></details>
+          <details class="qa"><summary>Почему запись <code>(lo + hi) / 2</code> в бинарном поиске переполняется на больших индексах, а <code>lo + (hi - lo) / 2</code> эту проблему лечит, давая тот же результат? <span class="q-badge">★</span></summary><div class="ans"><p><code>lo</code> и <code>hi</code> — это <code>int</code>. На очень большом массиве, когда оба близки к <code>Integer.MAX_VALUE</code> (~2.1 млрд), сумма <code>lo + hi</code> вылезает за <code>int</code> и заворачивается в отрицательное число (знаковое переполнение в Java/Kotlin не бросает исключение, а считается по модулю 2³²). Деление даёт неверный отрицательный <code>mid</code> — и <code>ArrayIndexOutOfBoundsException</code>.</p><p>Запись <code>lo + (hi - lo) / 2</code> алгебраически равна <code>(lo + hi) / 2</code>, но промежуточное <code>(hi - lo)</code> — это размер диапазона, он не больше длины массива и в <code>int</code> помещается всегда. Переполнения нет. Знаменитый баг: по признанию Джошуа Блоха, он годами жил в <code>java.util.Arrays.binarySearch</code> и в учебниках. На JVM редко стреляет из-за лимита на размер массива, но как индикатор внимательности спрашивают почти всегда.</p>
+            <p class="run-hint">При <code>lo</code> и <code>hi</code> у <code>Int.MAX_VALUE</code> наивная сумма уходит в минус, безопасная форма даёт верный индекс.</p>
+            <div class="runnable">
+<code class="kt-run">fun main() {
+    val lo = Int.MAX_VALUE - 2
+    val hi = Int.MAX_VALUE
+    println("(lo + hi) / 2      = ${(lo + hi) / 2}")    // переполнение → отрицательное
+    println("lo + (hi - lo) / 2 = ${lo + (hi - lo) / 2}")  // верное среднее
+}</code>
+            </div></div></details>
         </section>
 
         <section class="section" id="heap">
@@ -389,7 +463,37 @@ fun findKthLargest(nums: IntArray, k: Int): Int {
     return heap.peek()                          // на вершине — k-й по величине
 }</code></pre>
           <p>Та же куча решает <strong>слияние k отсортированных списков</strong> (Merge K Sorted Lists): кладём в кучу головы всех списков и на каждом шаге забираем минимум за <code>O(log k)</code> — итого <code>O(N log k)</code> вместо наивного <code>O(k·N)</code> (см. задачу в конце главы). На куче же стоят алгоритмы Дейкстры и Прима, планировщики задач и Huffman-кодирование.</p>
-          <details class="qa"><summary>Почему построение кучи из массива (<code>heapify</code>) — <code>O(n)</code>, хотя это «<code>n</code> элементов по <code>O(log n)</code> на просеивание»? <span class="q-badge">★</span></summary><div class="ans"><p>Интуиция «<code>n · log n</code>» считает по верхней границе для каждого узла, но она грубая. <code>heapify</code> идёт снизу вверх и просеивает вниз, а стоимость sift-down ограничена <em>высотой узла</em>, а не высотой всего дерева. Ключевой факт: листьев — половина узлов, и им просеивать некуда (0 работы); на уровне выше — четверть узлов с одним шагом; и так далее.</p><p>Сумма получается <code>Σ (n / 2^(h+1)) · h</code> по высотам <code>h</code>, а этот ряд сходится к константе, умноженной на <code>n</code> — то есть <code>O(n)</code>. Построение кучи целиком дешевле, чем <code>n</code> отдельных <code>offer</code> (которые как раз дали бы <code>O(n log n)</code>): просеивание вверх при вставке дороже, потому что большинство новых элементов оказывается у листьев и поднимается через всю высоту, а просеивание вниз при <code>heapify</code> для тех же листьев бесплатно.</p></div></details>
+          <details class="qa"><summary>Почему построение кучи из массива (<code>heapify</code>) — <code>O(n)</code>, хотя это «<code>n</code> элементов по <code>O(log n)</code> на просеивание»? <span class="q-badge">★</span></summary><div class="ans"><p>Интуиция «<code>n · log n</code>» считает по верхней границе для каждого узла, но она грубая. <code>heapify</code> идёт снизу вверх и просеивает вниз, а стоимость sift-down ограничена <em>высотой узла</em>, а не высотой всего дерева. Ключевой факт: листьев — половина узлов, и им просеивать некуда (0 работы); на уровне выше — четверть узлов с одним шагом; и так далее.</p><p>Сумма получается <code>Σ (n / 2^(h+1)) · h</code> по высотам <code>h</code>, а этот ряд сходится к константе, умноженной на <code>n</code> — то есть <code>O(n)</code>. Построение кучи целиком дешевле, чем <code>n</code> отдельных <code>offer</code> (которые как раз дали бы <code>O(n log n)</code>): просеивание вверх при вставке дороже, потому что большинство новых элементов оказывается у листьев и поднимается через всю высоту, а просеивание вниз при <code>heapify</code> для тех же листьев бесплатно.</p>
+            <p class="run-hint">Считаем шаги просеивания: у <code>heapify</code> их ≈ <code>n</code>, у <code>n</code> отдельных вставок — ≈ <code>n·log n</code>.</p>
+            <div class="runnable">
+<code class="kt-run">fun main() {
+    val n = 100_000
+    val data = IntArray(n) { (it * 31 + 7) % n }
+
+    // heapify снизу вверх: sift-down от последнего родителя к корню
+    val h = data.copyOf(); var heapifySteps = 0L
+    for (i in n / 2 - 1 downTo 0) {
+        var p = i
+        while (2 * p + 1 &lt; n) {
+            var c = 2 * p + 1
+            if (c + 1 &lt; n &amp;&amp; h[c + 1] &lt; h[c]) c++
+            if (h[p] &lt;= h[c]) break
+            h[p] = h[c].also { h[c] = h[p] }; p = c; heapifySteps++
+        }
+    }
+
+    // n вставок: каждая sift-up к корню
+    val a = IntArray(n); var size = 0; var insertSteps = 0L
+    for (x in data) {
+        a[size] = x; var i = size++;
+        while (i &gt; 0 &amp;&amp; a[(i - 1) / 2] &gt; a[i]) {
+            a[i] = a[(i - 1) / 2].also { a[(i - 1) / 2] = a[i] }; i = (i - 1) / 2; insertSteps++
+        }
+    }
+    println("heapify:    $heapifySteps шагов (≈ n = $n)")
+    println("n вставок:  $insertSteps шагов (заметно больше, ≈ n·log n)")
+}</code>
+            </div></div></details>
         </section>
 
         <section class="section" id="monotonic-stack">
@@ -411,7 +515,24 @@ fun dailyTemperatures(t: IntArray): IntArray {
     return res                              // не дождавшиеся остаются 0
 }</code></pre>
           <p>Каждый индекс кладётся и снимается со стека не более одного раза — отсюда <code>O(n)</code>, несмотря на вложенный <code>while</code>. Это тот же приём, что в задаче «Sliding Window Maximum» из блока задач выше: там монотонная <em>дека</em> (двусторонний вариант) держит индексы кандидатов на максимум окна. Если видите паттерн «ближайший больший/меньший» или «максимум на отрезке за один проход», почти наверняка нужен монотонный стек или дека.</p>
-          <details class="qa"><summary>Почему монотонный стек даёт <code>O(n)</code>, хотя внутри основного цикла стоит ещё один <code>while</code>, который вроде бы добавляет вложенность? <span class="q-badge">★</span></summary><div class="ans"><p>Считать сложность по «цикл в цикле = <code>O(n²)</code>» здесь нельзя — это ловушка поверхностного анализа. Нужен <strong>амортизированный</strong> учёт по элементам, а не по итерациям внутреннего цикла.</p><p>Каждый индекс попадает на стек ровно один раз (внешний цикл, один <code>addLast</code> на шаг) и снимается с него тоже не более одного раза (внутренний <code>while</code>, <code>removeLast</code>). Снятый элемент назад не возвращается. Значит суммарное число операций <code>removeLast</code> по всему алгоритму ограничено <code>n</code> — независимо от того, что на отдельном шаге внутренний <code>while</code> может крутануться несколько раз. Итого <code>2n</code> операций со стеком, то есть <code>O(n)</code>. Это та же логика, что у амортизированного <code>O(1)</code> у <code>ArrayList.add</code>: дорогие шаги редки и «оплачены» дешёвыми.</p></div></details>
+          <details class="qa"><summary>Почему монотонный стек даёт <code>O(n)</code>, хотя внутри основного цикла стоит ещё один <code>while</code>, который вроде бы добавляет вложенность? <span class="q-badge">★</span></summary><div class="ans"><p>Считать сложность по «цикл в цикле = <code>O(n²)</code>» здесь нельзя — это ловушка поверхностного анализа. Нужен <strong>амортизированный</strong> учёт по элементам, а не по итерациям внутреннего цикла.</p><p>Каждый индекс попадает на стек ровно один раз (внешний цикл, один <code>addLast</code> на шаг) и снимается с него тоже не более одного раза (внутренний <code>while</code>, <code>removeLast</code>). Снятый элемент назад не возвращается. Значит суммарное число операций <code>removeLast</code> по всему алгоритму ограничено <code>n</code> — независимо от того, что на отдельном шаге внутренний <code>while</code> может крутануться несколько раз. Итого <code>2n</code> операций со стеком, то есть <code>O(n)</code>. Это та же логика, что у амортизированного <code>O(1)</code> у <code>ArrayList.add</code>: дорогие шаги редки и «оплачены» дешёвыми.</p>
+            <p class="run-hint">Считаем все операции со стеком: при любом входе их ≤ <code>2n</code>, хотя внутри стоит вложенный <code>while</code>.</p>
+            <div class="runnable">
+<code class="kt-run">fun dailyTemps(t: IntArray): Long {
+    val res = IntArray(t.size); val stack = ArrayDeque&lt;Int&gt;(); var ops = 0L
+    for (i in t.indices) {
+        while (stack.isNotEmpty() &amp;&amp; t[i] &gt; t[stack.last()]) { res[stack.removeLast()] = 0; ops++ } // pop
+        stack.addLast(i); ops++                                                                       // push
+    }
+    return ops
+}
+
+fun main() {
+    val n = 10_000
+    val worst = IntArray(n) { it }       // строго возрастающий — вложенный while выталкивает максимум
+    println("n = $n,  операций со стеком = ${dailyTemps(worst)}  (≤ 2n = ${2 * n})")
+}</code>
+            </div></div></details>
         </section>
 
         <section class="section" id="kotlin-collections">
@@ -429,7 +550,21 @@ println(readOnly)                    // [1, 2, 3, 4] — read-only «не убе
           <p>Операции над <code>List</code>/<code>Iterable</code> — <strong>eager</strong>: каждый <code>map</code>/<code>filter</code> создаёт новый промежуточный список и проходит коллекцию целиком на каждом шаге. <code>Sequence</code> <strong>ленив</strong>: элементы текут по всей цепочке по одному, без промежуточных списков, а вычисление стартует только терминальной операцией (<code>toList</code>, <code>first</code>, <code>sum</code>). Выигрыш — на длинных цепочках над большими коллекциями и при коротком замыкании (<code>find</code>, <code>first</code>, <code>take</code> обрывают обход рано). На маленьких коллекциях <code>Sequence</code> проигрывает: ленивость добавляет накладные расходы, а экономия на промежуточных списках ничтожна. Правило: <em>большой объём + много операций + ранний выход → <code>Sequence</code></em>; иначе обычная коллекция.</p>
           <p class="subhead">ArrayDeque и ArrayDeque</p>
           <p>В Kotlin stdlib (с 1.4) есть свой <code>kotlin.collections.ArrayDeque</code> — кольцевой буфер на массиве, удобный и как стек (<code>addLast</code>/<code>removeLast</code>), и как очередь (<code>addLast</code>/<code>removeFirst</code>), с амортизированным <code>O(1)</code> с обоих концов. В отличие от <code>java.util.ArrayDeque</code>, он допускает <code>null</code>. Для LIFO/FIFO лучше брать именно дек, а не устаревший <code>Stack</code> или <code>LinkedList</code> (почему — см. вопрос в FAQ).</p>
-          <details class="qa"><summary>Цепочка <code>asSequence().map{}.filter{}.first()</code> и та же цепочка без <code>asSequence()</code> на списке из миллиона элементов — в чём разница по числу проходов и аллокаций? <span class="q-badge">★</span></summary><div class="ans"><p>Без <code>asSequence()</code> всё eager: <code>map</code> пройдёт весь миллион и создаст новый список на миллион, <code>filter</code> пройдёт его снова и создаст ещё один список, и только потом <code>first</code> возьмёт нулевой элемент. Два полных прохода и две аллокации списков на миллион — притом что нужен был один-единственный элемент.</p><p>С <code>asSequence()</code> цепочка ленивая и работает «по вертикали»: первый элемент проходит <code>map</code>, затем <code>filter</code>; если предикат прошёл, <code>first</code> сразу возвращает результат — и обход обрывается. В лучшем случае это один элемент через всю цепочку, ноль промежуточных списков. Вот почему <code>Sequence</code> особенно выигрывает там, где терминальная операция способна замкнуться рано (<code>first</code>, <code>find</code>, <code>take</code>): eager-версия всё равно материализует промежуточные коллекции целиком, ленивая — нет.</p></div></details>
+          <details class="qa"><summary>Цепочка <code>asSequence().map{}.filter{}.first()</code> и та же цепочка без <code>asSequence()</code> на списке из миллиона элементов — в чём разница по числу проходов и аллокаций? <span class="q-badge">★</span></summary><div class="ans"><p>Без <code>asSequence()</code> всё eager: <code>map</code> пройдёт весь миллион и создаст новый список на миллион, <code>filter</code> пройдёт его снова и создаст ещё один список, и только потом <code>first</code> возьмёт нулевой элемент. Два полных прохода и две аллокации списков на миллион — притом что нужен был один-единственный элемент.</p><p>С <code>asSequence()</code> цепочка ленивая и работает «по вертикали»: первый элемент проходит <code>map</code>, затем <code>filter</code>; если предикат прошёл, <code>first</code> сразу возвращает результат — и обход обрывается. В лучшем случае это один элемент через всю цепочку, ноль промежуточных списков. Вот почему <code>Sequence</code> особенно выигрывает там, где терминальная операция способна замкнуться рано (<code>first</code>, <code>find</code>, <code>take</code>): eager-версия всё равно материализует промежуточные коллекции целиком, ленивая — нет.</p>
+            <p class="run-hint">Считаем, сколько раз вызвался <code>map</code>, когда нужен лишь первый подходящий элемент: eager — миллион, sequence — единицы.</p>
+            <div class="runnable">
+<code class="kt-run">fun main() {
+    val data = (1..1_000_000).toList()
+
+    var eager = 0
+    data.map { eager++; it * 2 }.filter { it &gt; 4 }.first()        // map проходит весь список
+    println("eager .map вызван:    $eager раз")
+
+    var lazy = 0
+    data.asSequence().map { lazy++; it * 2 }.filter { it &gt; 4 }.first()  // обрывается на первом
+    println("sequence .map вызван: $lazy раз")
+}</code>
+            </div></div></details>
         </section>
 
         <section class="section" id="iterators">
@@ -453,7 +588,21 @@ list.removeAll { it % 2 == 0 }
 // 3) Идти по копии, удалять из оригинала
 for (x in list.toList()) { if (x % 2 == 0) list.remove(x) }</code></pre>
           <p>Для конкурентного случая — <code>ConcurrentHashMap</code> и <code>CopyOnWriteArrayList</code>: их итераторы weakly consistent / снапшотные и <code>CME</code> не бросают (см. параграф про потокобезопасность). Но это другая гарантия: они дают безопасность при параллельных потоках, а не «можно как угодно менять в for-each».</p>
-          <details class="qa"><summary>Почему <code>CME</code> может прилететь даже в однопоточном коде без всякой конкуренции, и почему на него нельзя полагаться как на гарантию обнаружения багов? <span class="q-badge">★</span></summary><div class="ans"><p>Слово «concurrent» в имени вводит в заблуждение: <code>CME</code> — про <em>структурную модификацию во время итерации</em>, а не про потоки. Один поток, один for-each, внутри <code>list.add(...)</code> — и <code>modCount</code> разъехался с ожидаемым в итераторе; исключение прилетит на следующем <code>next()</code>. Никакой второй поток не нужен.</p><p>А «нельзя полагаться» — потому что проверка best-effort: <code>modCount</code> сверяется только на <code>next()</code>/<code>remove()</code>, не атомарно и не на каждое чтение. Есть сценарии, где модификация остаётся незамеченной — например, изменил и тут же вернул структуру к прежнему числу элементов, или последняя модификация пришлась так, что итератор до сверки не дошёл. Документация прямо просит не строить логику на факте броска <code>CME</code>: это диагностика, помогающая ловить баги в разработке, а не контрактная гарантия.</p></div></details>
+          <details class="qa"><summary>Почему <code>CME</code> может прилететь даже в однопоточном коде без всякой конкуренции, и почему на него нельзя полагаться как на гарантию обнаружения багов? <span class="q-badge">★</span></summary><div class="ans"><p>Слово «concurrent» в имени вводит в заблуждение: <code>CME</code> — про <em>структурную модификацию во время итерации</em>, а не про потоки. Один поток, один for-each, внутри <code>list.add(...)</code> — и <code>modCount</code> разъехался с ожидаемым в итераторе; исключение прилетит на следующем <code>next()</code>. Никакой второй поток не нужен.</p><p>А «нельзя полагаться» — потому что проверка best-effort: <code>modCount</code> сверяется только на <code>next()</code>/<code>remove()</code>, не атомарно и не на каждое чтение. Есть сценарии, где модификация остаётся незамеченной — например, изменил и тут же вернул структуру к прежнему числу элементов, или последняя модификация пришлась так, что итератор до сверки не дошёл. Документация прямо просит не строить логику на факте броска <code>CME</code>: это диагностика, помогающая ловить баги в разработке, а не контрактная гарантия.</p>
+            <p class="run-hint">Один поток, обычный <code>for</code>: добавили элемент во время обхода — и следующий <code>next()</code> кидает <code>CME</code>.</p>
+            <div class="runnable">
+<code class="kt-run">fun main() {
+    val list = mutableListOf(1, 2, 3)
+    try {
+        for (x in list) {
+            println("читаю $x")
+            if (x == 1) list.add(99)   // структурная правка во время итерации
+        }
+    } catch (e: ConcurrentModificationException) {
+        println("CME — и никакого второго потока не было")
+    }
+}</code>
+            </div></div></details>
         </section>
 
         <section class="section" id="lru">
@@ -503,7 +652,17 @@ for (x in list.toList()) { if (x % 2 == 0) list.remove(x) }</code></pre>
             <div class="ic">💡</div>
             <div class="bd"><strong>Что сказать после реализации.</strong> Упомяните, что в Android уже есть готовый <code>androidx.collection.LruCache</code> (и <code>DiskLruCache</code>), а «ручной» вариант с <code>LinkedHashMap(accessOrder = true)</code> короче (см. раздел выше). Понимание ручной реализации показывает, что вы можете объяснить, <em>почему</em> это <code>O(1)</code>, а не просто вызываете библиотеку.</div>
           </div>
-          <details class="qa"><summary>Почему в LRU на голом <code>LinkedHashMap(accessOrder = true)</code> даже один <code>get</code> из нескольких потоков без синхронизации опасен — ведь «мы просто читаем»? <span class="q-badge">★</span></summary><div class="ans"><p>При <code>accessOrder = true</code> <code>get</code> — это <strong>структурная модификация</strong>: он перемещает обращённую запись в хвост двусвязного списка порядка доступа, то есть меняет внутренние ссылки. Документация <code>LinkedHashMap</code> прямо это отмечает.</p><p>Значит конкурентные <code>get</code> из разных потоков — гонка <em>записи</em>, а не безобидное чтение: можно порвать связи списка или поймать <code>ConcurrentModificationException</code>, как при параллельной модификации обычного <code>HashMap</code>. Тонкость для задачи 3 этой главы: <code>ReentrantReadWriteLock</code> там недостаточно защищает <code>get</code> через read-лок — раз <code>get</code> мутирует, ему нужен <em>write</em>-лок, иначе несколько «читающих» потоков войдут под read-лок одновременно и подерутся за список. Либо используйте готовый <code>androidx.collection.LruCache</code>, синхронизированный внутри.</p></div></details>
+          <details class="qa"><summary>Почему в LRU на голом <code>LinkedHashMap(accessOrder = true)</code> даже один <code>get</code> из нескольких потоков без синхронизации опасен — ведь «мы просто читаем»? <span class="q-badge">★</span></summary><div class="ans"><p>При <code>accessOrder = true</code> <code>get</code> — это <strong>структурная модификация</strong>: он перемещает обращённую запись в хвост двусвязного списка порядка доступа, то есть меняет внутренние ссылки. Документация <code>LinkedHashMap</code> прямо это отмечает.</p><p>Значит конкурентные <code>get</code> из разных потоков — гонка <em>записи</em>, а не безобидное чтение: можно порвать связи списка или поймать <code>ConcurrentModificationException</code>, как при параллельной модификации обычного <code>HashMap</code>. Тонкость для задачи 3 этой главы: <code>ReentrantReadWriteLock</code> там недостаточно защищает <code>get</code> через read-лок — раз <code>get</code> мутирует, ему нужен <em>write</em>-лок, иначе несколько «читающих» потоков войдут под read-лок одновременно и подерутся за список. Либо используйте готовый <code>androidx.collection.LruCache</code>, синхронизированный внутри.</p>
+            <p class="run-hint">Видно, что «просто чтение» меняет структуру: после <code>get(1)</code> порядок обхода другой — ключ уехал в хвост.</p>
+            <div class="runnable">
+<code class="kt-run">fun main() {
+    val m = LinkedHashMap&lt;Int, String&gt;(16, 0.75f, /* accessOrder = */ true)
+    m[1] = "a"; m[2] = "b"; m[3] = "c"
+    println("до get:  ${m.keys}")   // [1, 2, 3]
+    m[1]                            // «только читаем» — но запись уезжает в хвост
+    println("после get(1): ${m.keys}")  // [2, 3, 1] — структура изменилась
+}</code>
+            </div></div></details>
         </section>
 
         <section class="section" id="video">
@@ -857,6 +1016,7 @@ fun minEatingSpeed(piles: IntArray, h: Int): Int {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/app.js?v=20260621-3"></script>
+  <script src="../assets/glossary.js?v=20260621-6"></script>
+  <script src="../assets/app.js?v=20260621-6"></script>
 </body>
 </html>
