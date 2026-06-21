@@ -333,6 +333,29 @@ function decorateIndex(){
 }
 
 /* ---------- syntax + diagrams ---------- */
+function upgradeStarred(){
+  // Вопрос со звёздочкой (.qa + бейдж ★) рендерим как свёрнутую полоску «★ Дополнительно»:
+  // сам вопрос виден только после раскрытия. Разметку страниц не трогаем — апгрейдим DOM.
+  document.querySelectorAll("details.qa").forEach(d => {
+    const sum = d.querySelector(":scope > summary");
+    if (!sum) return;
+    const badge = sum.querySelector(".q-badge");
+    if (!badge || badge.textContent.indexOf("★") === -1) return;
+    const ans = d.querySelector(":scope > .ans");
+    if (!ans) return;
+    badge.remove();
+    const q = document.createElement("p");
+    q.className = "extra-q";
+    q.innerHTML = sum.innerHTML.trim();
+    ans.insertBefore(q, ans.firstChild);
+    sum.innerHTML = '<span class="extra-star" aria-hidden="true">★</span>'
+      + '<span class="extra-label">Дополнительно</span>'
+      + '<span class="extra-hint">вопрос со звёздочкой</span>'
+      + '<span class="extra-chevron" aria-hidden="true">›</span>';
+    d.classList.remove("qa");
+    d.classList.add("extra");
+  });
+}
 function highlightCode(){
   if (window.hljs){
     document.querySelectorAll("pre code").forEach(b => { try { hljs.highlightElement(b); } catch(e){} });
@@ -365,6 +388,7 @@ function init(){
     buildMindmap();
     decorateIndex();
   }
+  upgradeStarred();
   highlightCode();
   renderMermaid();
 }

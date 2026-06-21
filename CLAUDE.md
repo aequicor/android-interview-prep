@@ -54,7 +54,8 @@ The study material has exactly **three** structural levels. Use these names ever
 A **вопрос со звёздочкой** is a deliberately advanced, often counter-intuitive question that goes at the **end of each content параграф** — one per параграф, right after its body. It targets what you rarely need in day-to-day application development but interviewers prize: the mechanism «под капотом», the non-obvious edge case, the «почему именно так» behind an API — a level *above* the baseline Middle+/Senior material in the параграф itself («то, что не требуется знать в проде, но ценят на собесе»).
 
 - **Placement:** one per content параграф, at its end (skip the meta параграфы — `#faq`, video, tasks, sources). It lives inside the параграф's `<section>`, so it never creates a TOC entry (the TOC is built only from `.section > h2`).
-- **Markup:** render it as a Q&A `.qa` card (the same component as «Частые вопросы») flagged with a `★` badge — `<span class="q-badge">★</span>` — so it reads as distinct from the collected FAQ block. No new CSS needed.
+- **Markup (authoring stays the same):** write it as a Q&A `.qa` card (the same component as «Частые вопросы») flagged with a `★` badge — `<span class="q-badge">★</span>`. No new markup to learn.
+- **Rendering:** `app.js` (`upgradeStarred()`) detects any `.qa` whose summary carries the `★` badge and re-renders it at load as a collapsed strip «★ Дополнительно вопрос со звёздочкой» — the question text is hidden until the strip is opened (moved into a `<p class="extra-q">`, badge stripped, the `<details>` reclassed `.qa`→`.extra`). The strip styling lives in `style.css` under `.extra`. So on disk it's a `.qa`+`★`, but on screen it's the «Дополнительно» strip.
 - **Bar:** it must be genuinely beyond-baseline. If a параграф has nothing worth asking above its own body, leave it out rather than padding with a filler question.
 
 ## Running the site
