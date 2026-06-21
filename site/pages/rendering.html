@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>(()=>{const k="aip-theme";let t=null;try{t=localStorage.getItem(k)}catch(e){}
+    if(t!=="dark"&&t!=="light")t=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";
+    document.documentElement.setAttribute("data-theme",t)})();</script>
+  <title>Рендеринг и кадры · Android-собес</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+</head>
+<body data-page="rendering">
+  <div class="layout">
+    <aside id="sidebar"></aside>
+    <div id="content">
+      <article class="page">
+        <div class="breadcrumb"></div>
+        <header class="page-head">
+          <span class="eyebrow">UI / Compose</span>
+          <h1>Рендеринг и кадры</h1>
+          <p class="lead">Как Android рисует один кадр: от сигнала VSYNC и Choreographer до RenderThread и GPU. Что такое бюджет кадра, откуда берётся jank, как его измерять (JankStats, Perfetto, Macrobenchmark) и чинить — overdraw, тяжёлые списки, холодный старт. Тема, где собеседующий проверяет, понимаете ли вы, что происходит между вашим <code>setContent { }</code> и пикселями на экране.</p>
+          <div class="meta"><span class="tag lvl-mid">Middle</span><span class="tag lvl-sen">Senior</span><span class="tag hot">Частый вопрос</span></div>
+        </header>
+
+        <section class="section" id="pipeline">
+          <h2>Конвейер кадра: Choreographer и VSYNC</h2>
+          <p>Дисплей обновляется не когда захочет приложение, а на своей частоте: 60 раз в секунду на обычном экране, 90 или 120 — на «плавных». Каждое такое обновление аппаратура анонсирует сигналом <strong>VSYNC</strong> (vertical synchronization). Между двумя соседними VSYNC у вас есть фиксированное окно, чтобы успеть подготовить новый кадр. Это и есть <em>бюджет кадра</em>: <code>1000 мс / 60 ≈ 16.6 мс</code> при 60 Гц, <code>1000 / 90 ≈ 11 мс</code> при 90 Гц и всего <code>1000 / 120 ≈ 8.3 мс</code> при 120 Гц.</p>
+          <p>Связующее звено между этим аппаратным «тиком» и вашим UI — <code>Choreographer</code>. Он подписан на VSYNC и по каждому сигналу запускает один проход отрисовки: вызывает накопленные колбэки в строгом порядке — обработка ввода, аниматоры, затем обход дерева View или рекомпозиция Compose с measure/layout/draw. Когда вы пишете <code>view.postOnAnimation { }</code> или анимация Compose ждёт следующего кадра — заявка кладётся в очередь Choreographer и сработает на ближайшем VSYNC.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart LR
+VS["VSYNC<br/>сигнал кадра"] --> INP["Ввод"]
+INP --> ANIM["Анимации"]
+ANIM --> ML["Measure / Layout"]
+ML --> DRAW["Draw<br/>display list"]
+DRAW -->|sync| RT["RenderThread → GPU"]
+RT --> SF["SurfaceFlinger"]
+SF --> DISP["Дисплей"]
+DISP -.->|следующий VSYNC| VS
+</div>
+          <div class="cap">Один проход doFrame в Choreographer: всё слева от sync — на главном потоке, дальше — RenderThread, композиция и вывод</div>
+          </div>
+          <p>«Уложиться в кадр» значит: сумма ввода, аниматоров, measure/layout/draw на главном потоке плюс работа RenderThread должна влезть в окно до следующего VSYNC. Промахнулись хотя бы на миллисекунду — Choreographer не показывает кадр «с опозданием», а <strong>роняет его целиком</strong>: на экране ещё раз держится предыдущий кадр. Глаз ловит это как рывок. Чем выше частота дисплея, тем уже окно и тем дороже любая лишняя аллокация или тяжёлый <code>onDraw</code>.</p>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Бюджет — не весь кадр, а ваша доля.</strong> 16.6 мс делятся между вашим главным потоком, RenderThread и системой. На практике закладывайтесь на то, что у приложения есть условные ~12–14 мс, а не полные 16.6 — остальное съест композиция в SurfaceFlinger и накладные расходы. На 120 Гц с 8.3 мс запас тает совсем.</div>
+          </div>
+          <details class="qa"><summary>Почему частота дисплея может меняться на лету и при чём тут VSYNC? <span class="q-badge">★</span></summary><div class="ans"><p>С Android 11 (API 30) появился <em>frame rate API</em> и переменная частота обновления (VRR): дисплей умеет переключаться между 60/90/120 Гц прямо во время работы — экономя батарею на статичном контенте и поднимая частоту на скролле. Из-за этого нельзя зашивать «16.6 мс» в код как константу: бюджет кадра нужно брать из текущего периода VSYNC (<code>Display.getRefreshRate()</code> / данные кадра). Macrobenchmark и Perfetto именно поэтому считают промах не от 16.6 мс, а от фактического дедлайна кадра — отсюда метрика <code>frameOverrunMs</code>, на сколько кадр опоздал относительно своего реального окна.</p></div></details>
+        </section>
+
+        <section class="section" id="renderthread">
+          <h2>UI Thread и RenderThread</h2>
+          <p>Распространённое заблуждение — что главный поток сам рисует пиксели. Со времён аппаратного ускорения (включено по умолчанию с Android 4.0, API 14) это не так. Главный поток (UI Thread) не закрашивает экран — он <strong>записывает, что нужно нарисовать</strong>. Каждый <code>View.onDraw</code> или draw-фаза Compose не льёт пиксели, а пишет команды рисования в <em>display list</em> — структуру внутри <code>RenderNode</code>. Это, по сути, запись на плёнку: «нарисуй прямоугольник тут, текст там, картинку сюда».</p>
+          <p>Готовый набор <code>RenderNode</code> синхронизируется на отдельный поток — <strong>RenderThread</strong> (появился в Android 5.0, API 21). Он берёт display list, транслирует команды в вызовы GPU (OpenGL ES / Vulkan) и отправляет на видеоядро. Синхронизация не «выстрелил и забыл»: на точке sync главный поток коротко ждёт RenderThread (передача состояния), после чего освобождается как можно раньше — он не блокируется до момента, пока кадр реально покажут.</p>
+          <div class="diagram">
+          <div class="mermaid">
+sequenceDiagram
+participant CH as Choreographer
+participant UI as UI Thread
+participant RT as RenderThread
+participant GPU as GPU
+CH->>UI: VSYNC → doFrame
+UI->>UI: input, anim, measure, layout
+UI->>UI: draw → RenderNode (display list)
+UI->>RT: syncAndDrawFrame (короткий sync)
+RT-->>UI: разблокировка
+RT->>GPU: команды (GL/Vulkan)
+GPU-->>RT: кадр готов
+</div>
+          <div class="cap">Главный поток строит display list и отдаёт его RenderThread; пиксели считает GPU</div>
+          </div>
+          <p>Практический вывод прямой: <strong>любая долгая работа на главном потоке отъедает у measure/layout/draw то же самое окно кадра</strong>. Распарсили JSON в обработчике клика, синхронно дёрнули диск, прошли по списку из 10 000 элементов в <code>onBindViewHolder</code> — главный поток не успел дописать display list к точке sync, кадр уронен. RenderThread тут ни при чём: он простаивает, ожидая данные, которые UI Thread не успел подготовить. Поэтому правило «тяжёлое — в фон» — это не про «приложение не зависнет совсем» (для этого есть ANR), а буквально про каждый кадр.</p>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><strong>Где это видно в трейсе.</strong> В Perfetto/systrace главный поток идёт дорожкой <code>UI Thread</code>, рядом — <code>RenderThread</code>. Если кадр красный, смотрят: проснулся ли UI Thread по VSYNC вовремя, какая фаза <code>doFrame</code> вылезла за бюджет, не блокировался ли RenderThread на sync или на постановке буфера в очередь.</div>
+          </div>
+          <details class="qa"><summary>Зачем нужен RenderNode и чем display list лучше, чем рисовать сразу? <span class="q-badge">★</span></summary><div class="ans"><p>Display list — это закэшированные команды рисования. Если содержимое View не менялось, его <code>RenderNode</code> переиспользуется как есть: главный поток не вызывает <code>onDraw</code> заново, а просто говорит RenderThread «возьми тот же список». Отсюда дешёвые трансформации: сдвинуть, повернуть или поменять прозрачность <code>RenderNode</code> можно на RenderThread без захода на главный поток и без перезаписи команд — поэтому свойство-анимации (translation, alpha, rotation) почти бесплатны, а анимация, которая каждый кадр меняет, скажем, текст и зовёт <code>invalidate()</code>, заставляет перезаписывать display list и стоит ощутимо дороже. В Compose ту же роль играет слой графики и фаза draw поверх slot table: незатронутые узлы не перерисовываются.</p></div></details>
+        </section>
+
+        <section class="section" id="jank">
+          <h2>Jank и пропущенные кадры</h2>
+          <p>Jank — это рывок, который видит пользователь, когда система пропустила кадр(ы) из-за того, что UI не успел отрисоваться в бюджет. Android vitals делит просадки на категории по времени отрисовки кадра: обычный кадр укладывается в окно (16 мс на 60 Гц), <em>медленный кадр</em> — от 16 мс примерно до 700 мс, <em>frozen frame</em> (зависший) — дольше 700 мс, а свыше 5 с — это уже ANR. Frozen frames выделяют отдельно: почти секунда без отклика на ввод воспринимается как «приложение повисло», особенно на старте и переходах.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Категория</th><th>Время кадра</th><th>Что чувствует пользователь</th></tr></thead>
+              <tbody>
+                <tr><td>Нормальный кадр</td><td>≤ 16 мс (при 60 Гц)</td><td>Плавно</td></tr>
+                <tr><td>Slow / janky frame</td><td>~16 мс – 700 мс</td><td>Рывок при скролле, дёрганая анимация</td></tr>
+                <tr><td>Frozen frame</td><td>&gt; 700 мс</td><td>«Подвисло» на переходе или старте</td></tr>
+                <tr><td>ANR</td><td>&gt; 5 с</td><td>Диалог «приложение не отвечает»</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Главные источники jank сводятся к перегрузу главного потока в окне кадра. Тяжёлый <code>onDraw</code> или тяжёлая <a href="compose.html">рекомпозиция</a> (Compose перевычисляет больше, чем нужно, потому что состояние нестабильно или ключи плохие). Аллокации прямо в кадре — каждый <code>new</code> в горячем пути приближает паузу GC, а пауза GC съедает миллисекунды бюджета. Лишние проходы layout — вложенные веса, двойной measure, цепочки <code>requestLayout()</code>. И блокировки главного потока: синхронный диск, чтение из БД, разбор больших структур.</p>
+          <p class="subhead">Чем измерять</p>
+          <p>Замер jank — не «на глаз», а инструментами под разные стадии. В продакшене на реальных устройствах — <strong>JankStats</strong>: библиотека Jetpack поверх <code>FrameMetrics</code>, отдаёт длительность каждого кадра колбэком и позволяет навесить состояние (какой экран, что скроллим), чтобы понять, <em>где</em> рвётся. В лаборатории — <strong>Macrobenchmark</strong> с <code>FrameTimingMetric</code>: прогоняет сценарий (скролл, анимацию) и выдаёт <code>frameOverrunMs</code> — на сколько кадр промахнулся мимо дедлайна (положительное число = дропнутый кадр); метрика доступна с Android 12 (API 31). Для разбора конкретной просадки — <strong>Perfetto</strong> с дорожкой <em>FrameTimeline</em> (тоже с Android 12), которая показывает, какая именно работа уронила кадр на уровне системного компоновщика. Быстрый разовый замер из консоли — <code>adb shell dumpsys gfxinfo &lt;package&gt; framestats</code>.</p>
+          <div class="code-label">JankStatsSetup.kt</div>
+<pre><code class="language-kotlin">// JankStats привязывается к окну; колбэк зовётся раз в кадр
+val jankStats = JankStats.createAndTrack(window) { frameData: FrameData -&gt;
+    if (frameData.isJank) {
+        // states — это метки, которые мы сами навесили (экран, действие)
+        log("Jank ${frameData.frameDurationUiNanos / 1_000_000.0} ms, ${frameData.states}")
+    }
+}
+
+// помечаем «что происходит», чтобы потом сгруппировать джанк по контексту
+jankStats.state.putState("screen", "Feed")
+recyclerView.addOnScrollListener(/* ... putState("scroll", "active") ... */)</code></pre>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Связка с профилированием.</strong> JankStats отвечает на вопрос «рвётся ли и где», но не «почему». Когда нашли проблемный экран, дальше идёте в <a href="profiling.html">Профилирование</a>: снимаете трейс в Perfetto/Android Studio Profiler и смотрите, какая именно фаза кадра вылезла за бюджет. Поле <code>FrameData.states</code> здесь — мостик: оно говорит, в каком сценарии искать.</div>
+          </div>
+          <details class="qa"><summary>JankStats показал джанк, но Profiler на эмуляторе всё «зелёное» — почему и где правда? <span class="q-badge">★</span></summary><div class="ans"><p>Эмулятор и флагман врут в разные стороны: на мощном железе вы не воспроизведёте джанк, который рвёт бюджет на бюджетном телефоне с 90 Гц. JankStats собирает данные с <em>реальных</em> устройств в проде, где частота дисплея и троттлинг другие, поэтому ему верят про «есть ли проблема и на каком парке». Для воспроизведения и поиска причины берут Macrobenchmark на реальном среднем устройстве с фиксированной конфигурацией (<code>CompilationMode</code>, прогретый кэш) — он стабилен от прогона к прогону, в отличие от ручного скролла. Эмулятор для замеров кадров не годится в принципе: у него нет настоящего VSYNC-конвейера и GPU телефона.</p></div></details>
+        </section>
+
+        <section class="section" id="overdraw">
+          <h2>Overdraw</h2>
+          <p>Overdraw — это когда один и тот же пиксель за один кадр закрашивается несколько раз. GPU честно рисует по алгоритму художника (back-to-front): сначала дальние слои, потом ближние поверх — это нужно для корректного смешивания полупрозрачных слоёв (теней, диммингов). Но если у вас фон Activity, поверх него непрозрачный фон контейнера, поверх — фон карточки, и всё это одного цвета, GPU трижды закрашивает те же пиксели. Видеоядро тратит время на пиксели, которых пользователь не увидит.</p>
+          <p>Смотрят overdraw через <em>Debug GPU Overdraw</em> в настройках разработчика. Он раскрашивает экран по числу перерисовок: синий — 1x (норма), зелёный — 2x, красный — 3x, тёмно-красный — 4x и больше (вот это лечат). Цель — чтобы экран был преимущественно синим, без больших тёмно-красных пятен.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Цвет</th><th>Перерисовок пикселя</th><th>Вердикт</th></tr></thead>
+              <tbody>
+                <tr><td>Без подсветки / синий</td><td>1x</td><td>Норма</td></tr>
+                <tr><td>Зелёный</td><td>2x</td><td>Терпимо</td></tr>
+                <tr><td>Красный</td><td>3x</td><td>Подозрительно</td></tr>
+                <tr><td>Тёмно-красный</td><td>4x и больше</td><td>Чинить</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Лечение прозаичное. Убрать лишние фоны: контейнеры по умолчанию ничего не рисуют — фон ставьте один раз (например, на окне через <code>android:windowBackground</code>), а вложенным View не дублируйте тот же цвет. Сплющить иерархию — меньше слоёв непрозрачных View меньше перекрывают друг друга. Подрезать область рисования через <code>canvas.clipRect()</code>, если кастомный View рисует за пределами видимой зоны. И аккуратнее с прозрачностью: полупрозрачный пиксель требует сначала нарисовать то, что под ним, — серый текст напрямую дешевле, чем чёрный с альфой поверх фона.</p>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Не молитесь на overdraw.</strong> На современных GPU умеренный overdraw почти бесплатен, и оптимизировать его ради «чтобы было синё» — пустая трата времени. Сначала чинят главный поток (jank от рекомпозиций и layout), и только если в трейсе GPU реально упирается в fill-rate (заметный <em>Process</em>/swap-buffers) — лезут в overdraw. На слабых устройствах приоритет тоже у работы главного потока, а не у перекраски.</div>
+          </div>
+          <details class="qa"><summary>Почему в Compose overdraw устроен иначе, чем во View? <span class="q-badge">★</span></summary><div class="ans"><p>В Compose нет иерархии View с дефолтными фонами, но overdraw никуда не делся — он перешёл на уровень <code>Modifier</code>. Каждый <code>Modifier.background()</code>, <code>Modifier.shadow()</code> (тень — это отдельный слой с альфой) и <code>graphicsLayer { alpha = }</code> добавляет проход закраски. Особенно коварен <code>shadow</code>/elevation у многих вложенных <code>Card</code>: тени рисуются полупрозрачным слоем и множат overdraw. Плюс <code>Modifier.graphicsLayer</code> с <code>alpha &lt; 1f</code> или <code>compositingStrategy = Offscreen</code> заставляет рисовать поддерево в отдельный буфер и потом смешивать — это и есть управляемый, но недешёвый overdraw. Debug GPU Overdraw работает с Compose так же, как с View, — смотрите по нему.</p></div></details>
+        </section>
+
+        <section class="section" id="lists">
+          <h2>Производительность списков</h2>
+          <p>Список — главный генератор jank в реальных приложениях: при скролле кадры идут подряд, и любая лишняя работа на элемент сразу превращается в рывки. Подходы во View и в Compose разные по механике, но цель одна — чтобы подготовка одного элемента стоила доли миллисекунды.</p>
+          <p class="subhead">RecyclerView: переиспользование</p>
+          <p><code>RecyclerView</code> держит небольшой пул <code>ViewHolder</code> и переиспользует их: ушедший за край экрана холдер не уничтожается, а заново привязывается к новым данным в <code>onBindViewHolder</code>. Отсюда правило: <strong>bind должен быть лёгким</strong> — никаких аллокаций, форматтеров «на лету», синхронного доступа к диску; документация целится в «много меньше 1 мс» на привязку. Обновления списка делают через <code>ListAdapter</code> + <code>DiffUtil</code>, который на фоне считает разницу старого и нового списка и шлёт точечные анимации вместо <code>notifyDataSetChanged()</code>. Чтобы DiffUtil различал «тот же элемент с новыми данными» и «другой элемент», нужны <em>stable ids</em> (через <code>areItemsTheSame</code> по бизнес-id). Префетч (<code>LinearLayoutManager</code> готовит холдеры впрок, пока главный поток простаивает между кадрами) включён по умолчанию и работает в связке с RenderThread.</p>
+          <div class="code-label">UserAdapter.kt</div>
+<pre><code class="language-kotlin">class UserAdapter : ListAdapter&lt;User, UserVH&gt;(DIFF) {
+    override fun onBindViewHolder(holder: UserVH, position: Int) {
+        // лёгкий bind: только присвоить готовые поля, без форматирования и I/O
+        holder.bind(getItem(position))
+    }
+    companion object {
+        val DIFF = object : DiffUtil.ItemCallback&lt;User&gt;() {
+            // тот же элемент? — сравниваем стабильный бизнес-id
+            override fun areItemsTheSame(a: User, b: User) = a.id == b.id
+            // содержимое поменялось? — data class даёт корректный equals
+            override fun areContentsTheSame(a: User, b: User) = a == b
+        }
+    }
+}</code></pre>
+          <p class="subhead">LazyColumn: ключи и contentType</p>
+          <p>В Compose <code>LazyColumn</code> устроен иначе: он <em>не</em> переиспользует View, а создаёт композаблы для видимых элементов — это дешевле, чем надувать View. Но у него свои рычаги. Параметр <code>key</code> задаёт стабильную личность элемента (как stable id): без него Compose опирается на индекс, и при вставке/удалении в начале списка «съезжают» все элементы ниже — лишние рекомпозиции и сломанная анимация перестановки. С ключом по бизнес-id перерисовывается ровно то, что изменилось. Параметр <code>contentType</code> — аналог view types из RecyclerView: он подсказывает рантайму, какие элементы однотипны, чтобы переиспользовать слоты композиции между ними (иначе разнородный список переиспользует слоты плохо).</p>
+          <div class="code-label">FeedList.kt</div>
+<pre><code class="language-kotlin">LazyColumn {
+    items(
+        items = feed,
+        key = { item -&gt; item.id },              // стабильная личность элемента
+        contentType = { item -&gt; item.kind }     // группировка однотипных для reuse слотов
+    ) { item -&gt;
+        // тело item должно быть «дешёвым» и стабильным:
+        // тяжёлое — вынести, состояние читать узко, чтобы не рекомпозить лишнее
+        FeedRow(item)
+    }
+}</code></pre>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Аспект</th><th>RecyclerView</th><th>LazyColumn (Compose)</th></tr></thead>
+              <tbody>
+                <tr><td>Модель переиспользования</td><td>Пул <code>ViewHolder</code>, rebind</td><td>Слоты композиции, новые композаблы</td></tr>
+                <tr><td>Личность элемента</td><td>stable ids / <code>areItemsTheSame</code></td><td>параметр <code>key</code></td></tr>
+                <tr><td>Типы элементов</td><td>view types (<code>getItemViewType</code>)</td><td>параметр <code>contentType</code></td></tr>
+                <tr><td>Дифф обновлений</td><td><code>DiffUtil</code> на фоне</td><td>сравнение ключей рантаймом</td></tr>
+                <tr><td>Префетч</td><td>есть (LayoutManager)</td><td>есть (prefetch соседних)</td></tr>
+                <tr><td>Главный риск jank</td><td>тяжёлый <code>onBindViewHolder</code></td><td>тяжёлая рекомпозиция item</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>Грабли ключа.</strong> <code>key</code> должен быть стабильным и уникальным. Поставите индекс (<code>key = { it }</code> по позиции) — толку ноль, это и есть поведение по умолчанию. Поставите неуникальный ключ (одинаковый id у разных элементов) — рантайм бросит исключение. И никогда не кладите в тело <code>item { }</code> создание <code>ViewModel</code>, запуск корутин без <code>remember</code> или чтение всего большого state-объекта целиком — это рекомпозит каждый видимый элемент на каждое изменение.</div>
+          </div>
+          <details class="qa"><summary>Когда LazyColumn проигрывает RecyclerView, несмотря на «создавать композаблы дешевле»? <span class="q-badge">★</span></summary><div class="ans"><p>На первом скролле «холодного» приложения. RecyclerView переиспользует уже надутые View, а <code>LazyColumn</code> при появлении нового <code>contentType</code> создаёт композицию с нуля — и если код ещё не AOT-скомпилирован (нет <a href="profiling.html">baseline profile</a>), первые элементы строятся интерпретируемым байткодом и рвут кадры. Отсюда два следствия: для Compose-списков baseline profile критичнее, чем для View; и в режиме отладки (debug build) Compose заметно медленнее из-за выключенных оптимизаций компилятора — мерить производительность списка нужно только на release-сборке. На прогретом release-приложении с профилем разрыв исчезает, и Compose обычно не хуже.</p></div></details>
+        </section>
+
+        <section class="section" id="baseline">
+          <h2>Baseline Profiles и кадры</h2>
+          <p>У первого запуска после установки есть встроенный jank, не связанный с вашим кодом напрямую. ART (Android Runtime) сначала исполняет ваш байткод <em>интерпретатором</em>, потом JIT-компилятор постепенно компилирует горячие методы в машинный код — но первые секунды работы идут «холодными» и тормозят: старт долгий, первый скролл рвётся. <strong>Baseline Profiles</strong> убирают именно это.</p>
+          <p>Baseline profile — это список горячих путей (методов и классов: старт, навигация, скролл, отрисовка кадра), который кладётся в APK/AAB файлом <code>baseline-prof.txt</code>. При установке ART делает по нему <strong>AOT-компиляцию</strong> (ahead-of-time) — компилирует эти методы в машинный код заранее, ещё до первого запуска. В итоге критичные пути исполняются скомпилированными с первого касания: нет ни интерпретации, ни JIT-разогрева, ни джанка от фоновой dexopt во время сессии. Документация называет порядок ~30% ускорения с первого запуска по сравнению с отсутствием профиля.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart LR
+GEN["Macrobenchmark<br/>+ BaselineProfileRule"] --> TXT["baseline-prof.txt<br/>горячие пути"]
+TXT --> AGP["AGP упаковывает<br/>в APK / AAB"]
+AGP --> INST["Установка:<br/>ART AOT-компилирует"]
+INST --> RUN["1-й запуск:<br/>код уже нативный"]
+</div>
+          <div class="cap">Профиль генерится бенчмарком, едет в сборке и применяется ART при установке — до первого запуска</div>
+          </div>
+          <p>Генерируют профиль не вручную, а тем же <strong>Macrobenchmark</strong>: <code>BaselineProfileRule</code> прогоняет реальный сценарий (старт, скролл списка, переходы), а инструмент записывает, какие методы оказались горячими. Этим же Macrobenchmark и <em>проверяют</em> эффект — гоняют один и тот же сценарий с разными <code>CompilationMode</code> (без профиля против с профилем) и сравнивают время старта и <code>frameOverrunMs</code>.</p>
+          <div class="code-label">BaselineProfileGenerator.kt</div>
+<pre><code class="language-kotlin">@RunWith(AndroidJUnit4::class)
+class BaselineProfileGenerator {
+    @get:Rule val rule = BaselineProfileRule()
+
+    @Test fun generate() = rule.collect(packageName = "com.example.app") {
+        startActivityAndWait()                 // холодный старт — горячий путь
+        // прокручиваем список — собираем горячие пути скролла
+        device.findObject(By.res("feed")).fling(Direction.DOWN)
+    }
+}</code></pre>
+          <p>Важно не путать это с самим <a href="profiling.html">холодным стартом</a>. Cold start — это <em>метрика</em>: сколько времени от запуска процесса до первого полезного кадра (Time To Initial Display). Baseline profile — это <em>инструмент</em>, который этот cold start укорачивает (часть пути уже скомпилирована) и заодно убирает jank первого скролла. Профилирование cold start (где теряется время на старте) и применение baseline profile — соседние шаги одной работы.</p>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><strong>Профиль и Cloud Profiles.</strong> Начиная с Android 9 (API 28) Google Play ещё агрегирует <em>облачные</em> профили из реального использования и досылает их, но это занимает время и нужен большой парк пользователей. Baseline profile работает с первой установки и на всех поддерживаемых версиях — поэтому его кладут руками, а облачный профиль идёт сверху.</div>
+          </div>
+          <details class="qa"><summary>Почему baseline profile почти не влияет на release-сборку, собранную с полной AOT-компиляцией? <span class="q-badge">★</span></summary><div class="ans"><p>Потому что выигрыш профиля — это разница между «интерпретация + JIT» и «нативный код». Если приложение целиком скомпилировано AOT (<code>CompilationMode.Full()</code>, или старое поведение Android 5–6, API 21–23, где при установке компилировалось всё), весь код и так нативный — профилю нечего ускорять. Но полная AOT-компиляция при установке давно не дефолт: она раздувает размер на диске и время установки, поэтому с Android 7 (API 24) перешли на частичную компиляцию по профилю. Поэтому корректный замер эффекта baseline profile — это <code>CompilationMode.None()</code> или <code>Partial()</code> против профиля, а не против <code>Full()</code>: на <code>Full()</code> разница исчезает, и это не баг, а ожидаемо.</p></div></details>
+        </section>
+
+        <section class="section" id="faq">
+          <h2>Частые вопросы интервьюера</h2>
+          <details class="qa"><summary>Что такое бюджет кадра и что происходит при его превышении? <span class="q-badge">Middle</span></summary><div class="ans"><p>Бюджет — окно между двумя VSYNC: ~16.6 мс при 60 Гц, ~11 мс при 90 Гц, ~8.3 мс при 120 Гц. В него должны влезть ввод, анимации, measure/layout/draw на главном потоке и работа RenderThread. Если не влезли — Choreographer не показывает кадр позже, а роняет его целиком, на экране остаётся предыдущий кадр. Это и есть пропущенный кадр (jank).</p></div></details>
+          <details class="qa"><summary>Чем отличаются UI Thread и RenderThread? <span class="q-badge">Middle+</span></summary><div class="ans"><p>UI Thread (главный поток) не рисует пиксели — он записывает команды рисования в display list внутри <code>RenderNode</code>. RenderThread (отдельный поток, с Android 5.0 / API 21) берёт этот display list, переводит в вызовы GPU и отправляет на видеоядро. На точке sync главный поток коротко ждёт передачи состояния и освобождается рано. Долгая работа на главном потоке мешает ему дописать display list к sync — кадр падает, хотя RenderThread простаивает.</p></div></details>
+          <details class="qa"><summary>Что такое frozen frame и чем он отличается от обычного jank? <span class="q-badge">Middle+</span></summary><div class="ans"><p>Frozen frame — кадр, отрисовка которого заняла дольше 700 мс (по классификации Android vitals). Обычный медленный кадр — это рывок при скролле (16 мс – 700 мс), а frozen воспринимается как «приложение повисло» почти на секунду, типично на старте и переходах. Свыше 5 с — это уже ANR. Vitals считает их отдельной категорией, потому что причины и влияние на пользователя разные.</p></div></details>
+          <details class="qa"><summary>Чем мерить jank: JankStats, Macrobenchmark, Perfetto — что когда? <span class="q-badge">Senior</span></summary><div class="ans"><p>JankStats — продакшен, реальные устройства: «рвётся ли и на каком экране» (поверх <code>FrameMetrics</code>, с метками состояния). Macrobenchmark с <code>FrameTimingMetric</code> — лаборатория: стабильный замер сценария, метрика <code>frameOverrunMs</code> (насколько кадр промахнулся мимо дедлайна), с Android 12 / API 31. Perfetto FrameTimeline — разбор конкретной просадки на уровне системы, тоже с Android 12. Разовый замер из консоли — <code>dumpsys gfxinfo &lt;pkg&gt; framestats</code>. Эмулятор для замеров кадров не годится.</p></div></details>
+          <details class="qa"><summary>Что такое overdraw и как его смотреть? <span class="q-badge">Middle</span></summary><div class="ans"><p>Overdraw — многократная закраска одного пикселя за кадр (накладывающиеся непрозрачные фоны, тени, прозрачность). GPU рисует по алгоритму художника back-to-front, поэтому скрытые слои тоже закрашиваются. Смотрят через Debug GPU Overdraw в настройках разработчика: синий — 1x, зелёный — 2x, красный — 3x, тёмно-красный — 4x+. Лечат: убрать дублирующие фоны, сплющить иерархию, <code>clipRect</code>, меньше прозрачности. Но на современных GPU это вторично — сначала чинят главный поток.</p></div></details>
+          <details class="qa"><summary>Зачем в LazyColumn нужны key и contentType? <span class="q-badge">Middle+</span></summary><div class="ans"><p><code>key</code> задаёт стабильную личность элемента: без него Compose опирается на индекс, и вставка/удаление в начале списка вызывает каскад лишних рекомпозиций и ломает анимацию перестановки. С ключом по бизнес-id перерисовывается только изменившееся. <code>contentType</code> — аналог view types: группирует однотипные элементы, чтобы рантайм переиспользовал слоты композиции между ними. В разнородном списке без <code>contentType</code> переиспользование слотов работает плохо.</p></div></details>
+          <details class="qa"><summary>Почему bind в RecyclerView должен быть лёгким? <span class="q-badge">Middle</span></summary><div class="ans"><p><code>onBindViewHolder</code> вызывается на главном потоке при каждом появлении элемента — то есть в окне кадра при скролле. Если в bind есть форматирование дат, чтение с диска, аллокации или сложная логика, главный поток не успевает к точке sync и кадр падает. Документация целится в «много меньше 1 мс» на bind. Всё тяжёлое выносят: форматировать заранее в модель, грузить картинки асинхронно, никаких new в горячем пути.</p></div></details>
+          <details class="qa"><summary>Как baseline profiles убирают jank первого запуска? <span class="q-badge">Senior</span></summary><div class="ans"><p>ART сначала интерпретирует байткод и лишь постепенно JIT-компилирует горячие методы, поэтому первые секунды (старт, первый скролл) тормозят. Baseline profile — список горячих путей в APK/AAB; при установке ART AOT-компилирует их заранее, и критичные пути с первого касания исполняются нативным кодом — без интерпретации, JIT-разогрева и джанка от фоновой dexopt. Порядок выигрыша — ~30% с первого запуска. Генерят и проверяют профиль через Macrobenchmark.</p></div></details>
+          <details class="qa"><summary>Почему аллокации в горячем пути отрисовки вредят кадрам? <span class="q-badge">Senior</span></summary><div class="ans"><p>Каждый объект, созданный в <code>onDraw</code>, <code>onBindViewHolder</code> или теле рекомпозиции, приближает паузу сборщика мусора. Даже современный конкурентный GC даёт короткие stop-the-world-фазы, а они отъедают миллисекунды из бюджета кадра — на 120 Гц с окном 8.3 мс этого достаточно для дропа. Поэтому в горячих путях избегают аллокаций: не создают <code>Paint</code>/форматтеры/лямбды на кадр, переиспользуют объекты, выносят создание во <code>remember</code> (Compose) или в поля холдера (View).</p></div></details>
+        </section>
+
+        <section class="section" id="tasks">
+          <h2>Задачи</h2>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 1.</strong> Пользователи жалуются: лента дёргается при скролле на средних телефонах, на вашем флагмане всё гладко. JankStats в проде подтверждает джанк на экране Feed. В коде элемента ленты — загрузка аватара, форматирование даты и подсчёт «сколько прошло времени». Назовите вероятную причину и предложите фикс по шагам.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <p><strong>Причина.</strong> Тяжёлый bind/рекомпозиция элемента на главном потоке в окне кадра: форматирование даты и «time ago» считаются синхронно на каждый видимый элемент при скролле, плюс возможна синхронная или плохо закэшированная загрузка аватара. На флагмане укладывается в бюджет, на среднем устройстве с 90 Гц (окно ~11 мс) — нет, кадры падают.</p>
+                <p><strong>Фикс по шагам:</strong></p>
+                <pre><code class="language-kotlin">// 1) Форматирование — заранее, в модель (вне главного потока), а не в bind/item
+data class FeedItemUi(
+    val id: Long,
+    val avatarUrl: String,
+    val dateLabel: String,   // уже отформатировано в маппере на Default-диспетчере
+    val timeAgo: String      // посчитано там же, не в кадре
+)
+
+// 2) Аватар — асинхронно, с кэшем (Coil/Glide), не синхронно в bind
+AsyncImage(model = item.avatarUrl, contentDescription = null)
+
+// 3) Для Compose-списка — стабильный ключ и contentType
+items(feed, key = { it.id }, contentType = { it.kind }) { FeedRow(it) }</code></pre>
+                <p><strong>Как проверить:</strong> прогнать сценарий скролла в Macrobenchmark с <code>FrameTimingMetric</code> на том же среднем устройстве до и после — смотреть <code>frameOverrunMs</code> (должен уйти в ноль/отрицательные). JankStats в проде подтвердит снижение джанка на Feed. Подробнее про снятие трейса — в главе <a href="profiling.html">Профилирование</a>.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 2.</strong> Дан элемент <code>LazyColumn</code>, который рекомпозится у всех видимых строк на каждый тик таймера и создаёт <code>ViewModel</code> прямо в теле. Перепишите его так, чтобы рекомпозиция была точечной, а список переиспользовал слоты.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">// БЫЛО: ViewModel в теле item, чтение «жирного» state целиком,
+// нет key/contentType — рекомпозит все строки на любой чих.
+LazyColumn {
+    items(state.items) { item -&gt;
+        val vm = MyItemViewModel()           // создаётся на каждую рекомпозицию!
+        Row { Text(state.globalTitle); Text(item.name) } // читает весь state
+    }
+}
+
+// СТАЛО:
+LazyColumn {
+    items(
+        items = uiItems,
+        key = { it.id },                     // стабильная личность
+        contentType = { it.kind }            // reuse слотов между однотипными
+    ) { item -&gt;
+        // тело читает только своё; ничего тяжёлого не создаём в кадре
+        FeedRow(item)
+    }
+}
+
+@Composable
+private fun FeedRow(item: ItemUi) {
+    // состояние/коллбэки — через remember, чтобы не пересоздавать на рекомпозицию
+    val onClick = remember(item.id) { { /* … */ } }
+    Row { Text(item.name) }                  // не читаем глобальный state здесь
+}</code></pre>
+                <p><strong>Объяснение.</strong> Создание <code>ViewModel</code> в теле <code>item</code> — это аллокация на каждую рекомпозицию (та самая «работа в кадре»); владелец состояния поднимается выше или берётся через <code>remember</code>. Чтение <code>state.globalTitle</code> внутри строки делает все строки зависимыми от глобального состояния — любой тик таймера рекомпозит всё видимое; узкое чтение (только поля <code>item</code>) ограничивает рекомпозицию изменившейся строкой. <code>key</code> по бизнес-id и <code>contentType</code> дают рантайму переиспользовать слоты и не «съезжать» по индексу. Сложность: рекомпозиция падает с O(видимые строки) на тик до O(1) для изменившейся строки.</p>
+              </div>
+            </details>
+          </div>
+        </section>
+
+        <div class="sources"><h2>Источники</h2><ol>
+          <li><a href="https://developer.android.com/topic/performance/rendering" target="_blank" rel="noopener">Rendering performance — Android Developers</a> — обзор отрисовки, jank и инструментов.</li>
+          <li><a href="https://developer.android.com/topic/performance/vitals/render" target="_blank" rel="noopener">Slow rendering (Android vitals)</a> — бюджет кадра по частотам, классификация slow/frozen frames, JankStats.</li>
+          <li><a href="https://developer.android.com/topic/performance/rendering/overdraw" target="_blank" rel="noopener">Reduce overdraw</a> — что такое overdraw, Debug GPU Overdraw, цветовые коды и способы лечения.</li>
+          <li><a href="https://developer.android.com/topic/performance/baselineprofiles/overview" target="_blank" rel="noopener">Baseline Profiles overview</a> — AOT по горячим путям, ~30% выигрыш, компиляция по версиям ОС.</li>
+          <li><a href="https://developer.android.com/topic/performance/benchmarking/macrobenchmark-metrics" target="_blank" rel="noopener">Capture Macrobenchmark metrics</a> — FrameTimingMetric, frameOverrunMs, доступность с Android 12.</li>
+          <li><a href="https://developer.android.com/topic/performance/jankstats" target="_blank" rel="noopener">JankStats library</a> — измерение длительности кадров на реальных устройствах, метки состояния.</li>
+          <li><a href="https://developer.android.com/develop/ui/compose/migrate/migration-scenarios/recycler-view" target="_blank" rel="noopener">Migrate RecyclerView to Lazy list</a> — соответствие view types ↔ contentType, ключи, дифф.</li>
+          <li><a href="https://perfetto.dev/docs/data-sources/frametimeline" target="_blank" rel="noopener">Jank detection with FrameTimeline (Perfetto)</a> — атрибуция дропа кадра на уровне системы, Android 12+.</li>
+        </ol></div>
+      </article>
+    </div>
+    <aside id="toc"></aside>
+  </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="../assets/app.js?v=20260621-1"></script>
+</body>
+</html>

@@ -126,6 +126,8 @@ class ProfileFragment : Fragment(R.layout.profile) {
         super.onDestroyView()
     }
 }</code></pre>
+
+          <details class="qa"><summary>Почему компилятор даёт smart cast для локальной <code>val</code>, но отказывает для nullable <code>var</code>-свойства, даже если строкой выше ты проверил его на <code>null</code>? <span class="q-badge">★</span></summary><div class="ans"><p>Smart cast безопасен только тогда, когда компилятор может доказать, что между проверкой и использованием значение не изменится. Локальная <code>val</code> это гарантирует — её нельзя переприсвоить. А мутабельное свойство (<code>var</code>) — особенно открытое, с кастомным геттером или объявленное в другом модуле — между проверкой <code>if (x != null)</code> и обращением <code>x.length</code> вполне может вернуть уже другое: другой поток переприсвоил поле, либо кастомный геттер при втором вызове отдаст <code>null</code>.</p><p>Поэтому компилятор отказывает с формулировкой «Smart cast to 'String' is impossible, because 'x' is a mutable property that could have been changed by this time». Обходы простые: скопировать в локальную <code>val</code> (<code>val v = x; if (v != null) v.length</code>), завернуть в <code>?.let { }</code>, либо взять на себя ответственность через <code>!!</code>.</p></div></details>
         </section>
 
         <section class="section" id="classes">
@@ -219,6 +221,30 @@ fun load(id: UserId) { /* ... */ }
             <div class="ic">⚠️</div>
             <div class="bd"><strong>Когда boxing всё же происходит.</strong> Если value class используется как nullable (<code>UserId?</code>), в дженериках, в коллекциях или передаётся в Java-код — компилятор упаковывает его в реальный объект. Выигрыш в отсутствии аллокаций сохраняется только на прямых путях без дженериков и nullable.</div>
           </div>
+
+          <p class="subhead">Что копирует <code>copy()</code> — глубоко или поверхностно</p>
+          <p><code>copy()</code> делает <strong>поверхностную</strong> копию: создаёт новый экземпляр и переносит в него ссылки на те же вложенные объекты. Если внутри лежит изменяемая коллекция, оригинал и копия будут указывать на один и тот же список — мутация через копию заденет оригинал.</p>
+          <div class="diagram">
+          <svg viewBox="0 0 460 200" role="img" xmlns="http://www.w3.org/2000/svg">
+            <title>Shallow copy у data class</title>
+            <desc>original и его copy() — разные объекты, но ссылаются на один и тот же вложенный MutableList</desc>
+            <rect x="20" y="30" width="150" height="46" rx="6" fill="var(--panel)" stroke="var(--accent)"/>
+            <text x="95" y="51" text-anchor="middle" fill="var(--text)" font-size="14" font-family="Inter, sans-serif">original</text>
+            <text x="95" y="68" text-anchor="middle" fill="var(--text-dim)" font-size="12" font-family="Inter, sans-serif">User(items=…)</text>
+            <rect x="20" y="124" width="150" height="46" rx="6" fill="var(--panel)" stroke="var(--accent)"/>
+            <text x="95" y="145" text-anchor="middle" fill="var(--text)" font-size="14" font-family="Inter, sans-serif">original.copy()</text>
+            <text x="95" y="162" text-anchor="middle" fill="var(--text-dim)" font-size="12" font-family="Inter, sans-serif">новый объект</text>
+            <rect x="290" y="77" width="150" height="46" rx="6" fill="var(--panel)" stroke="var(--warn)"/>
+            <text x="365" y="98" text-anchor="middle" fill="var(--text)" font-size="14" font-family="Inter, sans-serif">MutableList</text>
+            <text x="365" y="115" text-anchor="middle" fill="var(--text-dim)" font-size="12" font-family="Inter, sans-serif">общая ссылка</text>
+            <path d="M170 53 L290 92" fill="none" stroke="var(--text-dim)" stroke-width="1.5"/>
+            <path d="M170 147 L290 108" fill="none" stroke="var(--text-dim)" stroke-width="1.5"/>
+          </svg>
+          <div class="cap">Shallow copy: два разных объекта делят один вложенный список — мутация видна обоим</div>
+          </div>
+          <p>Второй нюанс: <code>copy()</code> собирает новый объект только по параметрам первичного конструктора и игнорирует свойства из тела класса — они инициализируются заново. Так что <code>data class</code> с состоянием в теле после <code>copy()</code> это состояние теряет. Для настоящей независимости вложенные изменяемые структуры копируйте вручную, а поля держите <code>val</code>.</p>
+
+          <details class="qa"><summary>Почему <code>copy()</code> у data class небезопасен с изменяемыми полями и что именно он копирует — глубоко или поверхностно? <span class="q-badge">★</span></summary><div class="ans"><p><code>copy()</code> делает поверхностную (shallow) копию: новый экземпляр получает ссылки на те же вложенные объекты. Если внутри <code>val items: MutableList&lt;…&gt;</code>, то <code>original</code> и <code>original.copy()</code> ссылаются на ОДИН список — добавишь элемент через копию, и он появится в оригинале.</p><p>Плюс <code>copy()</code> переносит один-в-один только параметры первичного конструктора и не трогает свойства, объявленные в теле класса — те инициализируются заново по своему инициализатору. Поэтому состояние в теле после копирования сбрасывается. Безопасный data class — это <code>val</code>-поля и иммутабельные типы внутри; если вложена изменяемая структура, её надо клонировать вручную.</p></div></details>
         </section>
 
         <section class="section" id="type-system">
@@ -274,6 +300,8 @@ val value = map["key"] ?: error("Ключ не найден")</code></pre>
             <div class="ic">ℹ️</div>
             <div class="bd"><code>Nothing</code> является подтипом каждого типа — поэтому выражение <code>throw</code> совместимо с любым ожидаемым типом. Конструкция <code>val x: String = throw RuntimeException()</code> компилируется: <code>throw</code> имеет тип <code>Nothing</code>, а <code>Nothing</code> — подтип <code>String</code>.</div>
           </div>
+
+          <details class="qa"><summary>Какой тип у <code>emptyList()</code> и почему один и тот же объект можно присвоить и в <code>List&lt;String&gt;</code>, и в <code>List&lt;User&gt;</code>? <span class="q-badge">★</span></summary><div class="ans"><p><code>emptyList()</code> возвращает <code>List&lt;Nothing&gt;</code> — внутри это синглтон-объект <code>EmptyList</code>. <code>Nothing</code> — нижний тип, подтип любого типа, а <code>List</code> ковариантен по элементу (<code>List&lt;out E&gt;</code>). Из ковариантности следует: раз <code>Nothing</code> — подтип <code>String</code>, то <code>List&lt;Nothing&gt;</code> — подтип <code>List&lt;String&gt;</code>. Поэтому одну и ту же пустую коллекцию-синглтон можно безопасно присвоить в <code>List&lt;String&gt;</code>, <code>List&lt;User&gt;</code> и куда угодно — без аллокации новой.</p><p>Тот же приём с <code>Nothing</code> работает для веток sealed без полезной нагрузки: <code>data object Loading : Result&lt;Nothing&gt;</code> подходит под <code>Result&lt;любой T&gt;</code> именно потому, что <code>Result</code> ковариантен, а <code>Nothing</code> — подтип всего.</p></div></details>
         </section>
 
         <section class="section" id="extensions-inline">
@@ -346,6 +374,8 @@ for ((x, y) in listOf(Point(1, 2), Point(3, 4))) { println("$x, $y") }</code></p
 
 val triple = Multiplier(3)
 println(triple(5))   // 15 — вызов через invoke без явного .invoke()</code></pre>
+
+          <details class="qa"><summary>Что напечатает <code>val s: String? = null; println(s.toString())</code> — упадёт с NPE или нет? <span class="q-badge">★</span></summary><div class="ans"><p>Напечатает строку <code>"null"</code> и не упадёт. Extension можно объявить на nullable-приёмнике: <code>fun Any?.toString(): String</code> — именно такая функция и есть в stdlib. Поскольку extension компилируется в статический метод, где приёмник — обычный первый аргумент, передать туда <code>null</code> совершенно законно: это не вызов метода на объекте, а вызов статической функции с аргументом <code>null</code>.</p><p>Внутри тела <code>this</code> имеет тип <code>Any?</code>, и его надо проверять руками. Канонический <code>Any?.toString()</code> для null-приёмника возвращает <code>"null"</code> вместо падения. Поэтому в примере вызывается extension, а не «метод на объекте», и NPE не возникает.</p></div></details>
         </section>
 
         <section class="section" id="scope-fns">
@@ -388,6 +418,22 @@ val message = StringBuilder().run {
             <div class="ic">💡</div>
             <div class="bd"><strong>Практическое правило.</strong> <code>apply</code> и <code>also</code> возвращают объект — пишите в цепочку при настройке или side-эффектах. <code>let</code>, <code>run</code>, <code>with</code> возвращают результат лямбды — используйте, когда нужно вычислить нечто на основе объекта. <code>let</code> vs <code>run</code>: если объект нужен во внешней области видимости под другим именем — <code>let { it }</code>; если переопределяете <code>this</code> внутри блока — <code>run</code>.</div>
           </div>
+          <p>Вся путаница снимается, если держать в голове ровно два вопроса — <em>что вернуть</em> и <em>как обращаться к объекту</em>:</p>
+          <div class="diagram">
+<div class="mermaid">
+flowchart TD
+Start["Нужна scope-функция"] --> Q1{"Что вернуть?"}
+Q1 -->|"сам объект"| Q2{"Как к объекту?"}
+Q1 -->|"результат лямбды"| Q3{"Как к объекту?"}
+Q2 -->|"this"| Apply["apply"]
+Q2 -->|"it"| Also["also"]
+Q3 -->|"this"| RunWith["run / with"]
+Q3 -->|"it"| Let["let"]
+</div>
+          <div class="cap">Две оси выбора: возвращаемое значение × способ обращения к приёмнику</div>
+          </div>
+
+          <details class="qa"><summary>Чем <code>?.let{}</code> отличается от <code>?.also{}</code>, если внутри блока вернуть <code>null</code>, и почему <code>apply</code> иногда молча проглатывает баг? <span class="q-badge">★</span></summary><div class="ans"><p><code>let</code> возвращает результат лямбды, поэтому <code>x?.let { transform(it) }</code> даёт <code>null</code> двумя путями: либо <code>x</code> был <code>null</code> (блок не выполнился), либо блок сам вернул <code>null</code>. <code>also</code> же возвращает приёмник и игнорирует значение лямбды — <code>x?.also { it.log() }</code> всегда вернёт исходный <code>x</code> (или <code>null</code>, если <code>x</code> был null), что бы ни насчитали внутри.</p><p>Подвох <code>apply</code>: он тоже возвращает приёмник, а не результат блока. Напишешь по инерции <code>val n = sb.apply { length }</code> — получишь не длину, а сам <code>StringBuilder</code>, и компилятор промолчит, тип-вывод проглотит ошибку. Правило: считаешь значение из объекта — <code>let/run/with</code>; настраиваешь объект и возвращаешь его — <code>apply/also</code>.</p></div></details>
         </section>
 
         <section class="section" id="generics">
@@ -435,6 +481,48 @@ fun fillWith(list: MutableList&lt;in String&gt;, value: String) {
             <div class="ic">ℹ️</div>
             <div class="bd"><strong>Star-projection <code>&lt;*&gt;</code></strong> — «какой-то конкретный, но неизвестный тип». Не то же, что <code>&lt;Any?&gt;</code>: <code>MutableList&lt;*&gt;</code> можно читать (элементы приходят как <code>Any?</code>), но нельзя в него писать — компилятор не знает реальный <code>T</code>. По семантике эквивалентно <code>&lt;out Any?&gt;</code> для чтения и <code>&lt;in Nothing&gt;</code> для записи.</div>
           </div>
+
+          <p class="subhead">PECS: где можно читать, а где писать</p>
+          <p>Интуиция <code>out</code> = «отдаёт», <code>in</code> = «принимает» закрепляется одной таблицей — что разрешено в каждой роли:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Тип</th><th>Читать как <code>T</code></th><th>Писать <code>T</code></th><th>Кем выступает</th></tr></thead>
+              <tbody>
+                <tr><td><code>Producer&lt;out T&gt;</code></td><td>да</td><td>нет</td><td>источник: только отдаёт</td></tr>
+                <tr><td><code>Box&lt;T&gt;</code> (инвариант)</td><td>да</td><td>да</td><td>и читает, и пишет</td></tr>
+                <tr><td><code>Consumer&lt;in T&gt;</code></td><td>нет (только как <code>Any?</code>)</td><td>да</td><td>приёмник: только принимает</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <details class="qa"><summary>Почему один параметр типа не может быть одновременно <code>out</code> и <code>in</code>, и где компилятор запретит <code>out T</code> во входной позиции? <span class="q-badge">★</span></summary><div class="ans"><p><code>out T</code> означает «<code>T</code> появляется только в out-позициях» — как возвращаемые значения, но не как типы параметров методов; <code>in T</code> — ровно наоборот. Это не стилистика, а гарантия типобезопасности. Будь у ковариантного <code>Producer&lt;out T&gt;</code> метод <code>fun consume(t: T)</code>, через <code>Producer&lt;Any&gt; = producerOfString</code> можно было бы передать туда <code>Int</code> и сломать рантайм. Поэтому компилятор выдаёт «Type parameter T is declared as 'out' but occurs in 'in' position».</p><p>Исключение — приватные члены: они не видны снаружи, и проверку вариантности можно ослабить через <code>@UnsafeVariance</code>. Классика — <code>Function1&lt;in P, out R&gt;</code>: контравариантен по аргументу и ковариантен по результату. Две разные роли требуют двух разных параметров; один параметр обе сразу нести не может.</p></div></details>
+        </section>
+
+        <section class="section" id="generic-functions">
+          <h2>Generic-функции, ограничения и <code>where</code></h2>
+          <p>Вариативность — это про подтипирование. А есть отдельный вопрос, который любят задавать рядом: как вообще объявить дженерик-функцию и как ограничить её параметр. У generic-<strong>класса</strong> параметр живёт на уровне всего класса (<code>class Box&lt;T&gt;</code>); у generic-<strong>функции</strong> — только на время одного вызова (<code>fun &lt;T&gt; singletonList(item: T)</code>), на каждый вызов <code>T</code> выводится заново.</p>
+          <p>По умолчанию верхняя граница параметра — <code>Any?</code>. То есть <code>T</code> может оказаться nullable, и это частый недосмотр: <code>fun &lt;T&gt; T.orThrow()</code> примет и <code>null</code>. Чтобы сузить, ставят upper bound через двоеточие.</p>
+          <div class="code-label">Constraints.kt</div>
+<pre><code class="language-kotlin">// Одно ограничение — в угловых скобках. Теперь T обязан быть Comparable
+fun &lt;T : Comparable&lt;T&gt;&gt; max(a: T, b: T): T = if (a &gt; b) a else b
+
+// T : Any убирает nullable из верхней границы
+fun &lt;T : Any&gt; T.orThrow(msg: String): T = this   // null сюда уже не передать
+
+// Несколько ограничений — одно в &lt;&gt;, остальные в where
+fun &lt;T&gt; copyWhenReady(source: T): T
+    where T : CharSequence,
+          T : Comparable&lt;T&gt; {
+    // внутри доступны методы обоих интерфейсов
+    return source
+}</code></pre>
+          <p>Когда ограничение одно — оно пишется в <code>&lt;&gt;</code>. Когда их несколько — первое всё равно в скобках, а дальше идёт <code>where</code> со списком. Все ограничения проверяются на компиляции, поэтому внутри функции <code>T</code> уже несёт методы перечисленных интерфейсов. С <code>reified</code> (см. <a href="#extensions-inline">inline и reified</a>) это сочетается: <code>inline fun &lt;reified T : Activity&gt;</code> и ограничивает тип, и материализует его в байткоде.</p>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><strong><code>@UnsafeVariance</code> как escape hatch.</strong> Если вариантность параметра мешает в одном узком месте (например, метод <code>contains(e: T)</code> в ковариантной коллекции, где <code>e</code> используется только для сравнения и наружу не утекает), аннотация <code>@UnsafeVariance</code> отключает проверку именно для этой позиции. Это берёт безопасность на себя — применяйте, только когда действительно доказали, что нарушения типов не будет.</div>
+          </div>
+
+          <details class="qa"><summary>Что выведет компилятор для <code>fun &lt;T&gt; T.f()</code> без явной границы — допустим ли там nullable, и как это поправить? <span class="q-badge">★</span></summary><div class="ans"><p>Верхняя граница по умолчанию — <code>Any?</code>, а не <code>Any</code>. Значит, для <code>fun &lt;T&gt; T.f()</code> внутри тела <code>this</code> имеет тип <code>T</code>, который может быть nullable, и вызвать <code>f()</code> на <code>null</code> компилятор разрешит. Это типичный источник скрытых NPE в «универсальных» хелперах.</p><p>Поправка — явная граница <code>T : Any</code>: <code>fun &lt;T : Any&gt; T.f()</code>. Теперь <code>T</code> гарантированно non-null, и попытка <code>nullable.f()</code> не скомпилируется. Тот же приём в stdlib: многие функции вроде <code>checkNotNull</code> и ряд builder-хелперов ограничивают <code>T : Any</code> именно чтобы не пропустить <code>null</code> вглубь.</p></div></details>
         </section>
 
         <section class="section" id="delegation">
@@ -490,6 +578,8 @@ class Settings(prefs: SharedPreferences) {
             <div class="ic">💡</div>
             <div class="bd"><strong><code>provideDelegate</code>.</strong> Если делегату нужна информация о свойстве (например, его имя) <em>в момент создания</em>, а не при чтении/записи, можно добавить оператор <code>provideDelegate</code>. Компилятор вызовет его при инициализации класса и передаст <code>KProperty</code> до первого <code>getValue</code>. Это позволяет, например, проверить имя свойства заранее или зарегистрировать его в реестре.</div>
           </div>
+
+          <details class="qa"><summary>При <code>class C : Iface by impl</code> внутренний вызов одного метода интерфейса из другого попадёт в твоё переопределение в обёртке или в реализацию делегата? <span class="q-badge">★</span></summary><div class="ans"><p>Попадёт в реализацию <strong>делегата</strong>, мимо твоего переопределения. <code>class C : Iface by impl</code> генерирует форвардинг-методы, каждый из которых просто дёргает <code>impl.method()</code>. Если внутри <code>impl</code> один метод интерфейса вызывает другой метод того же интерфейса, он вызовет реализацию внутри самого <code>impl</code> — про существование обёртки <code>C</code> делегат не знает, ссылки на её <code>this</code> у него нет.</p><p>То есть открытой рекурсии и виртуальной диспетчеризации через обёртку здесь нет: переопределив метод в <code>C</code>, ты не «перехватываешь» внутренние вызовы делегата. Частый сюрприз — думаешь, что подменил поведение, а делегат продолжает звать свою старую реализацию.</p></div></details>
         </section>
 
         <section class="section" id="interop">
@@ -577,6 +667,15 @@ val r2 = (1..1_000_000).asSequence()
             <div class="ic">💡</div>
             <div class="bd"><strong>Когда что.</strong> <code>Sequence</code> быстрее на больших данных, длинных цепочках и при коротком замыкании (<code>take</code>/<code>first</code>/<code>find</code>) — экономит память. На маленьких коллекциях <code>Sequence</code> <em>медленнее</em> из-за оверхеда итераторов — обычный <code>List</code> предпочтительнее.</div>
           </div>
+
+          <p class="subhead"><code>@Throws</code> — checked-исключения для Java</p>
+          <p>В Kotlin нет checked exceptions: любая функция может бросить что угодно, ничего не объявляя. Когда такой метод зовут из Java, Java-компилятор не знает, что он бросает, скажем, <code>IOException</code>, и не заставит её обрабатывать (а попытка её поймать даст «exception is never thrown»). Аннотация <code>@Throws(IOException::class)</code> дописывает <code>throws</code> в сигнатуру байткода — Java видит checked-исключение и может/обязана его обработать. На сам Kotlin-код она не влияет, это чисто интероп-аннотация, как <code>@JvmStatic</code>.</p>
+          <div class="code-label">Throws.kt</div>
+<pre><code class="language-kotlin">@Throws(IOException::class)
+fun readConfig(path: String): String = File(path).readText()
+// Java увидит: String readConfig(String path) throws IOException</code></pre>
+
+          <details class="qa"><summary>Почему передача Kotlin <code>List&lt;String&gt;</code> в Java-метод, который делает <code>list.add(...)</code>, компилируется, но падает в рантайме? <span class="q-badge">★</span></summary><div class="ans"><p>Read-only <code>List</code> и <code>MutableList</code> — разные интерфейсы только на стороне Kotlin; на уровне JVM оба отображаются в один <code>java.util.List</code>. Когда Kotlin-<code>List</code> пересекает границу, Java видит обычный <code>java.util.List</code> со всеми мутирующими методами (<code>add</code>, <code>remove</code>), и запретить это компилятор не может.</p><p>Если под капотом лежал реально неизменяемый список (например, результат <code>listOf(...)</code>), вызов <code>add</code> бросит <code>UnsupportedOperationException</code> в рантайме. Это «mutation leak» через интероп: Kotlin-гарантия read-only не переживает переход в Java. Защита — отдавать в Java явную копию (<code>ArrayList(list)</code>) либо чётко документировать контракт.</p></div></details>
         </section>
 
         <section class="section" id="equality-immutability">
@@ -595,6 +694,26 @@ println(a === b)   // false — разные объекты в памяти
             <div class="bd"><strong>Контракт equals/hashCode.</strong> Равные объекты обязаны иметь равный <code>hashCode</code>. Если переопределить только <code>equals</code>, объект исчезнет из <code>HashMap</code>/<code>HashSet</code>. Никогда не кладите в hash-коллекцию <code>data class</code> с <code>var</code>-полями в первичном конструкторе: изменив поле после вставки, вы сделаете объект ненаходимым.</div>
           </div>
 
+          <p class="subhead">Контракт <code>equals</code> и ручной <code>hashCode</code></p>
+          <p>Для <code>data class</code> всё генерируется, но не-data классы (и собеседование) требуют написать руками — и тут важен сам контракт. <code>equals</code> обязан быть рефлексивным (<code>x.equals(x)</code> — <code>true</code>), симметричным (<code>a.equals(b)</code> ⇔ <code>b.equals(a)</code>), транзитивным (<code>a==b</code> и <code>b==c</code> ⇒ <code>a==c</code>), консистентным (повторные вызовы дают тот же результат, пока объект не менялся) и <code>x.equals(null)</code> — всегда <code>false</code>.</p>
+          <p>Самая частая ловушка — симметричность при наследовании. Поэтому класс сверяют через <code>javaClass != other.javaClass</code>, а не через <code>is</code>: с <code>is</code> наследник мог бы считаться равным базовому, но обратное сравнение дало бы <code>false</code> — асимметрия.</p>
+          <div class="code-label">ManualEquals.kt</div>
+<pre><code class="language-kotlin">class Money(val amount: Long, val currency: String) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other == null || javaClass != other.javaClass) return false
+        other as Money
+        return amount == other.amount &amp;&amp; currency == other.currency
+    }
+
+    override fun hashCode(): Int {
+        var result = amount.hashCode()
+        result = 31 * result + currency.hashCode()   // нечётное простое 31
+        return result
+    }
+}</code></pre>
+          <p>Каноничная схема <code>hashCode</code>: взять хеш первого значимого поля и для каждого следующего делать <code>result = 31 * result + field.hashCode()</code>. Множитель 31 — нечётное простое, минимизирует коллизии и оптимизируется в сдвиг (<code>31 * x == (x &lt;&lt; 5) - x</code>). Главный инвариант: <code>a == b</code> ⇒ <code>a.hashCode() == b.hashCode()</code> (обратное не требуется). В обычном коде проще <code>Objects.hash(...)</code> — он чуть медленнее из-за vararg-массива и boxing, но читаемее.</p>
+
           <p class="subhead">Иммутабельность: <code>val</code> ≠ immutable</p>
           <p><code>val</code> запрещает переприсваивание ссылки, но не делает объект неизменяемым. <code>val list = mutableListOf(1)</code> — список можно менять, нельзя лишь присвоить новую ссылку. Настоящая иммутабельность — это неизменяемый тип: read-only интерфейс <code>List</code>, <code>data class</code> с только <code>val</code>-полями в первичном конструкторе.</p>
 
@@ -605,6 +724,17 @@ println(a === b)   // false — разные объекты в памяти
     const val VERSION = "v1"                        // зашивается в байткод (инлайн)
     val timestamp = System.currentTimeMillis()       // рантайм — const здесь невозможен
 }</code></pre>
+
+          <p class="subhead"><code>typealias</code> vs <code>value class</code></p>
+          <p><code>typealias</code> — это только псевдоним для существующего типа, нового типа он не создаёт и типобезопасности не даёт: <code>typealias UserId = Long</code> и обычный <code>Long</code> полностью взаимозаменяемы, перепутать <code>UserId</code> и <code>OrderId</code> компилятор не помешает. Он нужен для читаемости — сократить длинный generic-тип или развести одноимённые классы из разных пакетов. <code>value class</code> (см. выше в <a href="#classes">разделе о классах</a>), наоборот, создаёт отдельный тип с проверкой на компиляции, но без аллокации обёртки на прямых путях.</p>
+          <div class="code-label">Typealias.kt</div>
+<pre><code class="language-kotlin">typealias Handler = (Event, Context) -&gt; Unit   // читаемость для длинного типа
+typealias UserId = Long                          // НЕ новый тип — не защищает от путаницы
+
+// нужна типобезопасность, а не только читаемость → value class
+@JvmInline value class OrderId(val value: Long)</code></pre>
+
+          <details class="qa"><summary>Сгенерированный <code>equals</code> у data class сравнивает поля через <code>==</code> или <code>===</code>, и что будет с полем <code>Double</code>, равным <code>NaN</code>, или с <code>-0.0</code> против <code>0.0</code>? <span class="q-badge">★</span></summary><div class="ans"><p>Сгенерированный <code>equals</code> сравнивает каждое поле структурно (через <code>equals</code> с null-безопасностью), а не по ссылке. Но для <code>Double</code>/<code>Float</code> это даёт неинтуитивный результат, потому что компилятор использует семантику <code>java.lang.Double.equals</code>, а не примитивное <code>==</code>.</p><p>Отсюда два сюрприза. Примитивное <code>NaN == NaN</code> — <code>false</code>, а вот два data class с полем <code>NaN</code> окажутся РАВНЫ: boxed <code>Double.equals</code> считает <code>NaN</code> равным <code>NaN</code>. И наоборот: <code>0.0</code> и <code>-0.0</code> примитивно равны, но как поля data class они НЕ равны (<code>Double.equals</code> их различает), и <code>hashCode</code> у них разный. Поэтому data class с floating-point полями ведёт себя в <code>HashSet</code>/<code>HashMap</code> не так, как ждёшь от обычного <code>==</code>.</p></div></details>
         </section>
 
         <section class="section" id="video">
@@ -710,6 +840,38 @@ println(a === b)   // false — разные объекты в памяти
               <p>Контракт: если <code>a == b</code>, то <code>a.hashCode() == b.hashCode()</code>. Нарушение ломает <code>HashMap</code>/<code>HashSet</code>: объект кладётся в одну корзину, а ищется в другой — и «исчезает».</p>
             </div>
           </details>
+
+          <details class="qa">
+            <summary>Перечисли контракт <code>equals</code> и напиши корректный <code>hashCode</code> вручную для не-data класса. <span class="q-badge">Middle+</span></summary>
+            <div class="ans">
+              <p><code>equals</code> обязан быть рефлексивным (<code>x.equals(x)</code>), симметричным (<code>a.equals(b)</code> ⇔ <code>b.equals(a)</code>), транзитивным (<code>a==b</code> и <code>b==c</code> ⇒ <code>a==c</code>), консистентным (повторные вызовы стабильны, пока объект не менялся) и <code>x.equals(null) == false</code>. Чтобы не сломать симметричность при наследовании, класс проверяют через <code>other?.javaClass != javaClass</code>, а не через <code>is</code>.</p>
+              <p>Каноничный <code>hashCode</code>: начать с хеша первого поля и для каждого следующего делать <code>result = 31 * result + field.hashCode()</code>. Нечётное простое 31 минимизирует коллизии и сворачивается в сдвиг. Главный инвариант: равные объекты ⇒ равный <code>hashCode</code>; обратное не требуется. В проде проще <code>Objects.hash(...)</code> или <code>data class</code>, но на собесе просят руками.</p>
+            </div>
+          </details>
+
+          <details class="qa">
+            <summary>Чем generic-функция отличается от generic-класса и зачем upper bound и <code>where</code>? <span class="q-badge">Middle+</span></summary>
+            <div class="ans">
+              <p>У generic-класса параметр живёт на уровне всего класса (<code>class Box&lt;T&gt;</code>), у generic-функции — только на время вызова (<code>fun &lt;T&gt; singletonList(item: T)</code>), <code>T</code> выводится заново на каждый вызов. Верхняя граница по умолчанию — <code>Any?</code> (то есть nullable допустим).</p>
+              <p>Чтобы сузить, пишут upper bound: <code>fun &lt;T : Comparable&lt;T&gt;&gt; max(...)</code>. Несколько ограничений — одно в угловых скобках, остальные в <code>where</code>: <code>fun &lt;T&gt; copy(...) where T : CharSequence, T : Comparable&lt;T&gt;</code>. Это даёт доступ к методам обоих интерфейсов внутри функции и проверяется на компиляции.</p>
+            </div>
+          </details>
+
+          <details class="qa">
+            <summary>Почему лямбда в Kotlin может менять захваченную <code>var</code>, а в Java — нет? <span class="q-badge">Middle+</span></summary>
+            <div class="ans">
+              <p>Локальная функция (объявленная внутри другой) и лямбда видят локальные переменные внешней функции — это замыкание. В Java лямбда захватывает только effectively final переменные. Kotlin позволяет читать И изменять захваченную <code>var</code>: под капотом компилятор оборачивает такую переменную в объект-ссылку (<code>Ref.IntRef</code> / <code>Ref.ObjectRef</code>) и захватывает ссылку, а не значение — поэтому изменения видны снаружи.</p>
+              <p>Цена — лишняя аллокация обёртки и риск гонок при доступе из разных потоков. Отдельный подводный камень: лямбда, захватившая <code>this</code> или <code>Context</code> и пережившая владельца (колбэк, статическая ссылка), держит его и течёт по памяти.</p>
+            </div>
+          </details>
+
+          <details class="qa">
+            <summary>В каком порядке выполняются init-блоки, инициализаторы свойств и вторичный конструктор? <span class="q-badge">Middle+</span></summary>
+            <div class="ans">
+              <p>Сначала отрабатывает первичный конструктор: инициализаторы свойств и <code>init</code>-блоки выполняются в текстовом порядке сверху вниз, как единый блок. Поэтому <code>init</code> не может читать свойство, объявленное ниже него. Вторичный конструктор обязан делегировать первичному через <code>this(...)</code>, и тело первичного (со всеми <code>init</code>) выполняется ДО тела вторичного.</p>
+              <p>Классическая ловушка наследования: при создании наследника тело базового конструктора выполняется раньше инициализаторов наследника. Если <code>open</code>-метод, вызванный в базовом <code>init</code>, переопределён в наследнике, он увидит ещё не инициализированные поля наследника (<code>null</code>/<code>0</code>). Отложить помогает <code>lateinit</code> или <code>by lazy</code>.</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="tasks">
@@ -805,6 +967,88 @@ println(listResult == seqResult)  // true</code></pre>
             </details>
           </div>
 
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 4.</strong> Дан не-data класс <code>Money(val amount: Long, val currency: String)</code>. Реализуй <code>equals</code> и <code>hashCode</code> вручную так, чтобы они удовлетворяли контракту и корректно работали в <code>HashSet</code>. Объясни, почему для проверки класса используется <code>javaClass</code>-сравнение, а не <code>is Money</code>.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">class Money(val amount: Long, val currency: String) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other == null || javaClass != other.javaClass) return false
+        other as Money
+        return amount == other.amount &amp;&amp; currency == other.currency
+    }
+
+    override fun hashCode(): Int {
+        var result = amount.hashCode()
+        result = 31 * result + currency.hashCode()
+        return result
+    }
+}
+
+fun main() {
+    val set = hashSetOf(Money(100, "USD"))
+    println(Money(100, "USD") in set)   // true — равные объекты, равный hashCode
+}</code></pre>
+                <p>Объяснение: <code>javaClass != other.javaClass</code> (а не <code>other !is Money</code>) защищает симметричность — с <code>is</code> наследник <code>Money</code> мог бы считаться равным <code>Money</code>, но обратное сравнение <code>Money.equals(наследник)</code> дало бы <code>false</code>, и контракт ломается. Инвариант: равные объекты ⇒ равный <code>hashCode</code>, иначе <code>HashSet</code> кладёт в одну корзину, а ищет в другой.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 5.</strong> Напиши inline-функцию <code>measure</code>, которая принимает блок <code>() -&gt; T</code>, замеряет время его выполнения через <code>System.nanoTime()</code> и возвращает пару (результат, миллисекунды). Объясни, что даёт <code>inline</code> здесь и почему без него был бы лишний объект-лямбда.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">inline fun &lt;T&gt; measure(block: () -&gt; T): Pair&lt;T, Long&gt; {
+    val start = System.nanoTime()
+    val result = block()
+    val ms = (System.nanoTime() - start) / 1_000_000
+    return result to ms
+}
+
+fun main() {
+    val (value, ms) = measure { (1..1_000_000).sum() }
+    println("$value за $ms мс")
+}</code></pre>
+                <p>Объяснение: <code>inline</code> встраивает тело <code>block</code> прямо в точку вызова — лямбда не создаётся как <code>Function0</code>-объект (нет аллокации в куче и виртуального <code>invoke()</code>), а замер не включает оверхед вызова. Бонус: внутри <code>block</code> разрешён non-local return — <code>return</code> из <code>measure { ... }</code> выйдет из внешней функции. Аналог в stdlib — <code>measureTimedValue</code>/<code>measureNanoTime</code>.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 6.</strong> Реализуй кастомный делегат свойства <code>nonBlank(default: String)</code>, который при попытке записать пустую/blank-строку оставляет предыдущее значение. Используй operator <code>getValue</code>/<code>setValue</code>. Покажи применение: <code>var name by nonBlank("Аноним")</code>.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">import kotlin.reflect.KProperty
+
+class NonBlankDelegate(private var value: String) {
+    operator fun getValue(thisRef: Any?, prop: KProperty&lt;*&gt;): String = value
+    operator fun setValue(thisRef: Any?, prop: KProperty&lt;*&gt;, newValue: String) {
+        if (newValue.isNotBlank()) value = newValue   // blank игнорируем
+    }
+}
+
+fun nonBlank(default: String) = NonBlankDelegate(default)
+
+class Profile {
+    var name: String by nonBlank("Аноним")
+}
+
+fun main() {
+    val p = Profile()
+    p.name = "   "      // игнорируется
+    println(p.name)     // Аноним
+    p.name = "Ира"
+    println(p.name)     // Ира
+}</code></pre>
+                <p>Объяснение: делегат хранит состояние в себе, <code>getValue</code>/<code>setValue</code> обязаны быть <code>operator</code>-функциями с сигнатурой <code>(thisRef, KProperty)</code>. Альтернатива через stdlib — <code>Delegates.vetoable(default) { _, _, new -&gt; new.isNotBlank() }</code>: возврат <code>false</code> отменяет присваивание.</p>
+              </div>
+            </details>
+          </div>
+
         </section>
 
         <div class="sources">
@@ -818,6 +1062,9 @@ println(listResult == seqResult)  // true</code></pre>
             <li><a href="https://kotlinlang.org/docs/sealed-classes.html" target="_blank" rel="noopener">Kotlin Docs — Sealed classes and interfaces</a>, <a href="https://github.com/JetBrains/kotlin/blob/master/docs/changelogs/ChangeLog-1.6.X.md#L710" target="_blank" rel="noopener">Kotlin changelog — <code>PermittedSubclasses</code></a> и <a href="https://docs.oracle.com/en/java/javase/17/language/sealed-classes-and-interfaces.html" target="_blank" rel="noopener">Oracle Java sealed classes</a> — исчерпывающий <code>when</code>, ограничения Kotlin 1.5+, Java/JVM 17 <code>permits</code>.</li>
             <li><a href="https://kotlinlang.org/docs/fun-interfaces.html" target="_blank" rel="noopener">Kotlin Docs — Functional (SAM) interfaces</a> — <code>fun interface</code>, SAM-конвертация.</li>
             <li><a href="https://kotlinlang.org/docs/operator-overloading.html" target="_blank" rel="noopener">Kotlin Docs — Operator overloading</a> — конвенции операторов, <code>componentN</code>, <code>invoke</code>.</li>
+            <li><a href="https://kotlinlang.org/docs/generics.html#upper-bounds" target="_blank" rel="noopener">Kotlin Docs — Generics: upper bounds</a> — ограничения типа, <code>where</code>, граница по умолчанию <code>Any?</code>.</li>
+            <li><a href="https://kotlinlang.org/docs/equality.html" target="_blank" rel="noopener">Kotlin Docs — Equality</a> — структурное и ссылочное равенство, контракт <code>equals</code>/<code>hashCode</code>.</li>
+            <li><a href="https://kotlinlang.org/docs/type-aliases.html" target="_blank" rel="noopener">Kotlin Docs — Type aliases</a> и <a href="https://kotlinlang.org/docs/java-to-kotlin-interop.html#checked-exceptions" target="_blank" rel="noopener">Java interop — <code>@Throws</code></a> — псевдонимы типов и checked-исключения для Java.</li>
           </ol>
         </div>
       </article>
@@ -828,6 +1075,6 @@ println(listResult == seqResult)  // true</code></pre>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/app.js?v=20260620-4"></script>
+  <script src="../assets/app.js?v=20260621-1"></script>
 </body>
 </html>

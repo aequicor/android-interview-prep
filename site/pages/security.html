@@ -101,6 +101,15 @@
             <div class="ic">💡</div>
             <div class="bd"><strong>Не катайте свою крипту.</strong> Используйте проверенные примитивы и высокоуровневые обёртки (Tink, Jetpack Security). «Roll your own crypto» — классический способ выстрелить себе в ногу (неправильный режим, реюз nonce, утечка по таймингам).</div>
           </div>
+
+          <details class="qa">
+            <summary>AES-GCM безопасен лишь до некоторого числа шифрований одним ключом со случайным 96-битным IV. Почему случайный IV «выдыхается» раньше счётчикового, и что делать, если приложение шифрует очень много сообщений одним ключом? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>Виноват «парадокс дней рождения». При случайном 96-битном IV вероятность повтора nonce растёт не линейно, а как квадрат числа шифрований — поэтому уже после порядка миллиардов операций риск коллизии IV перестаёт быть пренебрежимым. А для GCM повтор nonce под одним ключом — это не «ну подумаешь», а катастрофа: вскрывается ключ аутентификации и рушится конфиденциальность.</p>
+              <p>Детерминированный счётчик такого квадратичного роста не даёт — он гарантирует уникальность, пока не переполнился. Но за это вы платите хрупким требованием: надёжно хранить состояние счётчика между запусками. На мобильном устройстве, где процесс убивают в любой момент, это легко проворонить.</p>
+              <p>Практические выходы простые. Ограничивайте число операций на ключ и вовремя его ротируйте; отдайте управление ключами библиотеке вроде Tink, где лимиты и ротация keyset уже заложены; либо возьмите misuse-resistant режим вроде AES-GCM-SIV, который прощает случайный повтор nonce. На собесе ценят сам факт, что у GCM есть «бюджет» шифрований на ключ, а не вера в безграничную стойкость.</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="keystore">
@@ -172,6 +181,85 @@ flowchart LR
           </div>
           <div class="cap">Envelope encryption: данные шифруются DEK внутри приложения, а DEK защищён KEK из Keystore, который физически не покидает TEE/StrongBox</div>
           </div>
+
+          <details class="qa">
+            <summary>Приложение хочет доказать бэкенду, что приватный ключ реально сгенерирован в TEE/StrongBox именно этого устройства, а не подсунут с рута. Как это сделать, и почему <code>KeyInfo.isInsideSecureHardware()</code> для этого не годится? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>Нужна Key Attestation. При генерации ключа задают <code>attestationChallenge</code> (nonce от сервера), и Keystore возвращает цепочку X.509-сертификатов: листовой подписан ключом, чья цепочка восходит к корневому attestation-ключу Google (для hardware-backed устройств). В расширении листового сертификата зашиты security level (Software/TEE/StrongBox), <code>verifiedBootState</code>, <code>deviceLocked</code>, версия патчей и сам challenge.</p>
+              <p>Проверяет цепочку и поля сервер: совпадение challenge закрывает replay, а корень Google — подделку. А вот <code>isInsideSecureHardware()</code>/<code>getSecurityLevel()</code> выполняются в самом приложении и опираются на ответ локального API — на руте этот ответ подменяется хуком. Это самоотчёт клиента, а не криптографическое доказательство. Attestation сдвигает доверие на сервер и корень Google; локальная проверка <code>KeyInfo</code> — лишь подсказка для логики на устройстве. Подробно — в параграфе ниже.</p>
+            </div>
+          </details>
+        </section>
+
+        <section class="section" id="key-attestation">
+          <h2>Key Attestation: доказать, что ключ реально в железе</h2>
+          <p>В разделе про Keystore мы проверяли уровень безопасности через <code>isInsideSecureHardware()</code>. Проблема в том, что этот вызов исполняется в вашем же процессе и возвращает то, что ему скажет локальный API. На руте такой ответ подменяется одним хуком Frida — и приложение радостно сообщит серверу «всё в железе», хотя ключ лежит в софте. Локальная проверка — это <strong>самоотчёт клиента</strong>, а не доказательство. Если бэкенду нужна уверенность, что приватный ключ действительно сгенерирован в TEE/StrongBox конкретного устройства, нужен другой механизм — <strong>Key Attestation</strong>.</p>
+
+          <p class="subhead">Как устроено доказательство</p>
+          <p>Идея в том, чтобы вынести доверие за пределы устройства. При генерации ключа вы передаёте <code>setAttestationChallenge()</code> — одноразовый nonce, который выдал ваш сервер. Keystore в ответ кладёт рядом с ключом <strong>цепочку X.509-сертификатов</strong>. Листовой сертификат подписан так, что цепочка восходит к корневому attestation-ключу Google — для honest hardware-backed устройств этот корень известен и публичен. В расширении листового сертификата зашиты поля: <code>securityLevel</code> (Software / TrustedEnvironment / StrongBox), <code>verifiedBootState</code>, <code>deviceLocked</code>, версия патчей безопасности и ваш challenge.</p>
+
+          <div class="code-label">AttestedKey.kt</div>
+<pre><code class="language-kotlin">fun generateAttestedKey(alias: String, serverNonce: ByteArray): Array&lt;Certificate&gt; {
+    val gen = KeyPairGenerator.getInstance(
+        KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore"
+    )
+    val spec = KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN)
+        .setDigests(KeyProperties.DIGEST_SHA256)
+        .setAttestationChallenge(serverNonce)   // ← nonce от сервера, anti-replay
+        .build()
+    gen.initialize(spec)
+    gen.generateKeyPair()                       // приватный ключ НЕ покидает устройство
+
+    val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+    return ks.getCertificateChain(alias)        // X.509-цепочка для отправки на бэкенд
+}</code></pre>
+
+          <p class="subhead">Что проверяет сервер</p>
+          <p>Цепочка едет на бэкенд, и дальше всё происходит там, где атакующий с устройства не дотянется. Сервер валидирует цепочку до корневого attestation-ключа Google (подделать подпись Google нельзя), сверяет <code>attestationChallenge</code> в расширении с тем nonce, что выдал сам (защита от replay), читает <code>securityLevel</code>, <code>verifiedBootState</code> и <code>deviceLocked</code> — и только тогда принимает решение. Приватный ключ при этом физически не покидает устройство: на сервер уходит лишь публичная цепочка-доказательство.</p>
+
+          <div class="diagram">
+          <div class="mermaid">
+sequenceDiagram
+    participant S as Сервер
+    participant A as Приложение
+    participant K as "Keystore (TEE / StrongBox)"
+    S->>A: challenge (одноразовый nonce)
+    A->>K: generateKey(attestationChallenge=nonce)
+    K-->>A: X.509-цепочка (securityLevel, verifiedBoot, challenge)
+    A->>S: цепочка сертификатов
+    S->>S: проверить подпись до корня Google
+    S->>S: сверить challenge (anti-replay)
+    S-->>A: решение по securityLevel
+          </div>
+          <div class="cap">Поток Key Attestation: challenge от сервера превращается в подписанную цепочку, которую проверяет бэкенд, а не само приложение</div>
+          </div>
+
+          <p class="subhead">Attestation vs Play Integrity</p>
+          <p>Их легко спутать, но они отвечают на разные вопросы и хорошо дополняют друг друга.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Критерий</th><th>Key Attestation</th><th>Play Integrity</th></tr></thead>
+              <tbody>
+                <tr><td>Что доказывает</td><td>Этот ключ — в hardware-backed Keystore данного устройства</td><td>Это подлинный экземпляр APK из Play на честном устройстве</td></tr>
+                <tr><td>Доказательство</td><td>X.509-цепочка до корня Google</td><td>Подписанный Google токен вердикта</td></tr>
+                <tr><td>Где проверять</td><td>На сервере</td><td>На сервере</td></tr>
+                <tr><td>Когда брать</td><td>Привязка криптоключа к железу: платежи, identity, e2e</td><td>Отсечь эмуляторы, перепак, рут для бизнес-логики</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Не вся аттестация одинаково надёжна.</strong> Старые устройства поддерживают только software-attestation (корень не Google — доказательству грош цена), корни Google периодически отзываются, а часть полей различается между версиями Keymaster. Проверяйте цепочку <em>только на сервере</em> и закладывайте отзыв корней в логику валидации, иначе attestation превратится в тот же самоотчёт, от которого вы уходили.</div>
+          </div>
+
+          <details class="qa">
+            <summary>На руте <code>isInsideSecureHardware()</code> можно заставить вернуть <code>true</code> хуком. Что мешает атакующему так же «подделать» цепочку Key Attestation? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>Разница в том, <em>кто</em> подписывает результат. <code>isInsideSecureHardware()</code> возвращает значение, которое формирует код в вашем же процессе, — его выход хукается тривиально, подписи под ним нет. Цепочку же attestation подписывает ключ, восходящий к корню Google внутри secure world; чтобы подделать её, нужен приватный ключ Google, которого у атакующего нет.</p>
+              <p>Поэтому атака смещается с «подделать ответ» на «украсть подписывающий attestation-ключ из железа» — а это та же задача, что и извлечь любой ключ из TEE/StrongBox, то есть практически нерешаемая на серийном устройстве. Плюс challenge в цепочке привязан к конкретной серверной сессии, так что и переиграть старую честную цепочку (replay) не выйдет. Отсюда вывод: цепочку обязательно валидирует сервер; локальный разбор полей доказательством не считается.</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="biometric">
@@ -231,6 +319,15 @@ fun decryptWithBiometric(
             <div class="ic">💡</div>
             <div class="bd"><strong>Почему CryptoObject сильнее «флага».</strong> Без него вы доверяете булеву результату prompt — а его можно подделать инструментацией. С <code>CryptoObject</code> успешная биометрия <em>разблокирует сам ключ в TEE</em>: если злоумышленник не прошёл биометрию, <code>cipher.doFinal()</code> провалится, потому что ключ недоступен. Аутентификация становится частью крипто-операции, а не отдельным «да/нет».</div>
           </div>
+
+          <details class="qa">
+            <summary>Ключ создан с <code>setUserAuthenticationRequired(true)</code>. Чем поведение <code>setUserAuthenticationParameters(0, ...)</code> отличается от ненулевого тайм-аута, и почему вариант с тайм-аутом обычно нельзя использовать с <code>CryptoObject</code>? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>Тайм-аут <code>0</code> — это auth-per-use: ключ разблокируется ровно для одной криптооперации и привязывается к конкретному <code>CryptoObject</code>, который вы передаёте в <code>BiometricPrompt</code>. Именно поэтому хук на callback тут бесполезен — без свежей биометрии ключ просто недоступен.</p>
+              <p>Ненулевой тайм-аут — это time-bound: после любой подходящей аутентификации (например, разблокировки экрана) ключ остаётся доступным заданное число секунд, и операцию можно выполнить без отдельного prompt и без <code>CryptoObject</code>. Разница в модели угроз: time-bound снова доверяет факту «недавно аутентифицировались», а не привязывает операцию к самой биометрии — окно между разблокировкой и use-операцией атакуемо.</p>
+              <p>Для строгой схемы «данные нельзя расшифровать без свежей биометрии прямо сейчас» нужен per-use ключ с <code>CryptoObject</code>. Time-bound выбирают, когда важнее удобство — массовые операции после одного входа. И отдельно: <code>setUnlockedDeviceRequired(true)</code> запрещает использовать ключ на заблокированном устройстве.</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="reverse">
@@ -276,6 +373,62 @@ flowchart LR
 
           <p class="subhead">Play Integrity API</p>
           <p>Заменил устаревший SafetyNet Attestation. Возвращает подписанный Google вердикт о целостности: <strong>устройства</strong> (<code>MEETS_BASIC_INTEGRITY</code> / <code>MEETS_DEVICE_INTEGRITY</code> / <code>MEETS_STRONG_INTEGRITY</code>), <strong>приложения</strong> (подлинный ли APK из Play, не перепакован), <strong>аккаунта</strong>. <code>MEETS_STRONG_INTEGRITY</code> — высший уровень: требует hardware-backed подтверждения загрузки (verified boot) и свежих патчей безопасности; рутованные устройства с разблокированным загрузчиком его обычно не проходят. Критично: <strong>вердикт нужно проверять на вашем сервере</strong> (валидировать подпись токена), иначе ответ можно подделать на клиенте.</p>
+
+          <details class="qa">
+            <summary>Почему root- и Frida-детект на клиенте — это принципиально «гонка, которую защищающийся не выигрывает», и что тогда делает Play Integrity иначе? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>Любой клиентский детект — поиск <code>su</code>-бинарей, проверка свойств сборки, скан памяти на gadget Frida, обнаружение открытого порта frida-server — исполняется в том же процессе, который контролирует атакующий. Тем же Frida хукается сама проверка и заставляется вернуть «чисто», а артефакты прячутся руткитом уровня Magisk/Zygisk. Это вечная гонка сигнатур, и на подготовленном устройстве она проигрывается.</p>
+              <p>Play Integrity устроен принципиально иначе: вердикт о целостности и подлинности APK формируется и подписывается <em>за пределами приложения</em> (Google Play services плюс аппаратное подтверждение, для <code>STRONG_INTEGRITY</code> — verified boot), а проверяется на вашем сервере по подписи токена. Подпись Google атакующий подделать не может — значит, решение нельзя «хукнуть» на устройстве. Вывод для собеса: клиентский детект годится как сигнал и для удорожания атаки, но критичные решения опираются на серверную проверку аттестации.</p>
+            </div>
+          </details>
+        </section>
+
+        <section class="section" id="obfuscation">
+          <h2>Обфускация и защита бинаря: что R8 умеет и чего не делает</h2>
+          <p>«Мы включили R8, приложение защищено от реверса» — фраза, на которой собес часто и заканчивается не в пользу кандидата. R8 полезен, но даёт ложное чувство брони. Разберёмся, что он реально делает, а что нет.</p>
+
+          <p class="subhead">Что R8 делает в релизе</p>
+          <p>В релизной сборке R8 выполняет три вещи: <strong>shrinking</strong> (выкидывает недостижимый код и ресурсы), <strong>оптимизацию</strong> (инлайнинг, упрощения) и <strong>переименование</strong> классов, методов и полей в короткие имена вроде <code>a.b.c</code>. Соответствие исходных и обфусцированных имён пишется в <code>mapping.txt</code> — без него вы не деобфусцируете собственные краш-репорты, поэтому файл бережно хранят для каждого релиза.</p>
+
+          <p class="subhead">Чего R8 не делает</p>
+          <p>R8 не шифрует строки и константы — все литералы, включая «секреты» в <code>BuildConfig</code>, остаются в открытом виде в <code>classes.dex</code>. Он не прячет логику: переименование путает символы, но поток управления виден. И он никак не мешает динамическому анализу — Frida хукает по адресам и сигнатурам независимо от того, как назван метод. Обфускация ≠ шифрование: первая <em>затрудняет понимание</em>, второе делает данные <em>нечитаемыми без ключа</em>.</p>
+
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Keep-правила — это утечка читаемой поверхности.</strong> Каждый класс, который вы исключаете из обфускации (обычно ради рефлексии или Gson), остаётся с исходными именами. Чем шире <code>-keep</code>, тем больше понятного кода видит реверсер. Широкое правило вроде <code>-keep class com.app.** { *; }</code> по сути отключает обфускацию для целого пакета.</div>
+          </div>
+
+          <div class="code-label">proguard-rules.pro — узкое keep вместо широкого</div>
+<pre><code class="language-kotlin"># ПЛОХО: открывает весь пакет — имена классов и методов читаемы
+-keep class com.app.model.** { *; }
+
+# ЛУЧШЕ: сохраняем только то, что реально нужно рефлексии/Gson
+-keepclassmembers class com.app.model.ApiResponse {
+    &lt;fields&gt;;
+}
+# и аннотируем @SerializedName, чтобы имена полей не зависели от обфускации</code></pre>
+
+          <p class="subhead">Что добавить поверх R8</p>
+          <p>Реальная защита бинаря (MASVS-RESILIENCE) собирается слоями: шифрование чувствительных строк, вынос ключевой логики в native (NDK/C++) — нативный код труднее анализировать, control-flow обфускация и anti-tamper (проверка подписи и целостности). Но потолок остаётся прежним: на полностью контролируемом устройстве клиентская защита обходима. Поэтому критичное доверие всё равно живёт на сервере.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Угроза</th><th>R8 помогает?</th><th>Что реально помогает</th></tr></thead>
+              <tbody>
+                <tr><td>Чтение структуры кода</td><td>Частично (путает имена)</td><td>R8 + control-flow обфускация</td></tr>
+                <tr><td>Извлечение строк/секретов</td><td>Нет</td><td>String encryption, секреты на сервере</td></tr>
+                <tr><td>Динамический анализ (Frida)</td><td>Нет</td><td>Anti-hooking + серверное доверие</td></tr>
+                <tr><td>Перепаковка APK</td><td>Нет</td><td>Anti-tamper, Play Integrity</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <details class="qa">
+            <summary>Вы заливаете в краш-аналитику деобфусцированные стектрейсы. Чем это удобство опасно с точки зрения защиты бинаря, и как быть? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>Деобфускацию делает <code>mapping.txt</code> — таблица «обфусцированное имя → исходное». Если этот файл утечёт (попал в репозиторий, в публичный артефакт сборки, в открытый бакет), вся работа R8 по запутыванию имён обнуляется: реверсер прогоняет ваш APK через mapping и получает читаемые имена классов и методов. То есть удобство «красивых стектрейсов» и стойкость обфускации тянут в разные стороны.</p>
+              <p>Выход — обращаться с <code>mapping.txt</code> как с секретом сборки: не коммитить, хранить в защищённом артефакт-сторадже CI по версиям, загружать в краш-сервис (Crashlytics/Play Console) приватно, а ретрейс делать на их стороне. Тогда вы и стектрейсы читаете, и таблицу наружу не отдаёте. И помните, что R8 — лишь один слой: даже с приватным mapping строки и логику он не прячет.</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="owasp-storage">
@@ -332,6 +485,64 @@ flowchart LR
             <div class="ic">⚠️</div>
             <div class="bd"><strong>Backup и логи.</strong> Отключите авто-бэкап для файлов с секретами (<code>android:allowBackup="false"</code> или правила <code>dataExtractionRules</code>), иначе зашифрованный blob и/или метаданные утекут в облачный бэкап. И никогда не логируйте токены/PII — логи читаются на устройстве и попадают в краш-репорты.</div>
           </div>
+
+          <details class="qa">
+            <summary>Данные зашифрованы через Keystore, но именно MASVS-STORAGE даёт в пентесте больше всего находок. Куда чувствительные данные утекают помимо вашего хранилища, и как это закрыть? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>Шифрование своего файла не закрывает побочные каналы, куда данные копирует <em>сама система</em>. Скриншот окна в Recents и при сворачивании; кэш клавиатуры и автоподстановки (поле без <code>inputType=textNoSuggestions</code> попадает в словарь); буфер обмена (другое приложение прочитает вставленный токен); логи и краш-репорты; авто-бэкап в облако; временные/кэш-файлы и базы, которые приложение пишет в открытом виде.</p>
+              <p>Контрмеры точечные: <code>FLAG_SECURE</code> на чувствительных экранах (гасит и скриншот, и превью в Recents), отключение подсказок для секретных полей, очистка и ограничение clipboard, <code>allowBackup=false</code> или <code>dataExtractionRules</code>, запрет логировать PII и токены. Сильный ответ на собесе: «зашифровал в Keystore» решает лишь часть MASVS-STORAGE, а реальные утечки чаще идут через эти системные кэши и копии. Подробнее — в параграфе ниже.</p>
+            </div>
+          </details>
+        </section>
+
+        <section class="section" id="screen-leaks">
+          <h2>Защита данных на экране и в системных кэшах</h2>
+          <p>Парадокс пентеста: вы аккуратно зашифровали хранилище, а больше всего находок по MASVS-STORAGE приходит вообще не из него. Чувствительные данные утекают через побочные каналы, которые система создаёт сама, без вашего ведома. Экран с балансом и одноразовым кодом — классический пример, на котором это удобно разобрать.</p>
+
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TD
+  D["Чувствительные данные на экране"] --> R["Превью в Recents"]
+  D --> K["Кэш клавиатуры"]
+  D --> C["Буфер обмена"]
+  D --> L["Логи и краш-репорты"]
+  D --> B["Авто-бэкап"]
+  R --> R2["FLAG_SECURE"]
+  K --> K2["textNoSuggestions"]
+  C --> C2["Очистка clipboard"]
+  L --> L2["Не логировать PII"]
+  B --> B2["allowBackup=false"]
+          </div>
+          <div class="cap">Каналы утечки мимо вашего шифрованного файла — и точечная контрмера для каждого</div>
+          </div>
+
+          <p class="subhead">FLAG_SECURE: скриншоты и Recents</p>
+          <p>Флаг на окне запрещает системе делать скриншот и рисовать превью окна в списке недавних приложений (там оно становится серой заглушкой). Это первая линия для экранов с деньгами, кодами и документами. Подвох: <code>FLAG_SECURE</code> ломает и легитимный шеринг экрана/запись — взвешивайте по экрану, а не вешайте глобально.</p>
+          <div class="code-label">SensitiveActivity.kt</div>
+<pre><code class="language-kotlin">override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    // запретить скриншот и превью в Recents для этого окна
+    window.setFlags(
+        WindowManager.LayoutParams.FLAG_SECURE,
+        WindowManager.LayoutParams.FLAG_SECURE
+    )
+    setContentView(R.layout.activity_sensitive)
+}</code></pre>
+
+          <p class="subhead">Кэш клавиатуры, буфер обмена, бэкап</p>
+          <p>Поле для секрета должно отключать предиктивный словарь: <code>inputType="textPassword"</code> или флаг <code>textNoSuggestions</code>, иначе введённый код всплывёт в автоподстановке у следующего пользователя. Буфер обмена читают все приложения — не предлагайте копирование секретов, а скопированное чистите. И закройте авто-бэкап через <code>allowBackup="false"</code> или <code>dataExtractionRules</code>, чтобы данные не уехали в облако в обход вашего шифрования.</p>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Чек-лист экрана с секретом.</strong> <code>FLAG_SECURE</code> на окне → <code>textNoSuggestions</code>/<code>textPassword</code> на полях → нет кнопки «копировать» для токенов и очистка clipboard → ничего чувствительного в логах → <code>allowBackup=false</code>. Это закрывает основной пласт находок MASVS-STORAGE.</div>
+          </div>
+
+          <details class="qa">
+            <summary>Вы повесили <code>FLAG_SECURE</code> на экран с балансом. От какого способа «сфотографировать» данные он принципиально не спасает, и что это говорит о границах метода? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p><code>FLAG_SECURE</code> работает внутри графической подсистемы Android: он запрещает системный скриншот, запись экрана и попадание окна в превью Recents и в неавторизованные виртуальные дисплеи. Но он ничего не знает о мире за пределами устройства — внешнюю камеру, которой просто фотографируют экран, он остановить не может в принципе.</p>
+              <p>Вывод важнее самого факта: <code>FLAG_SECURE</code> закрывает <em>программные</em> каналы копирования (скриншот, screen recording, MediaProjection, Recents), и в этом он надёжен, но против аналоговой дыры — глаз и камера — software-защиты не существует. Поэтому против shoulder-surfing работают другие меры: маскирование данных по умолчанию, показ полного значения только по явному действию, авто-скрытие. Это нормальный ответ на собесе — показать, что вы понимаете модель угроз метода, а не считаете флаг «серебряной пулей».</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="ipc-network">
@@ -390,6 +601,15 @@ flowchart LR
             <div class="ic">🛑</div>
             <div class="bd"><strong>Pinning без backup-pin — мина замедленного действия.</strong> Если запинить один сертификат и он ротируется/истечёт, все клиенты потеряют связь с сервером, а починить можно только обновлением приложения. Всегда закладывайте запасной pin (на будущий ключ) и <code>expiration</code>. Альтернатива в коде — OkHttp <code>CertificatePinner</code>, но конфиг покрывает и WebView.</div>
           </div>
+
+          <details class="qa">
+            <summary>Атакующий на своём рутованном устройстве легко снимает ваш certificate pinning через Frida. Раз так — зачем pinning вообще нужен, и от какой именно угрозы он реально защищает? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>Тут смешивают две разные модели угроз. Pinning не защищает от атакующего, который <em>владеет устройством</em>: на своём девайсе с рутом он всё равно снимет pin хуком или поставит свой CA — против самого себя защиты нет и быть не может.</p>
+              <p>Pinning защищает от атаки «человек посередине» на сетевом канале против обычного, доверчивого пользователя: скомпрометированный или мошеннический CA, корпоративный/публичный MITM-прокси, навязанный root-сертификат. Без pinning приложение доверяет любому валидному сертификату из системного хранилища — и такой «легитимно выписанный» чужой сертификат прошёл бы. Pinning сводит доверие к вашему конкретному ключу.</p>
+              <p>То есть pinning поднимает планку для массовой слежки за трафиком честных пользователей, но не ставит задачу остановить владельца устройства. Поэтому критичные проверки всё равно дублируются на сервере, а пинят по SPKI с backup-pin, чтобы не словить самоблокировку при ротации.</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="video">
@@ -453,6 +673,26 @@ flowchart LR
           <details class="qa">
             <summary>Чем TEE отличается от StrongBox? <span class="q-badge">Senior</span></summary>
             <div class="ans"><p>TEE (Trusted Execution Environment) — изолированный «безопасный мир» на том же SoC, что и основная ОС: ключи исполняются вне Android, но делят физическое железо. StrongBox — отдельный аппаратный Secure Element со своими CPU/RAM/flash: физическая изоляция, защита от side-channel и аппаратного вскрытия — максимальная стойкость. Запрашивается <code>setIsStrongBoxBacked(true)</code>; если не поддержан — <code>StrongBoxUnavailableException</code>, нужно откатиться на TEE. Проверить уровень — <code>KeyInfo.getSecurityLevel()</code>/<code>isInsideSecureHardware()</code>. StrongBox требуется для самых чувствительных ключей (платежи, identity), для большинства задач достаточно TEE.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Чем Key Attestation отличается от Play Integrity API и когда что использовать? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Это разные доказательства. Key Attestation отвечает на вопрос «этот конкретный ключ действительно сгенерирован в hardware-backed Keystore данного устройства и неизвлекаем»: возвращает X.509-цепочку до корня Google с полями security level, <code>verifiedBootState</code>, <code>deviceLocked</code> и вашим challenge — её проверяет ваш сервер. Play Integrity отвечает на вопрос «это подлинный экземпляр моего APK из Play на нескомпрометированном устройстве/аккаунте» и тоже валидируется подписанным токеном на сервере. Их часто комбинируют: attestation — когда нужно привязать криптоключ к железу (платежи, identity, e2e-крипто), Play Integrity — когда нужно отсечь эмуляторы, перепакованные сборки и рут для бизнес-логики. Обе проверки бессмысленны на клиенте — вердикт подтверждает сервер.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>R8/ProGuard уже включён — приложение защищено от реверса? В чём разница обфускации и шифрования? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Нет. R8 в релизе делает shrinking, оптимизацию и переименование классов/методов в короткие имена — это повышает стоимость чтения декомпилированного кода, но не скрывает логику, строки и константы и не мешает динамическому анализу (Frida хукает по адресам и сигнатурам независимо от имён). Строковые литералы, в том числе «секреты» в <code>BuildConfig</code>, остаются в открытом виде в <code>classes.dex</code>. Обфускация ≠ шифрование: обфускация затрудняет понимание, шифрование делает данные нечитаемыми без ключа. Поэтому имена обфусцируют R8, а чувствительные строки и логику дополнительно шифруют/выносят в native, плюс добавляют anti-tamper и серверные проверки. И помните про keep-правила: чем больше классов исключено из обфускации (часто из-за рефлексии/Gson), тем больше читаемой поверхности остаётся.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Если у атакующего root, почему он всё равно не может вытащить приватный ключ из Keystore? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Потому что в hardware-backed Keystore ключевой материал генерируется и используется внутри TEE или StrongBox, а в адресное пространство приложения отдаются только результаты операций (шифртекст, подпись). Root даёт полный контроль над Android OS (rich execution environment), но не над изолированным secure world: между ними аппаратная граница, и API Keystore физически не возвращает байты ключа. Поэтому кража сводится к временному доступу к операции на руте, а не к копированию файла-ключа, и этот доступ отзывается (сменой биометрии, <code>setUserAuthenticationRequired</code>, переустановкой). На software-backed устройствах (старый fallback) ключ живёт в памяти ОС и при руте действительно извлекаем — поэтому для чувствительных ключей проверяют security level и требуют hardware-backing.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Что не так с хранением сессионного токена в EncryptedSharedPreferences сегодня? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Сам подход (шифровать через Keystore, не класть в открытые Prefs) верный, но конкретно <code>EncryptedSharedPreferences</code> и <code>EncryptedFile</code> из Jetpack Security 1.x переведены в deprecated, поэтому для нового кода Google рекомендует либо Tink напрямую, либо собственную тонкую обёртку поверх Keystore (AES-256-GCM + DEK/KEK). Плюс это не решает побочные утечки: токен всё равно может попасть в логи, краш-репорты, буфер обмена или бэкап, если про это не позаботиться отдельно. И стоит привязать ключ к user-auth и держать минимальный TTL — украденный с устройства зашифрованный blob бесполезен без доступа к ключу в TEE.</p></div>
           </details>
 
         </section>
@@ -664,6 +904,83 @@ fun buildSecureClient(): OkHttpClient {
             </details>
           </div>
 
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 4.</strong> Вам дали серверный псевдокод, который «проверяет», что клиент не на руте, доверяя полю <code>isRooted</code> из тела запроса (его шлёт само приложение). Объясните, почему эта проверка ничего не стоит, и опишите корректный поток на базе Play Integrity / Key Attestation, где решение нельзя подделать на клиенте.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">// ❌ Сервер доверяет полю, которое формирует клиент
+// POST /checkout  { "amount": 100, "isRooted": false }
+// if (!body.isRooted) approve()   // атакующий просто шлёт false
+
+// ✅ Доверие смещено на подпись Google и серверную валидацию
+// 1) сервер выдаёт одноразовый challenge
+val challenge: ByteArray = serverApi.requestChallenge()
+
+// 2) клиент получает подписанный вердикт (Play Integrity)
+//    либо Key Attestation с этим challenge как attestationChallenge
+val integrityToken: String = integrityManager
+    .requestIntegrityToken(challenge)   // токен подписан Google
+
+// 3) клиент отправляет токен серверу
+serverApi.checkout(amount = 100, token = integrityToken)
+
+// 4) СЕРВЕР: валидирует подпись токена (корень Google),
+//    сверяет challenge с выданным (anti-replay),
+//    читает deviceIntegrity / appIntegrity — и только тогда решает.</code></pre>
+                <p>Объяснение: поле <code>isRooted</code> формирует клиент, поэтому атакующий хукает функцию-источник или просто правит JSON — проверка обходится тривиально. Корректно: сервер генерирует nonce → клиент запрашивает Play Integrity verdict (или Key Attestation с этим nonce) → шлёт подписанный токен/цепочку → сервер проверяет подпись (корень Google), сверяет challenge (anti-replay), читает уровень целостности. Доверие смещено на подпись Google и серверную валидацию, а самоотчётное поле клиента выбрасывается.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 5.</strong> Экран показывает баланс и одноразовый код. Тестировщик прислал скриншот из шторки Recents, где видны эти данные, и заметил, что введённый код потом всплывает в автоподстановке клавиатуры. Перечислите все каналы утечки на этом экране и закройте их кодом/манифестом.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">// (1) Превью в Recents + скриншот → FLAG_SECURE на окне
+window.setFlags(
+    WindowManager.LayoutParams.FLAG_SECURE,
+    WindowManager.LayoutParams.FLAG_SECURE
+)
+
+// (2) Кэш клавиатуры/автоподстановки → отключить подсказки на поле
+codeInput.inputType =
+    InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+// или в XML: android:inputType="textNoSuggestions" / "textPassword"
+
+// (3) Буфер обмена → не предлагать копирование, чистить clipboard
+// (4) Логи/краш-репорты → не логировать значения кода и баланса
+// (5) Бэкап → android:allowBackup="false" или dataExtractionRules</code></pre>
+                <p>Объяснение: каналы — превью окна в Recents и скриншот (закрывает <code>FLAG_SECURE</code>), кэш клавиатуры/автоподстановки (<code>textNoSuggestions</code>/<code>textPassword</code>), буфер обмена (ограничить и чистить), логи и краш-репорты (не логировать значения), авто-бэкап (<code>allowBackup=false</code>). Это типовой чек-лист MASVS-STORAGE для экрана с секретом — шифрование своего файла его не покрывает.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 6.</strong> Нужно сгенерировать в Keystore ключевую пару EC и получить цепочку аттестации, чтобы сервер убедился, что ключ в TEE/StrongBox. Напишите генерацию ключа с <code>setAttestationChallenge(серверный nonce)</code> и достаньте цепочку сертификатов из Keystore для отправки на бэкенд. Поясните, что именно проверит сервер.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">fun attestKey(alias: String, serverNonce: ByteArray): Array&lt;Certificate&gt; {
+    val gen = KeyPairGenerator.getInstance(
+        KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore"
+    )
+    val spec = KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN)
+        .setDigests(KeyProperties.DIGEST_SHA256)
+        .setAttestationChallenge(serverNonce)   // nonce от сервера → в сертификат
+        .build()
+    gen.initialize(spec)
+    gen.generateKeyPair()                       // приватный ключ не покидает устройство
+
+    val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+    return ks.getCertificateChain(alias)        // X.509-цепочка → сериализовать и на сервер
+}</code></pre>
+                <p>Объяснение: <code>KeyPairGenerator(EC, AndroidKeyStore)</code> + <code>setAttestationChallenge</code> кладёт серверный nonce в листовой сертификат; <code>getCertificateChain(alias)</code> отдаёт X.509-цепочку. Сервер валидирует цепочку до корневого attestation-ключа Google, проверяет, что <code>attestationChallenge</code> в расширении совпадает с выданным (anti-replay), читает <code>securityLevel</code> (TEE/StrongBox), <code>verifiedBootState</code>, <code>deviceLocked</code> и версию патчей — и принимает решение. Приватный ключ не покидает устройство; локальный <code>isInsideSecureHardware()</code> — не доказательство, доказывает только подписанная Google цепочка.</p>
+              </div>
+            </details>
+          </div>
+
         </section>
 
         <div class="sources">
@@ -687,6 +1004,6 @@ fun buildSecureClient(): OkHttpClient {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/app.js?v=20260620-4"></script>
+  <script src="../assets/app.js?v=20260621-1"></script>
 </body>
 </html>

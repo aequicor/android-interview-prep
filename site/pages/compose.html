@@ -103,6 +103,7 @@ fun MessageList(listState: LazyListState) {
             .collect { index -&gt; analytics.log("scrolled_to", index) }
     }
 }</code></pre>
+          <details class="qa"><summary>Почему <code>mutableStateOf</code> по умолчанию сравнивает значения через <code>structuralEqualityPolicy</code>, и когда это приводит к багу? <span class="q-badge">★</span></summary><div class="ans"><p><code>mutableStateOf</code> принимает параметр <code>policy: SnapshotMutationPolicy</code>, и по умолчанию это <code>structuralEqualityPolicy()</code>. При записи новое значение сравнивается со старым через <code>equals()</code>; если они равны, запись не считается изменением и подписчиков никто не уведомляет. Для <code>data class</code> и примитивов ровно то, что нужно — лишних рекомпозиций нет.</p><p>Ловушка вылезает, если положить в <code>State</code> мутабельный объект и менять его поля на месте, не пересоздавая инстанс. Тогда <code>equals</code> сравнивает объект сам с собой и возвращает <code>true</code> — рекомпозиция не происходит, UI замирает на старом виде. Зеркальная проблема у <code>referentialEqualityPolicy()</code> (сравнение по <code>===</code>): два <code>equals</code>-равных, но разных инстанса дадут лишнюю рекомпозицию. Практика простая: храните в <code>State</code> неизменяемые значения и создавайте новый объект на каждое изменение — либо осознанно выбирайте policy под задачу.</p></div></details>
         </section>
 
         <section class="section" id="slot-table">
@@ -144,6 +145,7 @@ fun TodoList(todos: List&lt;Todo&gt;) {
             <div class="ic">💡</div>
             <div class="bd"><strong>На собесе.</strong> «Зачем key в LazyColumn?» — не «для производительности» в общем, а конкретно: чтобы <strong>сохранить идентичность слота</strong> при изменении порядка, иначе ломается состояние/анимации внутри элементов и теряется корректность переиспользования.</div>
           </div>
+          <details class="qa"><summary>Почему ветки <code>if/else</code> с одинаковым <code>Text()</code> получают разную идентичность в slot table, а элементы цикла без <code>key</code> — нет? <span class="q-badge">★</span></summary><div class="ans"><p>Компилятор присваивает каждой группе source-position key — ключ по позиции вызова в исходнике. <code>Text("Hello")</code> в ветке <code>if</code> и <code>Text("World")</code> в <code>else</code> стоят на разных позициях в коде, поэтому это две разные группы с разной идентичностью, и рантайм не перепутает их <code>remember</code>-слоты. Ветвление безопасно без ключа.</p><p>А элементы цикла <code>items { }</code> вызываются с одной и той же позиции вызова — у них совпадает source-position key, и различить их рантайм может только по семантическому ключу, который мы задаём через <code>key()</code>. Без него позиционная мемоизация привязывает слот к индексу: вставка в начало сдвигает всех, и состояние с анимацией «съезжают» на соседей. Отсюда правило — <code>if/else</code> обходятся без ключа, а переупорядочиваемые списки нет.</p></div></details>
         </section>
 
         <section class="section" id="recomposition">
@@ -196,6 +198,28 @@ fun Profile(user: UiUser) {   // user стабилен -> Profile пропуст
 @Immutable data class Posts(val list: List&lt;Post&gt;)
 @Composable fun Feed(items: Posts) { /* ... */ }</code></pre>
           <p>Похожая ловушка — <strong>нестабильная лямбда</strong>: без strong skipping лямбда, захватывающая нестабильное значение, на каждой рекомпозиции — новый инстанс, что ломает skipping у дочернего composable, которому её передали. Выносите такие коллбэки через <code>remember</code> или метод-референс, либо полагайтесь на авто-мемоизацию strong skipping.</p>
+          <details class="qa"><summary>Рекомпозицию называют «оптимистичной» — что это значит и почему опасно делать сайд-эффект прямо в теле composable? <span class="q-badge">★</span></summary><div class="ans"><p>Оптимистичность значит, что рантайм запускает рекомпозицию, рассчитывая её завершить, но готов отменить и перезапустить, если входные значения изменятся до того, как результат применён к дереву. То есть тело composable может выполниться частично и быть выброшенным. Сверху к этому добавляются ещё два свойства модели: порядок выполнения соседних composable не гарантирован, а сама рекомпозиция может идти на другом потоке.</p><p>Поэтому любой побочный эффект прямо в теле — запись в переменную вне state, сетевой вызов, инкремент счётчика — выполнится непредсказуемое число раз или потеряется при отмене. Всё «грязное» выносят в effect-API (<code>LaunchedEffect</code>, <code>SideEffect</code>, <code>DisposableEffect</code>): рантайм вызывает их только на успешно применённой композиции.</p></div></details>
+        </section>
+
+        <section class="section" id="composition-lifecycle">
+          <h2>Жизненный цикл композиции и порядок рекомпозиции</h2>
+          <p>У composable свой жизненный цикл внутри композиции, и он не совпадает с lifecycle <code>Activity</code>/<code>Fragment</code>. Composable <strong>входит в композицию</strong> при первом вызове, <strong>рекомпозируется</strong> ноль или больше раз при изменении входов и <strong>покидает композицию</strong>, когда перестаёт вызываться. Ветка <code>if</code> стала <code>false</code> — composable вышел из композиции, хотя <code>Activity</code> жива; и наоборот, поворот экрана пересоздаёт композицию, не трогая процесс. Именно на вход и выход завязаны эффекты: <code>LaunchedEffect</code>/<code>DisposableEffect</code> стартуют на входе и очищаются на выходе, а <code>remember</code> держит значение, пока composable в композиции.</p>
+          <div class="diagram">
+          <div class="mermaid">
+stateDiagram-v2
+[*] --> Active: первый вызов (enter)
+Active --> Active: входы изменились (recompose 0..N)
+Active --> [*]: больше не вызывается (leave)
+          </div>
+          <div class="cap">Жизненный цикл самого composable — это цикл вход → рекомпозиция → выход, отдельный от lifecycle Activity</div>
+          </div>
+          <p class="subhead">Что Compose гарантирует о порядке и потоке</p>
+          <p>Модель исполнения рекомпозиции — то, что любят спрашивать на Senior. Держите в голове три свойства: рекомпозиция <strong>оптимистична</strong> (может быть отменена и перезапущена при изменении входов до применения результата); порядок выполнения соседних composable <strong>не гарантирован</strong>; рекомпозиция <strong>может идти не на main-потоке</strong>. Из этих трёх свойств выводится единственное практическое правило — <strong>тело composable обязано быть идемпотентным и без побочных эффектов</strong>.</p>
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>Не полагайтесь на порядок и поток.</strong> Нельзя рассчитывать, что соседний composable уже выполнился, и нельзя писать в общую переменную из тела — на другом потоке или при отмене это даст гонку либо потерянную запись. Любой эффект — в effect-API.</div>
+          </div>
+          <details class="qa"><summary>Что такое donut-hole skipping и зачем нужен <code>movableContentOf</code>? <span class="q-badge">★</span></summary><div class="ans"><p>Donut-hole skipping — это когда меняется состояние, прочитанное только во вложенной лямбде или вложенном composable: рантайм рекомпозирует именно эту внутреннюю область («дырку от пончика»), а обёртку вокруг неё пропускает, если она сама skippable и её входы не изменились. Отсюда практический приём — выносить чтение state глубже и в лямбды, чтобы уменьшить объём рекомпозиции.</p><p><code>movableContentOf</code> решает другую задачу: он позволяет переместить кусок UI в другое место дерева — например, переложить элемент между <code>Row</code> и <code>Column</code> при смене ориентации — сохранив его состояние и не пересоздавая. Без него рантайм счёл бы перемещённый блок новым по позиции и сбросил бы его слоты.</p></div></details>
         </section>
 
         <section class="section" id="effects">
@@ -241,6 +265,7 @@ fun Screen(userId: String, onTimeout: () -&gt; Unit) {
             <div class="ic">⚠️</div>
             <div class="bd"><code>LaunchedEffect(Unit)</code> + захват изменяющегося параметра = <strong>устаревший захват</strong>: внутри останется первое значение. Либо добавь параметр в ключи (перезапуск), либо оберни в <code>rememberUpdatedState</code> (без перезапуска). Это любимый «caveat»-вопрос.</div>
           </div>
+          <details class="qa"><summary><code>LaunchedEffect</code> и <code>rememberCoroutineScope</code> оба дают корутины — на каком scope и dispatcher они стартуют и почему это важно? <span class="q-badge">★</span></summary><div class="ans"><p>Оба завязаны на <code>CoroutineScope</code>, привязанный к месту в композиции, и оба наследуют контекст с эффективным диспетчером <code>AndroidUiDispatcher.Main</code> — то есть стартуют на главном потоке. Значит, блокирующую или тяжёлую работу внутри надо явно увести через <code>withContext(Dispatchers.IO/Default)</code>, иначе фризнете UI.</p><p>Разница — в жизненном цикле. Корутина <code>LaunchedEffect</code> отменяется, когда эффект покидает композицию или меняется ключ. Scope от <code>rememberCoroutineScope</code> живёт, пока сам composable в дереве, и его корутины не привязаны к ключам — поэтому он годится для запусков из коллбэков. Запустить <code>suspend</code> прямо в <code>onClick</code> нельзя: <code>onClick</code> не suspend-контекст, отсюда и нужен заранее запомненный scope.</p></div></details>
         </section>
 
         <section class="section" id="viewmodel">
@@ -280,6 +305,7 @@ fun ProfileScreen(vm: ProfileViewModel = hiltViewModel()) {
             <div class="ic">💡</div>
             <div class="bd"><strong>collectAsState vs collectAsStateWithLifecycle.</strong> Первый собирает Flow, пока composable в композиции (даже когда экран в фоне) — лишняя работа и риск утечек. Второй останавливает сбор ниже <code>STARTED</code> (из <code>lifecycle-runtime-compose</code>) — это рекомендованный дефолт для UI-state.</div>
           </div>
+          <details class="qa"><summary>К какому <code>ViewModelStoreOwner</code> привязывается <code>viewModel()</code> внутри composable на экране Navigation Compose, и почему один экран может неожиданно получить общую или новую ViewModel? <span class="q-badge">★</span></summary><div class="ans"><p><code>viewModel()</code> берёт <code>ViewModelStoreOwner</code> из <code>LocalViewModelStoreOwner</code>. В Navigation Compose внутри <code>composable(route)</code> этим owner'ом становится соответствующий <code>NavBackStackEntry</code>, поэтому ViewModel живёт ровно столько, сколько запись в backstack, и уничтожается на <code>popBackStack</code>.</p><p>Отсюда два класса сюрпризов. Если вызвать <code>viewModel()</code> выше графа навигации, owner'ом окажется <code>Activity</code>, и ViewModel станет общей для всех экранов — часто непреднамеренно. И наоборот: чтобы осознанно шарить одну ViewModel между экранами одного flow, явно берут owner родительского navigation-графа через <code>getBackStackEntry(graphRoute)</code>. Область жизни ViewModel определяется не классом, а тем, чей <code>ViewModelStore</code> оказался в <code>LocalViewModelStoreOwner</code> в точке вызова.</p></div></details>
         </section>
 
         <section class="section" id="layout">
@@ -363,6 +389,7 @@ fun Adaptive(content: @Composable (isWide: Boolean) -&gt; Unit) {
             <div class="ic">⚠️</div>
             <div class="bd"><strong>BoxWithConstraints не бесплатен.</strong> Он использует <code>SubcomposeLayout</code> и переносит композицию в measure-фазу. Для простого «если экран широкий» это нормально, но не оборачивай в него каждый элемент списка — на собесе ценят понимание этой цены.</div>
           </div>
+          <details class="qa"><summary><code>Modifier.Node</code> против старого <code>Modifier.composed</code> — почему фабрики на <code>composed</code> считаются дорогими и что изменил <code>Modifier.Node</code>? <span class="q-badge">★</span></summary><div class="ans"><p><code>Modifier.composed { }</code> создаёт модификатор внутри composition-scope: его материализация — это вызов composable, со своим <code>remember</code>-слотом и участием в рекомпозиции, и он не мемоизируется между местами применения. Цепочка из нескольких <code>composed</code>-модификаторов на каждом элементе списка добавляет работу в фазу композиции и мешает skipping.</p><p><code>Modifier.Node</code> (узлы поверх <code>Modifier.Element</code>) переносит логику модификатора из composition в подсистему модификаторов: узел создаётся один раз, переиспользуется и обновляется напрямую в Layout/Draw-фазах — без повторной композиции и без лишних аллокаций на рекомпозицию. Практический вывод: кастомные модификаторы с состоянием пишут на <code>Modifier.Node</code>, а не на <code>composed</code>.</p></div></details>
         </section>
 
         <section class="section" id="perf">
@@ -388,6 +415,70 @@ fun App(analytics: Analytics) {
             <div class="ic">💡</div>
             <div class="bd"><strong>Compose compiler metrics.</strong> Подключив отчёты компилятора, получаешь <code>*-classes.txt</code> и <code>*-composables.txt</code>: видно <code>unstable class Foo</code> и <code>restartable skippable fun Bar</code>. Это объективный способ найти источник лишних рекомпозиций — называй это на собесе, когда спрашивают «как искал перформанс-проблему».</div>
           </div>
+          <details class="qa"><summary>Чем <code>staticCompositionLocalOf</code> отличается от <code>compositionLocalOf</code> по механике инвалидации и почему неверный выбор бьёт по производительности? <span class="q-badge">★</span></summary><div class="ans"><p><code>compositionLocalOf</code> отслеживает чтения: значение хранится в snapshot-state, и при смене значения рекомпозируются только те scope, что реально читали <code>.current</code>. <code>staticCompositionLocalOf</code> чтения не отслеживает — за это он дешевле на чтение, но при смене значения рантайм рекомпозирует <strong>всё</strong> содержимое лямбды <code>CompositionLocalProvider</code> целиком, а не только читателей.</p><p>Правило: для значений, которые меняются в рантайме (тема при переключении день/ночь, конфигурация), берут <code>compositionLocalOf</code> ради точечной инвалидации; для практически неизменяемых зависимостей (ссылка на <code>Analytics</code>, синглтоны вроде <code>LocalContext</code>) — <code>staticCompositionLocalOf</code> ради экономии на чтении. Ошибка в выборе либо рекомпозирует пол-экрана на каждое изменение, либо тратится на трекинг там, где значение не меняется.</p></div></details>
+        </section>
+
+        <section class="section" id="composition-local">
+          <h2>compositionLocalOf vs staticCompositionLocalOf</h2>
+          <p>Оба способа объявить <code>CompositionLocal</code> передают значение неявно вниз по дереву — разница в том, как они реагируют на смену значения. <code>compositionLocalOf</code> <strong>трекает чтения</strong>: значение лежит в snapshot-state, и при <code>provides</code> нового значения рекомпозируются только те composable, которые читали <code>.current</code>. <code>staticCompositionLocalOf</code> чтения <strong>не трекает</strong> — читать его дешевле, но за это рантайм при смене значения рекомпозирует всё поддерево внутри <code>CompositionLocalProvider</code>, а не только читателей.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Критерий</th><th><code>compositionLocalOf</code></th><th><code>staticCompositionLocalOf</code></th></tr></thead>
+              <tbody>
+                <tr><td>Трекинг чтений</td><td>Да (значение в snapshot-state)</td><td>Нет</td></tr>
+                <tr><td>Область рекомпозиции при смене</td><td>Только читатели <code>.current</code></td><td>Всё содержимое Provider</td></tr>
+                <tr><td>Стоимость чтения</td><td>Чуть дороже (трекинг)</td><td>Дешевле</td></tr>
+                <tr><td>Когда брать</td><td>Значение меняется в рантайме (тема, локаль)</td><td>Практически константа (синглтон, Analytics)</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TB
+subgraph DYN["compositionLocalOf — смена темы"]
+P1["Provider"] --> A1["Screen (не читает)"]
+A1 --> R1["Toolbar.current"]
+A1 --> N1["List (не читает)"]
+end
+subgraph STAT["staticCompositionLocalOf — смена темы"]
+P2["Provider"] --> A2["Screen"]
+A2 --> R2["Toolbar.current"]
+A2 --> N2["List"]
+end
+          </div>
+          <div class="cap">Слева рекомпозируется только читатель (Toolbar); справа static рекомпозирует всё поддерево Provider</div>
+          </div>
+          <p class="subhead">Когда CompositionLocal вообще оправдан</p>
+          <p><code>CompositionLocal</code> — это неявная зависимость, и злоупотреблять им как «глобальной переменной» не стоит: явный параметр читается и тестируется проще, а неявное чтение прячет связь composable с контекстом. Хорошие кандидаты — сквозные значения, которые нужны на многих уровнях и редко передаются осознанно (тема, плотность, локаль, доступ к <code>Context</code>). Если значение специфично для конкретного экрана или его удобно увидеть в сигнатуре — это параметр, а не <code>CompositionLocal</code>.</p>
+          <details class="qa"><summary>Почему чтение <code>compositionLocalOf</code> в глубоком узле всё равно может рекомпозировать «много» при смене значения? <span class="q-badge">★</span></summary><div class="ans"><p>Точечность инвалидации работает на уровне recomposition scope, а не отдельной строки. Если <code>.current</code> прочитан высоко в дереве — например, в теле большого composable, который сам не skippable — то инвалидируется весь этот scope со всем его невынесенным содержимым, а не только место чтения. Поэтому «только читатели» означает «только те scope, что читали», и крупный нечитающий-но-обёрточный scope над чтением попадёт под рекомпозицию заодно.</p><p>Лечится тем же приёмом, что и обычная рекомпозиция: читать <code>.current</code> как можно глубже и в наименьшем skippable-composable, чтобы scope-читатель был маленьким. Тогда смена значения затронет минимум узлов.</p></div></details>
+        </section>
+
+        <section class="section" id="accessibility">
+          <h2>Доступность (accessibility) в Compose</h2>
+          <p>Compose строит для каждого composable дерево семантики (semantics tree) — именно его читают TalkBack и тесты, а не сам UI. Большинство стандартных компонентов (<code>Button</code>, <code>Text</code>, <code>TextField</code>) уже выставляют семантику. Доработка нужна там, где смысл несёт картинка, кастомный жест или нестандартный элемент.</p>
+          <p class="subhead">contentDescription и декоративные элементы</p>
+          <p>У <code>Image</code>/<code>Icon</code> параметр <code>contentDescription</code> — это то, что произнесёт TalkBack. Для содержательной картинки дайте короткое описание смысла, а не имя файла. Для чисто декоративного элемента передайте <code>null</code> — тогда он не попадёт в обход скринридера и не создаст шум.</p>
+          <div class="code-label">Semantics.kt</div>
+<pre><code class="language-kotlin">// содержательная иконка: TalkBack произнесёт описание
+Icon(Icons.Default.Delete, contentDescription = "Удалить заметку")
+
+// декоративная: null убирает из обхода скринридера
+Icon(Icons.Default.Circle, contentDescription = null)
+
+// кастомный кликабельный блок без встроенной семантики
+Modifier.semantics {
+    contentDescription = "Лайкнуть пост"
+    role = Role.Button
+}</code></pre>
+          <p class="subhead">mergeDescendants и группировка</p>
+          <p>По умолчанию каждый дочерний элемент — отдельный узел семантики, и TalkBack останавливается на каждом. Если строка списка состоит из аватара, имени и подписи, логично озвучить её одним фокусом: <code>Modifier.semantics(mergeDescendants = true) { }</code> склеивает потомков в один узел. <code>clickable</code> и <code>toggleable</code> делают это автоматически.</p>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Размер тач-таргета ≥ 48 dp.</strong> Material-компоненты сами расширяют интерактивную область до минимума 48×48 dp, даже если иконка визуально меньше. Для кастомных кликабельных элементов задавайте <code>Modifier.size(48.dp)</code> или <code>minimumInteractiveComponentSize()</code> — иначе по мелкой цели тяжело попасть, и это режут на ревью доступности.</div>
+          </div>
+          <p class="subhead">Контраст и тестирование</p>
+          <p>Минимум по WCAG 2.1 уровня AA — контраст текста к фону <strong>4.5:1</strong> для обычного текста и <strong>3:1</strong> для крупного (от 18 pt, или 14 pt полужирного). Проверять руками — TalkBack включается в системных настройках, по экрану ходят свайпами влево/вправо. Семантику можно закрепить и в тесте: <code>composeTestRule.onNodeWithContentDescription("Удалить заметку").assertHasClickAction()</code> проверяет, что узел доступен и кликабелен.</p>
+          <details class="qa"><summary>Когда стоит занулять семантику через <code>clearAndSetSemantics</code> вместо <code>mergeDescendants</code>? <span class="q-badge">★</span></summary><div class="ans"><p><code>mergeDescendants</code> склеивает потомков в один узел, но <strong>сохраняет</strong> их семантику — TalkBack произнесёт всё их содержимое подряд. Иногда этого мало: автоматически собранное описание получается длинным или неудобочитаемым (например, цена «1 299 ₽» произносится по цифрам, а график вообще не озвучить осмысленно).</p><p><code>clearAndSetSemantics { }</code> отбрасывает семантику всех потомков и задаёт свою — это способ полностью переписать, что услышит пользователь. Применяют, когда нужно дать человекочитаемую формулировку вместо машинной склейки, либо скрыть внутреннюю структуру сложного компонента и озвучить его одной фразой. Цена — ответственность: после <code>clearAndSetSemantics</code> всё, что не выставили вручную, для скринридера исчезает.</p></div></details>
         </section>
 
         <section class="section" id="video">
@@ -451,6 +542,26 @@ fun App(analytics: Analytics) {
           <details class="qa">
             <summary>Зачем нужен SubcomposeLayout? <span class="q-badge">Senior</span></summary>
             <div class="ans"><p>Стандартно порядок composition → layout: дети компонуются ДО измерения. <code>SubcomposeLayout</code> позволяет компоновать контент <strong>во время measure-фазы</strong>, когда уже известны constraints/размеры. Это нужно, когда композиция зависит от размера: <code>LazyColumn</code>/<code>LazyRow</code> компонуют только видимые элементы (отложенная композиция); <code>BoxWithConstraints</code> даёт <code>Constraints</code> родителя прямо в composition-scope детей. Цена — композиция переносится в measure-фазу, дороже обычного <code>Layout</code>, поэтому не злоупотребляют.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>compositionLocalOf vs staticCompositionLocalOf — в чём разница и когда что брать? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Оба передают значение неявно вниз по дереву. <code>compositionLocalOf</code> отслеживает чтения: при смене значения рекомпозируются только composable, которые читали <code>.current</code> — подходит для значений, меняющихся в рантайме (тема, локаль). <code>staticCompositionLocalOf</code> чтения не трекает, поэтому дешевле, но смена значения рекомпозирует всё содержимое <code>CompositionLocalProvider</code> целиком — берут его для практически неизменяемых зависимостей (синглтоны, <code>Analytics</code>, аналоги <code>LocalContext</code>).</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Гарантирован ли порядок выполнения composable и на каком потоке идёт рекомпозиция? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Нет. Рекомпозиция оптимистична (может быть отменена и перезапущена при изменении входов до применения результата), порядок вызова дочерних composable не гарантирован, и рекомпозиция может выполняться на потоке, отличном от main. Отсюда правила: не полагаться на порядок выполнения соседних composable, не делать побочных эффектов в теле (они выполнятся непредсказуемое число раз или потеряются при отмене) и выносить всё «грязное» в effect-API.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Жизненный цикл composable: enter / recompose / leave composition — как он соотносится с Activity lifecycle? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>У composable свой жизненный цикл внутри композиции: он входит в композицию (первый запуск), рекомпозируется ноль или больше раз при изменении входов и покидает композицию, когда перестаёт вызываться. С lifecycle <code>Activity</code>/<code>Fragment</code> это напрямую не связано: composable может покинуть композицию, пока <code>Activity</code> жива (ветка <code>if</code> стала <code>false</code>), и наоборот. На вход/выход завязаны эффекты: <code>LaunchedEffect</code>/<code>DisposableEffect</code> стартуют при входе и очищаются при выходе. Поэтому состояние помнят через <code>remember</code> (живёт, пока composable в композиции), а не через поля.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Что такое donut-hole skipping и зачем нужен movableContentOf? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Donut-hole skipping: когда меняется состояние, прочитанное только во вложенной лямбде/composable, рантайм рекомпозирует именно эту внутреннюю область («дырку от пончика»), а обёртку вокруг неё пропускает — если она сама skippable и её входы не изменились. Это объясняет, почему вынос чтения state глубже и в лямбды уменьшает объём рекомпозиции. <code>movableContentOf</code> — отдельный инструмент: он перемещает кусок UI в другое место дерева (например, между <code>Row</code> и <code>Column</code> при смене ориентации), сохраняя его состояние и не пересоздавая, вместо того чтобы рантайм счёл его новым по позиции и сбросил.</p></div>
           </details>
 
         </section>
@@ -581,8 +692,8 @@ fun UserFeed(
         // 3. key по стабильному id: иначе при удалении/вставке
         //    состояние "съезжает" на соседей
         items(users, key = { it.id }) { user -&gt;
-            // 4. Лямбда onFollow без захвата user — стабильна,
-            //    не создаёт новый инстанс на каждой рекомпозиции
+            // 4. Лямбда захватывает user, но со strong skipping (дефолт
+            //    с Kotlin 2.0.20) авто-мемоизируется и не пересоздаётся
             UserCard(user, onFollow = { onFollow(user.id) })
         }
     }
@@ -595,7 +706,70 @@ fun UserCard(user: User, onFollow: () -&gt; Unit) {
         Button(onClick = onFollow) { Text("Follow") }
     }
 }</code></pre>
-                <p>Объяснение: три источника проблем. Первый — <code>List&lt;User&gt;</code> нестабилен, <code>UserFeed</code> не-skippable и рекомпозируется при любом изменении родителя. Второй — <code>data class User</code> без аннотации компилятор не считает стабильным (поле <code>bio: String</code> само по себе стабильно, но аннотация явно закрепляет контракт). Третий — отсутствие <code>key</code> в <code>items</code> ломает identity элементов при reorder. После исправлений <code>UserCard</code> пропускает рекомпозицию, если <code>user</code> и <code>onFollow</code> не изменились.</p>
+                <p>Объяснение: три источника проблем. Первый — <code>List&lt;User&gt;</code> нестабилен, <code>UserFeed</code> не-skippable и рекомпозируется при любом изменении родителя. Второй — стабильность самого <code>User</code>: в пределах модуля компилятор Compose выводит её автоматически (все поля — <code>Long</code>/<code>String</code>, они стабильны), а явная аннотация нужна для типа из другого модуля или с невыводимым полем. Со strong skipping (дефолт с Kotlin 2.0.20) и нестабильные типы становятся skippable — рантайм сравнивает их по <code>equals</code>. Третий — отсутствие <code>key</code> в <code>items</code> ломает identity элементов при reorder. После исправлений <code>UserCard</code> пропускает рекомпозицию, если <code>user</code> и <code>onFollow</code> не изменились.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 4.</strong> Тема приложения переключается день/ночь через <code>CompositionLocal</code>, объявленный как <code>staticCompositionLocalOf</code>. Пользователи жалуются, что при переключении темы заметно фризит весь экран. Объясни причину и исправь объявление.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">// ❌ static не трекает чтения -> смена значения рекомпозирует
+//    ВСЁ содержимое CompositionLocalProvider целиком -> фриз
+val LocalTheme = staticCompositionLocalOf { LightTheme }
+
+// ✅ compositionLocalOf трекает чтения -> рекомпозируются
+//    только реальные читатели LocalTheme.current
+val LocalTheme = compositionLocalOf { LightTheme }</code></pre>
+                <p>Объяснение: <code>staticCompositionLocalOf</code> не отслеживает чтения, поэтому при <code>provides</code> нового значения рантайм рекомпозирует всё поддерево внутри <code>CompositionLocalProvider</code> — отсюда фриз на каждое переключение. Для значения, меняющегося в рантайме, нужен <code>compositionLocalOf</code>: он хранит значение в snapshot-state и рекомпозирует только тех, кто читал <code>.current</code>. Обратное правило тоже важно: для практически неизменяемых зависимостей (синглтоны, <code>Analytics</code>) <code>static</code>, наоборот, дешевле — на нём нет трекинга чтений.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 5.</strong> Composable показывает деталь товара. Внутри <code>LaunchedEffect(Unit)</code> запускается опрос наличия каждые 10 секунд и вызывается переданная лямбда <code>onStockChanged(stock)</code>. При навигации между товарами без выхода с экрана (меняется только параметр <code>productId</code>) пользователь видит уведомления о наличии от ПРЕДЫДУЩЕГО товара. Найди баг и предложи два варианта починки.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">// ❌ баг: LaunchedEffect(Unit) не перезапускается при смене productId,
+//    захваченные productId и onStockChanged остаются от первого товара
+@Composable
+fun ProductDetail(productId: String, onStockChanged: (Int) -&gt; Unit) {
+    LaunchedEffect(Unit) {
+        while (true) {
+            val stock = repo.checkStock(productId)   // устаревший productId
+            onStockChanged(stock)                    // устаревшая лямбда
+            delay(10_000)
+        }
+    }
+}
+
+// ✅ вариант 1: ключ productId -> опрос перезапускается на новый товар
+@Composable
+fun ProductDetail(productId: String, onStockChanged: (Int) -&gt; Unit) {
+    LaunchedEffect(productId) {
+        while (true) {
+            onStockChanged(repo.checkStock(productId))
+            delay(10_000)
+        }
+    }
+}
+
+// ✅ вариант 2: опрос не перезапускаем, но читаем свежие значения
+@Composable
+fun ProductDetail(productId: String, onStockChanged: (Int) -&gt; Unit) {
+    val currentId by rememberUpdatedState(productId)
+    val currentCb by rememberUpdatedState(onStockChanged)
+    LaunchedEffect(Unit) {
+        while (true) {
+            currentCb(repo.checkStock(currentId))
+            delay(10_000)
+        }
+    }
+}</code></pre>
+                <p>Объяснение: <code>LaunchedEffect(Unit)</code> запускается один раз и не перезапускается при смене <code>productId</code>, поэтому корутина держит первый <code>productId</code> и первую лямбду <code>onStockChanged</code> — классический устаревший захват. Вариант 1 добавляет <code>productId</code> в ключи: при навигации корутина отменяется и стартует заново для нового товара. Вариант 2 нужен, когда рестартовать сам опрос нежелательно: <code>rememberUpdatedState</code> оборачивает значения в <code>State</code>, и цикл на каждой итерации читает актуальные <code>productId</code> и коллбэк без перезапуска. Выбор зависит от того, надо ли обнулять интервал опроса при смене товара.</p>
               </div>
             </details>
           </div>
@@ -623,6 +797,6 @@ fun UserCard(user: User, onFollow: () -&gt; Unit) {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/app.js?v=20260620-4"></script>
+  <script src="../assets/app.js?v=20260621-1"></script>
 </body>
 </html>

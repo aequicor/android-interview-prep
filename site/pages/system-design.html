@@ -66,6 +66,8 @@ flowchart TB
             <div class="ic">💡</div>
             <div class="bd"><strong>Скажи это вслух.</strong> «Прежде чем проектировать, уточню scope и нефункциональные требования — в mobile они определяют архитектуру сильнее, чем сами фичи». Так ты сразу показываешь зрелость.</div>
           </div>
+
+          <details class="qa"><summary>Тебе дали кейс «спроектируй ленту на 50 млн DAU», но интервьюер не назвал ни одной цифры. Зачем вообще делать back-of-the-envelope оценку на mobile-собесе и что конкретно она меняет в дизайне клиента? <span class="q-badge">★</span></summary><div class="ans"><p>Оценка нужна, чтобы решения не висели «на глаз». Из размера одной записи ленты и числа экранов ты прикидываешь размер локального кэша и лимит дискового кэша Room/Coil; из частоты обновлений — интервал дельта-синхронизации и TTL; из размера страницы и <code>prefetchDistance</code> — сколько данных тянем за скролл.</p><p>Важно: mobile-оценка идёт не про QPS бэкенда, а про устройство. Сколько мегабайт займёт кэш, сколько трафика съест сессия в 4G, сколько wake-up'ов даст синхронизация. Конкретно на клиенте это меняет page size (обычно 20–50 элементов), агрессивность префетча, политику вытеснения и бюджет трафика на сессию.</p><p>Назвав хотя бы порядок величин — «одна карточка ~1 КБ метаданных + картинка ~50 КБ, держим ~500 в кэше = ~25 МБ» — ты показываешь, что лимиты обоснованы числами, а не взяты с потолка. Подробнее про методику прикидки — в параграфе «Оценка масштаба» ниже.</p></div></details>
         </section>
 
         <section class="section" id="architecture">
@@ -112,6 +114,8 @@ class FeedRepository(
         outbox.enqueue(Operation.Like(productId))          // отправим, когда будет сеть
     }
 }</code></pre>
+
+          <details class="qa"><summary>Если UI читает только из Room через Flow, а сеть пишет в Room, то откуда экран узнаёт про состояния «идёт загрузка» и «ошибка сети»? Их ведь нет в данных БД. <span class="q-badge">★</span></summary><div class="ans"><p>Состояние загрузки и ошибки — это не данные домена, поэтому в основной таблице им не место. Их отдают отдельным каналом. Канонический приём: Repository возвращает данные из Room (<code>Flow</code>), а статус операции — отдельным потоком, и <code>UiState</code> во ViewModel собирает оба через <code>combine</code>. <code>NetworkBoundResource</code> из guide to architecture делает ровно это: эмитит <code>Loading</code> с кэшем, потом <code>Success</code>/<code>Error</code>.</p><p>У Paging 3 для этого есть встроенный <code>CombinedLoadStates</code> (<code>loadState.refresh</code>/<code>append</code> = <code>Loading</code>/<code>Error</code>/<code>NotLoading</code>) — отдельно от самих <code>PagingData</code>. Грубо: «истина о данных» живёт в БД, а «истина о текущей сетевой операции» — это эфемерное UI-состояние, которое не персистят.</p><p>Путать их — частая ошибка. Запишешь <code>isLoading</code> в Room — оно переживёт перезапуск и залипнет навсегда: пользователь увидит вечный спиннер по данным, которые давно пришли.</p></div></details>
         </section>
 
         <section class="section" id="api-data">
@@ -151,6 +155,31 @@ data class RemoteKey(
     @PrimaryKey val label: String,  // напр. "feed"
     val nextCursor: String?,
 )</code></pre>
+
+          <p class="subhead">Удаления в дельте: тумбстоуны</p>
+          <p>Дельта по <code>updatedSince</code> отлично тянет созданное и изменённое, но на удалениях тихо ломается: отсутствие записи в ответе неотличимо от «не менялась». Поэтому удаление делают логическим — через <strong>тумбстоуны</strong> (soft delete): сервер хранит запись с флагом <code>deleted=true</code> и свежим <code>updatedAt</code>, она приходит в обычной дельте, а клиент по флагу удаляет её локально.</p>
+          <div class="diagram">
+          <div class="mermaid">
+sequenceDiagram
+  participant C as Клиент
+  participant S as Сервер
+  C->>S: "GET /changes?updatedSince=T"
+  alt офлайн меньше TTL тумбстоунов
+    S-->>C: "изменённые + тумбстоуны (deleted=true)"
+    C->>C: "upsert живых, delete по тумбстоунам"
+    C->>C: "сохранить новый updatedSince"
+  else офлайн дольше TTL
+    S-->>C: "сигнал full-resync"
+    C->>S: "GET /snapshot (полная выгрузка)"
+    S-->>C: "актуальный набор целиком"
+    C->>C: "заменить локальный кэш"
+  end
+          </div>
+          <div class="cap">Дельта-синхронизация с тумбстоунами: удаление доезжает как запись с флагом; давно офлайн → полный ресинк</div>
+          </div>
+          <p>Тумбстоуны живут TTL (скажем, 30 дней), чтобы таблица не пухла. Клиент, который офлайн дольше TTL, может пропустить удаление — для таких делают <strong>полный ресинк</strong> вместо дельты. Альтернатива без тумбстоунов — сервер отдаёт список живых <code>id</code> за период, клиент вычисляет разницу, но это дороже по трафику.</p>
+
+          <details class="qa"><summary>Дельта-синхронизация по updatedSince отлично тянет созданные и изменённые записи. А как клиент узнает, что запись удалили на сервере, если её просто нет в дельте? <span class="q-badge">★</span></summary><div class="ans"><p>Никак — и это классическая ловушка дельта-синхронизации: отсутствие записи в ответе неотличимо от «не менялась». Удалённое навсегда зависает в кэше.</p><p>Поэтому удаление делают не физическим, а логическим — через тумбстоуны: сервер помечает запись <code>deleted=true</code> со свежим <code>updatedAt</code>, и она приходит в обычной дельте. Тумбстоуны живут TTL, чтобы таблица не пухла, но тогда клиент, который офлайн дольше TTL, пропустит удаление — для «давно не синхронизировавшихся» делают полный ресинк. На собесе важно проговорить именно проблему «удаление невидимо в дельте» — её упускают чаще всего.</p></div></details>
         </section>
 
         <section class="section" id="offline">
@@ -300,6 +329,8 @@ suspend fun pushUpdate(local: ProductEntity): SyncOutcome {
         else -&gt; SyncOutcome.Retry
     }
 }</code></pre>
+
+          <details class="qa"><summary>В outbox лежат три операции по одному объекту (создать черновик → отредактировать → удалить). Сеть появилась. Почему слепо отправлять их по очереди — плохо, и что с этим делают? <span class="q-badge">★</span></summary><div class="ans"><p>Слепой дренаж по очереди генерирует лишние раунд-трипы и упирается в зависимости: удаление нельзя отправить раньше создания, а если создание ещё не подтверждено серверным <code>id</code>, у правки и удаления нет валидного <code>id</code> для запроса.</p><p>Что делают. Первое — <strong>компакция очереди</strong> перед отправкой: три операции над одним объектом сворачиваются в одну итоговую (создать + изменить + удалить = no-op, если объект так и не уехал на сервер). Второе — <strong>порядок и зависимости</strong>: операции над одной сущностью отправляются строго последовательно (упорядочение по <code>createdAt</code>/<code>seq</code>), а после создания клиент подменяет временный локальный <code>id</code> на серверный во всех последующих операциях очереди.</p><p>Плюс идемпотентность (<code>Idempotency-Key</code>) на случай, если ответ на «создать» потерялся, но сервер объект уже создал — повтор не задвоит. Это превращает наивный FIFO-дренаж в корректный sync-движок. Задача на компакцию — в конце главы.</p></div></details>
         </section>
 
         <section class="section" id="paging">
@@ -362,6 +393,8 @@ val pager = Pager(
             <div class="ic">💡</div>
             <div class="bd"><strong>Почему через Room, а не напрямую из сети?</strong> Тогда лента работает офлайн (отдаём кэш), переживает поворот экрана и убийство процесса, не дёргает сеть на каждый скролл. Это прямое следствие принципа «БД — источник истины».</div>
           </div>
+
+          <details class="qa"><summary>Почему RemoteMediator реализован поверх Room (RemoteMediator + PagingSource из Room), а не возвращает страницы прямо в Paging? Что конкретно ломается в варианте «PagingSource напрямую из сети»? <span class="q-badge">★</span></summary><div class="ans"><p>В Paging 3 <code>RemoteMediator</code> — это не источник для UI, а «дозагрузчик кэша»: он срабатывает только когда локальных данных не хватает (<code>LoadType.APPEND</code>/<code>REFRESH</code>), пишет страницы в Room в транзакции и обновляет <code>remote_keys</code>. UI всегда читает из <code>PagingSource</code>, который строит Room (<code>db.dao().pagingSource()</code>). Это даёт single source of truth: лента работает офлайн, переживает поворот и смерть процесса, а сеть не дёргается на каждый скролл.</p><p>Вариант «PagingSource напрямую из сети» теряет всё это: нет офлайна, при пересоздании <code>PagingSource</code> всё грузится заново, и нет места, где консистентно хранить курсор.</p><p>Тонкость: запись в Room надо делать в <code>withTransaction</code> (очистка при <code>REFRESH</code> + upsert + обновление ключей атомарно), иначе между <code>clear</code> и <code>insert</code> UI мигнёт пустой лентой. И эта запись инвалидирует Room-<code>PagingSource</code>, что и заставляет Paging перечитать свежие данные.</p></div></details>
         </section>
 
         <section class="section" id="case">
@@ -414,8 +447,10 @@ flowchart TB
           </ul>
           <div class="callout info">
             <div class="ic">ℹ️</div>
-            <div class="bd"><strong>Вариант «чат».</strong> Если попросят мессенджер — каркас тот же, но: сообщения тоже идут через outbox со статусами (отправляется → доставлено → прочитано), порядок гарантируем монотонным <code>clientSeq</code>, новые сообщения тянем дельтой/через сокет, конфликтов почти нет (append-only), зато важна идемпотентность отправки и устойчивая очередь.</div>
+            <div class="bd"><strong>Вариант «чат».</strong> Если попросят мессенджер — каркас тот же, но: сообщения тоже идут через outbox со статусами (отправляется → доставлено → прочитано), порядок гарантируем монотонным <code>clientSeq</code>, новые сообщения тянем дельтой/через сокет, конфликтов почти нет (append-only), зато важна идемпотентность отправки и устойчивая очередь. Полный разбор — в параграфе «Кейс: чат» ниже.</div>
           </div>
+
+          <details class="qa"><summary>В кейсе ты сказал «при refresh затираем кэш свежими данными». Но пользователь успел лайкнуть товар офлайн (лайк в outbox, ещё не ушёл). Полный refresh ленты не сотрёт его локальный лайк? <span class="q-badge">★</span></summary><div class="ans"><p>Сотрёт — если делать наивный <code>clear()</code> + <code>insert</code> и брать <code>liked</code> прямо из серверного ответа. Поэтому «server wins» применяют только к read-only полям (цена, заголовок, рейтинг), а к полям с незавершёнными локальными изменениями — нет.</p><p>Практически: при upsert мержат — для записей с <code>syncState=PENDING</code> сохраняют локальное состояние пользовательских полей (<code>liked</code>), затирая лишь серверные. Либо лайк вообще хранят в отдельной таблице <code>favorites</code>, не пересекающейся с кэшем ленты, и тогда refresh ленты её не трогает.</p><p>Общий принцип: refresh обновляет только то, чем владеет сервер; то, что ещё «в полёте» в outbox, неприкосновенно до подтверждения. Это ровно тот edge-case, который отличает «нарисовал стрелочки» от «подумал про консистентность при гонке refresh ↔ pending-запись».</p></div></details>
         </section>
 
         <section class="section" id="other-cases">
@@ -447,6 +482,8 @@ class ImageCache(maxMemBytes: Int, private val disk: DiskLruCache) {
 
           <p class="subhead">Аналитика и трекинг событий</p>
           <p>События нельзя терять и нельзя слать по одному (батарея, трафик). Решение: <strong>буфер в БД</strong> (events table) → <strong>батчинг</strong> по размеру/времени → отправка через <code>WorkManager</code> при сети. Каждое событие с <code>eventId</code> (UUID) для дедупликации на бэкенде, отправленные удаляем после ACK. При переполнении — дроп старых или сэмплирование. По сути это тот же outbox-паттерн, что и для записей.</p>
+
+          <details class="qa"><summary>Двухуровневый LRU-кэш картинок: ключ — URL плюс запрошенный размер. Почему размер обязан входить в ключ, и какой баг возникает, если ключ — просто URL? <span class="q-badge">★</span></summary><div class="ans"><p>Один и тот же URL рендерится в разных местах в разных размерах: превью 100×100 в списке и фуллскрин 1080px. Если ключ — только URL, в кэш попадёт первый декодированный bitmap, и все остальные места получат его же: либо размытое превью растянут на фуллскрин, либо (хуже) полноразмерный bitmap положат под превью и съедят память впустую.</p><p>Поэтому ключ memory-кэша = URL + целевой размер/трансформация (Coil так и делает: ключ учитывает <code>size</code> и transformations). Связанный момент — downsampling: <code>BitmapFactory.Options.inSampleSize</code> декодирует картинку сразу уменьшенной (степень двойки), чтобы не держать 12 Мп ради превью 100×100 — без этого OutOfMemory на бюджетных устройствах при скролле почти гарантирован. Диск-кэш при этом часто ключуют по URL (исходник), а ресайз делают при декоде.</p></div></details>
         </section>
 
         <section class="section" id="tradeoffs">
@@ -472,6 +509,293 @@ class ImageCache(maxMemBytes: Int, private val disk: DiskLruCache) {
             <div class="ic">🛑</div>
             <div class="bd"><strong>Безопасность не забываем.</strong> Токены — в защищённом хранилище: ключ в <code>Android Keystore</code>, данные в шифрованном DataStore/Tink (не в обычных prefs; <code>EncryptedSharedPreferences</code> уже в maintenance). TLS + опционально certificate pinning. Чувствительные данные не логируем. Кэш на диске для приватных данных — шифруем (SQLCipher). На rooted-устройствах считаем локальное хранилище потенциально скомпрометированным.</div>
           </div>
+
+          <p class="subhead">Стратегии чтения кэша</p>
+          <p>Когда интервьюер спрашивает «а откуда берёшь данные — из кэша или из сети?», у тебя должна быть готовая шкала политик. Они различаются по тому, что для фичи важнее: мгновенный первый экран или свежесть.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Политика</th><th>Latency 1-го экрана</th><th>Свежесть</th><th>Офлайн</th><th>Трафик</th><th>Когда</th></tr></thead>
+              <tbody>
+                <tr><td>cache-first</td><td>низкая</td><td>может устареть</td><td>работает</td><td>экономный</td><td>каталог, профиль — свежесть терпит</td></tr>
+                <tr><td>network-first</td><td>высокая</td><td>максимальная</td><td>fallback на кэш</td><td>дорогой</td><td>баланс, цена — где staleness болезненна</td></tr>
+                <tr><td>stale-while-revalidate</td><td>низкая</td><td>догоняет в фоне</td><td>работает</td><td>средний</td><td>лента, дашборд — UX по умолчанию</td></tr>
+                <tr><td>cache-only</td><td>низкая</td><td>не обновляет</td><td>работает</td><td>нулевой</td><td>оффлайн-режим, «сохранённое»</td></tr>
+                <tr><td>network-only</td><td>высокая</td><td>максимальная</td><td>не работает</td><td>дорогой</td><td>платежи, одноразовые токены</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Дефолт для большинства экранов — <strong>stale-while-revalidate</strong>: сразу показываем кэш (мгновенный экран), параллельно обновляем и доливаем свежее. Детали инвалидации (TTL, ETag/304, cache stampede) — в параграфе «Стратегии кэширования» ниже.</p>
+
+          <details class="qa"><summary>Ты выбрал WorkManager для синхронизации и сказал «не realtime». А почему нельзя просто держать открытый WebSocket из foreground-сервиса, чтобы синк был мгновенным? В чём системная цена? <span class="q-badge">★</span></summary><div class="ans"><p>Постоянный сокет из foreground-сервиса не даёт ОС усыпить радио и процесс, поэтому жрёт батарею и упирается в фоновые ограничения. С Android 8.0 (API 26) фоновые сервисы ограничены, а в Doze/App Standby сеть и wake-up'ы режутся — «вечный сокет в фоне» система всё равно прибьёт или заморозит.</p><p>Правильный паттерн — гибрид. WebSocket держим только пока приложение в foreground (мгновенный realtime для активного пользователя), а для фона/убитого приложения будит FCM high-priority push, который пробивает Doze. Данные при этом обычно тянут отдельно (push как «звоночек», не как транспорт payload): у FCM data-сообщения лимит payload 4 КБ и доставка best-effort. WorkManager отвечает за гарантированную отложенную работу (дренаж outbox, дельта-синк) с backoff (минимум 10 секунд, <code>MIN_BACKOFF_MILLIS</code>) и constraints.</p><p>Цена realtime-сокета — батарея и борьба с background-ограничениями; цена FCM + WorkManager — задержка. Senior называет именно этот гибрид, а не одну крайность.</p></div></details>
+        </section>
+
+        <section class="section" id="realtime">
+          <h2>Real-time транспорт: WebSocket и переподключение</h2>
+          <p>Дизайн чата или живой ленты почти всегда упирается в один вопрос: как доставлять обновления мгновенно. Polling простой, но при коротком интервале жжёт батарею и трафик, а при длинном даёт задержку. Для настоящего realtime берут <strong>WebSocket поверх TLS</strong>: одно персистентное двунаправленное соединение, низкая latency для доставки сообщений и статусов «доставлено/прочитано».</p>
+
+          <p class="subhead">Транспорты реального времени</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Транспорт</th><th>Направление</th><th>Батарея / фон</th><th>Когда брать</th></tr></thead>
+              <tbody>
+                <tr><td>Short polling</td><td>клиент тянет</td><td>плохо при частом</td><td>редкие некритичные обновления</td></tr>
+                <tr><td>Long polling</td><td>клиент тянет, сервер держит</td><td>средне</td><td>fallback, где сокет недоступен</td></tr>
+                <tr><td>SSE (server-sent events)</td><td>сервер → клиент</td><td>средне</td><td>односторонний поток (лента событий)</td></tr>
+                <tr><td>WebSocket</td><td>двунаправленный</td><td>дорогой, только foreground</td><td>чат, presence, live-обновления</td></tr>
+                <tr><td>gRPC streaming</td><td>дву-/односторонний</td><td>как сокет</td><td>типизированные стримы, internal API</td></tr>
+                <tr><td>MQTT</td><td>pub/sub брокер</td><td>экономный (lightweight)</td><td>IoT, частые мелкие сообщения</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="subhead">WebSocket сам не переподключается</p>
+          <p>Это главная ловушка. Соединение рвётся при смене сети, тайм-ауте, перезагрузке сервера — и библиотека просто отдаёт <code>onFailure</code>/<code>onClosed</code>. Реконнект пишешь сам: экспоненциальный backoff плюс <strong>jitter</strong> (случайная добавка), иначе тысячи клиентов после падения сервера ударят синхронным штормом переподключений. Мёртвое соединение детектируешь <strong>heartbeat</strong>'ом (ping/pong): нет понга за таймаут — считаем сокет мёртвым и реконнектимся. На балансировке нужны <strong>sticky sessions</strong>, чтобы клиент после подключения оставался на том же чат-сервере.</p>
+          <div class="diagram">
+          <div class="mermaid">
+stateDiagram-v2
+  [*] --> Disconnected
+  Disconnected --> Connecting: connect()
+  Connecting --> Connected: handshake ok
+  Connecting --> Reconnecting: ошибка
+  Connected --> Connected: ping/pong ok
+  Connected --> ConnectionLost: нет понга / обрыв
+  ConnectionLost --> Reconnecting: backoff + jitter
+  Reconnecting --> Resync: handshake ok
+  Resync --> Connected: дотянули пропущенное
+          </div>
+          <div class="cap">Жизненный цикл сокета: реконнект с backoff+jitter, а после него — обязательный ресинк пропущенного</div>
+          </div>
+          <p>Ключевой шаг — <strong>ресинк на каждом реконнекте</strong>. Пока сокета не было, могли прийти сообщения; при возврате клиент дотягивает их дельтой (<code>messagesSince=lastSeenSeq</code>). Отправка идёт через тот же надёжный outbox со статусами и <code>Idempotency-Key</code>, а порядок гарантирует монотонный <code>clientSeq</code>. Presence (online/typing) и last seen — отдельный, более дешёвый и «эфемерный» поток: его не персистят и не гарантируют доставку.</p>
+          <div class="code-label">ChatSocketClient.kt (реконнект-цикл)</div>
+<pre><code class="language-kotlin">suspend fun runConnectionLoop() {
+    var attempt = 0
+    while (currentCoroutineContext().isActive) {
+        try {
+            connect()                       // suspend до закрытия сокета
+            attempt = 0                     // успех — сбросили счётчик
+            resyncSince(lastSeenSeq)        // дотянуть пропущенное
+            listen()                        // suspend, пока сокет жив
+        } catch (e: Exception) {
+            val backoff = minOf(BASE * (1L &lt;&lt; attempt), MAX_DELAY)
+            val jitter = Random.nextLong(JITTER)   // ломаем синхронный шторм
+            delay(backoff + jitter)
+            attempt++
+        }
+    }
+}</code></pre>
+
+          <details class="qa"><summary>Зачем jitter в backoff, если экспонента и так разносит попытки во времени? <span class="q-badge">★</span></summary><div class="ans"><p>Экспонента разносит попытки <em>одного</em> клиента, но не разных. Представь: сервер упал, тысяча клиентов одновременно потеряла сокет. Без jitter все они отсчитают одинаковый backoff и ударят реконнектом ровно в одну и ту же миллисекунду — и так на каждой итерации, пока сервер не ляжет повторно от этого же шторма (thundering herd). Случайная добавка размазывает попытки по окну, и нагрузка на восстановившийся сервер становится плавной. Это дешёвая строчка кода, которая отделяет «работает на демо» от «переживает массовый обрыв».</p></div></details>
+        </section>
+
+        <section class="section" id="push">
+          <h2>Push-уведомления и фоновые ограничения</h2>
+          <p>Сокет хорош, пока приложение на экране. В фоне ОС усыпляет радио и режет фоновую активность, поэтому держать соединение нельзя — нужен другой канал разбудки. Это <strong>FCM</strong> (Firebase Cloud Messaging).</p>
+
+          <p class="subhead">Почему сокет в фоне нежизнеспособен</p>
+          <p>С Android 8.0 (API 26) фоновые сервисы ограничены: запустить долгоживущий сервис из фона нельзя без foreground-уведомления. А <strong>Doze</strong> и App Standby при выключенном экране откладывают сетевой доступ и wake-up'ы пачками в редкие «окна обслуживания». Открытый сокет в таком режиме либо замёрзнет, либо ОС просто прибьёт процесс. Foreground-сервис ради вечного сокета — это постоянное уведомление и быстрый расход батареи, на что пользователи и Play реагируют плохо.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TB
+  EV["Событие на сервере"] --> Q{"Состояние приложения?"}
+  Q -->|foreground| WS["WebSocket<br/>мгновенная доставка"]
+  Q -->|фон / убито| FCM["FCM high-priority push<br/>пробивает Doze"]
+  FCM --> WM["WorkManager<br/>тянет данные дельтой"]
+  Q -->|плохая сеть| LP["Long-polling<br/>деградация"]
+          </div>
+          <div class="cap">Гибрид по состоянию приложения: WebSocket в foreground, FCM-разбудка в фоне, polling как деградация</div>
+          </div>
+
+          <p class="subhead">FCM как «звоночек», а не транспорт</p>
+          <p><strong>High-priority</strong> data-сообщение пробивает Doze и будит приложение. Но у data-payload лимит <strong>4 КБ</strong>, а доставка <strong>best-effort</strong> — FCM может схлопывать одинаковые сообщения и задерживать их. Поэтому push используют как сигнал «проснись и сходи за данными», а сами данные тянут отдельным запросом (через WorkManager). Различай два типа:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Тип</th><th>Приложение в фоне</th><th>Кто рисует уведомление</th></tr></thead>
+              <tbody>
+                <tr><td>notification message</td><td>система кладёт в трей сама</td><td>ОС; <code>onMessageReceived</code> не зовётся</td></tr>
+                <tr><td>data message</td><td><code>onMessageReceived</code> зовётся (high-priority)</td><td>твой код</td></tr>
+                <tr><td>notification + data</td><td>трей от ОС, data в extras при тапе</td><td>смешанно</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Хочешь контролировать поведение в фоне (сходить за данными, кастомное уведомление) — шли <strong>data message</strong>, не notification. И помни про lifecycle device-токена: он ротируется и протухает, его надо ловить в <code>onNewToken</code>, слать на бэкенд и дедуплицировать. Гарантированную фоновую работу подробнее разбирает глава <a href="background-work.html">Фоновая работа</a>.</p>
+
+          <details class="qa"><summary>Пришёл notification message, а приложение в фоне — почему onMessageReceived не вызвался, и как это лечить? <span class="q-badge">★</span></summary><div class="ans"><p>Так задумано: у <strong>notification message</strong> в фоне уведомление в трей кладёт сама система, минуя твой код, — <code>onMessageReceived</code> срабатывает только когда приложение в foreground. Если тебе нужно перехватить пуш в фоне (сходить за данными, построить кастомное уведомление, обновить кэш), сервер должен слать <strong>data message</strong> с high-priority: тогда <code>onMessageReceived</code> зовётся при любом состоянии и пробивает Doze. Частая ошибка — слать notification и удивляться, что фоновая логика не отрабатывает.</p></div></details>
+        </section>
+
+        <section class="section" id="case-chat">
+          <h2>Кейс: чат / мессенджер</h2>
+          <p>Второй по частоте кейс после ленты. Каркас тот же (Room как SSOT, outbox, WorkManager), но появляются realtime, статусы доставки и порядок. Разберём отличия от ленты предметно.</p>
+
+          <p class="subhead">Транспорт: гибрид</p>
+          <p>Активный чат — <strong>WebSocket</strong> (мгновенная доставка и статусы). Фон/убитое приложение — <strong>FCM</strong> будит, пропущенное дотягиваем дельтой по <code>messagesSince</code> при возврате в foreground. На реконнекте — обязательный ресинк. Это прямое применение двух параграфов выше.</p>
+
+          <p class="subhead">Статусы и идемпотентность отправки</p>
+          <p>Сообщение проходит цепочку <code>sending → sent → delivered → read</code>. Отправка идёт через тот же outbox: записали локально со статусом <code>sending</code> и временным <code>clientId</code>, ушло на сервер — <code>sent</code> (сервер вернул свой <code>serverId</code>), ACK получателя — <code>delivered</code>, прочитал — <code>read</code>. Idempotency-ключ обязателен: если ответ на «отправить» потерялся, повтор не задвоит сообщение в чате.</p>
+          <div class="code-label">Message.kt</div>
+<pre><code class="language-kotlin">@Entity(tableName = "messages")
+data class MessageEntity(
+    @PrimaryKey val clientId: String,   // UUID, он же idempotency-ключ
+    val serverId: String?,              // приходит после ACK сервера
+    val chatId: String,
+    val text: String,
+    val clientSeq: Long,                // монотонный порядок отправителя
+    val serverTs: Long?,                // авторитетное время сервера
+    val status: MessageStatus,          // SENDING/SENT/DELIVERED/READ/FAILED
+)
+
+enum class MessageStatus { SENDING, SENT, DELIVERED, READ, FAILED }</code></pre>
+
+          <p class="subhead">Порядок: clientSeq + серверный timestamp</p>
+          <p>Часы устройств врут, поэтому единого «времени» нет. Решение двухслойное: внутри одного отправителя порядок задаёт монотонный <code>clientSeq</code> (растёт локально), а глобальный порядок в чате — авторитетный <code>serverTs</code>, который проставляет сервер при приёме. UI сортирует по <code>serverTs</code>, а не отправленные сообщения (ещё без <code>serverTs</code>) клеит в хвост по <code>clientSeq</code>. Конфликтов почти нет: чат append-only, никто не редактирует чужие сообщения.</p>
+
+          <p class="subhead">Presence, группы, фон</p>
+          <ul>
+            <li><strong>Presence / last seen / typing</strong> — эфемерный поток поверх сокета, доставку не гарантируем, в БД не персистим.</li>
+            <li><strong>Группы и fan-out</strong> — в личке сервер шлёт обоим участникам; в группе разворачивает сообщение всем (fan-out), а клиент дедуплицирует по <code>serverId</code>.</li>
+            <li><strong>Doze</strong> — будит группа сообщений плохо: для групп с активным трафиком сервер схлопывает пуши в «у вас N новых», а данные клиент тянет сам.</li>
+            <li><strong>E2E-шифрование</strong> (кратко) — шифруем на клиенте, сервер видит только зашифрованный blob; это ломает серверный поиск и серверные превью, зато даёт приватность.</li>
+          </ul>
+          <p class="subhead">Чем чат отличается от ленты</p>
+          <p>Лента — read-mostly, pull-based, конфликты на пользовательских полях (лайк). Чат — write-heavy, push-based (realtime), append-only без конфликтов, зато с жёсткими требованиями к порядку, статусам и идемпотентности. Совпадает фундамент: локальная БД, очередь исходящих, фоновая досылка.</p>
+
+          <details class="qa"><summary>Два устройства одного пользователя в одном чате. Как избежать дублей сообщений и рассинхрона прочитанного? <span class="q-badge">★</span></summary><div class="ans"><p>Дубли гасит идемпотентность по <code>serverId</code>: каждое входящее клиент проверяет на наличие в БД и игнорирует повтор (сервер при fan-out шлёт сообщение на оба устройства одного пользователя). Своё отправленное сообщение, прилетевшее назад по сокету, склеивается с локальным по <code>clientId</code>, а не добавляется заново.</p><p>Прочитанное синхронизируют через серверный «read cursor» на чат: устройство шлёт «прочитано до <code>serverTs</code>=X», сервер хранит максимум и рассылает его всем устройствам пользователя. Тогда отметка «прочитано» сходится на всех экранах, даже если читали с другого телефона. Без общего курсора каждое устройство считало бы прочитанное по-своему и счётчики непрочитанных разъезжались бы.</p></div></details>
+        </section>
+
+        <section class="section" id="case-image-loader">
+          <h2>Кейс: библиотека загрузки изображений</h2>
+          <p>Иногда просят спроектировать не приложение, а библиотеку — чаще всего загрузчик картинок (свой Coil/Glide). Кейс проверяет, видишь ли ты за простым <code>load(url).into(view)</code> координацию кэшей, декодирования, отмены и lifecycle.</p>
+
+          <p class="subhead">Fluent API и Engine-координатор</p>
+          <p>Снаружи — текучий API: <code>load(url).into(view)</code>. Внутри запрос проходит через <strong>Engine</strong> — координатор, который собирает результат из подсистем: проверяет memory-кэш, потом disk-кэш, потом запускает загрузку. Подсистемы: <strong>Fetcher</strong> (достать байты: сеть, файл, content URI), <strong>Decoder</strong> (байты → bitmap с downsampling под целевой размер).</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TB
+  REQ["load(url).into(view)"] --> ENG["Engine координатор"]
+  ENG --> MEM{"MemoryCache LRU?"}
+  MEM -->|hit| VIEW["bitmap во view"]
+  MEM -->|miss| DISK{"DiskCache?"}
+  DISK -->|hit| DEC["Decoder<br/>downsampling"]
+  DISK -->|miss| FET["Fetcher<br/>сеть / файл"]
+  FET --> DEC
+  DEC --> POOL["Bitmap pool"]
+  POOL --> VIEW
+          </div>
+          <div class="cap">Engine собирает результат из кэшей и подсистем; bitmap pool переиспользует память под декод</div>
+          </div>
+
+          <p class="subhead">Двухуровневый кэш и память</p>
+          <p>Memory-кэш — <strong>LRU</strong> по байтам bitmap, ключ = URL + целевой размер/трансформация (иначе превью и фуллскрин перепутаются). Disk-кэш — для переживания рестарта, обычно ключ по URL-исходнику. Чтобы не плодить аллокации и не дёргать GC при скролле, декод идёт в переиспользуемый buffer из <strong>bitmap pool</strong> (<code>inBitmap</code>). И <strong>downsampling</strong> обязателен: <code>inSampleSize</code> декодирует уменьшенную картинку под размер view, чтобы 12-мегапиксельное фото не заняло память ради превью 100×100.</p>
+
+          <p class="subhead">Отмена при rebind и lifecycle</p>
+          <p>В <code>RecyclerView</code>/<code>LazyColumn</code> view переиспользуется: пока грузилась картинка для позиции 3, ViewHolder уже привязан к позиции 50. Если не отменить старый запрос, во view мелькнёт чужая картинка. Поэтому загрузку <strong>привязывают к view-тегу</strong>: новый <code>load</code> отменяет предыдущий на этом же view (rebind = cancel). И запрос привязывают к <strong>lifecycle</strong>: ушли с экрана — загрузка отменяется, чтобы не тратить трафик и не держать ссылку на мёртвую view.</p>
+          <div class="code-label">ImageEngine.kt (упрощённо)</div>
+<pre><code class="language-kotlin">class ImageEngine(
+    private val memory: LruCache&lt;String, Bitmap&gt;,
+    private val disk: DiskCache,
+    private val fetcher: Fetcher,
+) {
+    private val inFlight = mutableMapOf&lt;ImageView, Job&gt;()
+
+    fun load(url: String, view: ImageView, scope: CoroutineScope) {
+        inFlight.remove(view)?.cancel()          // rebind: отменяем старый запрос
+        val key = "$url@${view.width}x${view.height}"
+        memory.get(key)?.let { view.setImageBitmap(it); return }
+        inFlight[view] = scope.launch {           // scope привязан к lifecycle
+            val bytes = disk.get(url) ?: fetcher.fetch(url).also { disk.put(url, it) }
+            val bmp = decodeSampled(bytes, view.width, view.height)
+            memory.put(key, bmp)
+            view.setImageBitmap(bmp)
+        }
+    }
+}</code></pre>
+
+          <details class="qa"><summary>Десять элементов списка грузят один и тот же URL одновременно. Как не сходить в сеть десять раз? <span class="q-badge">★</span></summary><div class="ans"><p>Нужен <strong>request dedup</strong> (coalescing) по in-flight запросам: Engine держит map «ключ → уже запущенный <code>Deferred</code>». Первый запрос на URL стартует загрузку и кладёт <code>Deferred</code> в map; остальные девять не запускают новую сеть, а подписываются (<code>await()</code>) на тот же результат. Когда загрузка завершилась — все десять получают bitmap, запись из map убирается.</p><p>Без дедупа десять одинаковых GET'ов жгут трафик и могут декодировать один bitmap десять раз. Тот же приём — request coalescing — спасает и от cache stampede на уровне данных: толпа запросов в момент истечения TTL схлопывается в один поход за свежим.</p></div></details>
+        </section>
+
+        <section class="section" id="caching">
+          <h2>Стратегии кэширования и инвалидация</h2>
+          <p>«Не обсудил инвалидацию кэша» — типовая провальная фраза на собесе. Кэш легко добавить и тяжело инвалидировать правильно, поэтому держи систематику.</p>
+
+          <p class="subhead">Уровни кэша на клиенте</p>
+          <ul>
+            <li><strong>Память</strong> (LRU) — мгновенный повторный показ, гибнет с процессом.</li>
+            <li><strong>Диск / Room</strong> — переживает рестарт, источник истины для офлайна.</li>
+            <li><strong>HTTP-кэш OkHttp</strong> — прозрачный кэш по заголовкам, дешёвый слой под Retrofit.</li>
+          </ul>
+
+          <p class="subhead">Чем инвалидировать</p>
+          <p>Базовая стратегия — <strong>TTL</strong>: у записи есть «возраст», по истечении считаем устаревшей. Дёшево и self-healing, но грубо. Точнее — <strong>валидация по ETag/Last-Modified</strong>: клиент шлёт <code>If-None-Match</code>, сервер отвечает <code>304 Not Modified</code> (тело не качаем, только обновляем timestamp). Где staleness критичен — добавляют точечную <strong>event/version-based</strong> инвалидацию (пуш «данные X изменились» или счётчик версии).</p>
+          <p>Для UX почти везде поверх этого работает <strong>stale-while-revalidate</strong>: сразу показываем кэш, параллельно в фоне обновляем и доливаем свежее — пользователь не ждёт сеть (см. таблицу политик чтения выше).</p>
+
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Cache stampede.</strong> Когда TTL истёк, толпа запросов одновременно ломится за свежими данными и кладёт бэкенд (или дублирует работу на клиенте). Лечится <strong>request coalescing</strong> (схлопнуть параллельные запросы в один in-flight) и <strong>jitter в TTL</strong> (чтобы записи протухали не разом). Тот же приём, что и дедуп загрузок картинок.</div>
+          </div>
+          <p>И не забудь про <strong>prefetch</strong> (тянуть следующую страницу заранее по <code>prefetchDistance</code> — плавный скролл ценой трафика) и про показ «возраста данных» пользователю (баннер «обновлено N минут назад»), чтобы staleness был честным, а не скрытым.</p>
+
+          <details class="qa"><summary>TTL истёк ровно в момент, когда экран открыли офлайн. Что показать — пустоту или протухший кэш? <span class="q-badge">★</span></summary><div class="ans"><p>Протухший кэш — почти всегда. TTL означает «пора сходить проверить свежесть», а не «данные стали ядовитыми». Если сети нет, ревалидация невозможна, и выбор между «показать вчерашнюю ленту» и «показать пустой экран» очевиден в пользу данных. Это и есть дух stale-while-revalidate: stale лучше, чем nothing.</p><p>Нюанс — честность: показав протухшее, дай пользователю понять это (баннер «офлайн, данные могут быть неактуальны» + «возраст» данных). Исключение — данные, где устаревшее опаснее пустого: баланс счёта, одноразовый токен, цена в момент оплаты. Там политика <code>network-only</code> и явная ошибка вместо протухшего значения.</p></div></details>
+        </section>
+
+        <section class="section" id="scale-estimate">
+          <h2>Оценка масштаба (back-of-the-envelope)</h2>
+          <p>«Прыгнул к коробкам на диаграмме без оценки и без API» — частая причина провала. Оценка на mobile-собесе — это не QPS бэкенда, а прикидка <strong>клиентских</strong> величин, из которых выводятся конкретные лимиты.</p>
+
+          <p class="subhead">Что оцениваем</p>
+          <ul>
+            <li><strong>Размер локального кэша</strong> = размер одной записи × число удерживаемых элементов.</li>
+            <li><strong>Трафик сессии</strong> = page size × число подгрузок × размер страницы + картинки.</li>
+            <li><strong>Частота wake-up'ов</strong> синка = как часто будим устройство ради обновлений.</li>
+          </ul>
+
+          <p class="subhead">Пример на пальцах: лента</p>
+          <p>Карточка ленты — метаданные ~1 КБ + превью-картинка ~50 КБ. Держим в кэше ~500 элементов. Метаданные: 500 × 1 КБ ≈ 0.5 МБ в Room — копейки. Картинки: 500 × 50 КБ ≈ 25 МБ — вот под это и ставим явный лимит дискового кэша Coil и LRU-вытеснение. За сессию пользователь скроллит ~10 страниц по 20 элементов = 200 карточек ≈ 200 × 51 КБ ≈ 10 МБ трафика, в основном картинки. Отсюда вывод: картинки тянем в варианте под размер (WebP/AVIF), а не оригиналом.</p>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Откуда берутся числа в дизайне.</strong> Из этой прикидки прямо выводятся <strong>page size</strong> (20–50, баланс трафика и числа раунд-трипов), <strong>prefetchDistance</strong> (плавность vs лишний трафик), <strong>лимит дискового кэша</strong> и <strong>интервал дельта-синка</strong>. Назвав порядок величин, ты показываешь, что лимиты обоснованы, а не взяты с потолка.</div>
+          </div>
+
+          <details class="qa"><summary>Интервьюер не дал ни одной цифры. Откуда брать числа для оценки, чтобы это не выглядело гаданием? <span class="q-badge">★</span></summary><div class="ans"><p>Числа ты не угадываешь, а проговариваешь как явные допущения и проверяешь их вслух: «допустим, карточка ~1 КБ метаданных и ~50 КБ превью — это разумно для JPEG/WebP такого размера, поправьте, если не так». Интервьюер либо соглашается, либо даёт реальную цифру — и то и другое в плюс, потому что показывает, что ты думаешь порядками величин, а не точными значениями.</p><p>Хорошие якоря: типичный размер JSON-записи — единицы КБ, превью-картинка — десятки КБ, экран ленты — ~10 элементов, сессия — единицы-десятки страниц. Важна не точность до байта, а то, что итоговые лимиты (кэш, page size, интервал синка) выведены из оценки, а не названы наугад.</p></div></details>
+        </section>
+
+        <section class="section" id="testing">
+          <h2>Тестирование offline и sync-логики</h2>
+          <p>Senior-кандидата спрашивают не только «как спроектируешь», но и «как докажешь, что работает». Sync-движок без тестов — это «работает на моём телефоне». Ключевой посыл — <strong>детерминизм</strong>: ни одного реального <code>sleep</code> и ни одной реальной сети в юнит-тестах.</p>
+
+          <p class="subhead">Чем подменять</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Что тестируем</th><th>Инструмент</th><th>Зачем</th></tr></thead>
+              <tbody>
+                <tr><td>Корутины, backoff, таймеры</td><td><code>runTest</code> + <code>advanceTimeBy</code></td><td>виртуальное время вместо реальных секунд</td></tr>
+                <tr><td>Сеть и её сбои</td><td>MockWebServer / фейк</td><td>эмуляция 5xx, 409, таймаута, обрыва</td></tr>
+                <tr><td>Room DAO</td><td><code>inMemoryDatabaseBuilder</code></td><td>быстрая БД без файла и эмулятора</td></tr>
+                <tr><td>WorkManager</td><td><code>WorkManagerTestInitHelper</code> + <code>TestDriver</code></td><td>прогнать constraints и retry вручную</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="code-label">SyncEngineTest.kt</div>
+<pre><code class="language-kotlin">@Test
+fun `backoff не ждёт реального времени, ретрай после 5xx`() = runTest {
+    server.enqueue(MockResponse().setResponseCode(500))   // первый раз — сбой
+    server.enqueue(MockResponse().setResponseCode(200))   // потом — успех
+    val engine = SyncEngine(api, dao)
+
+    engine.start()
+    advanceTimeBy(31_000)        // проматываем backoff, не спим по-настоящему
+    advanceUntilIdle()
+
+    assertEquals(0, dao.peek().size)   // очередь дренирована
+}</code></pre>
+
+          <p class="subhead">Сценарии-минимум</p>
+          <ul>
+            <li><strong>Переживание рестарта процесса</strong> — операция в outbox остаётся после «перезапуска» (пересоздание объектов с той же БД).</li>
+            <li><strong>Идемпотентность</strong> — ретрай при потерянном ответе не задваивает результат.</li>
+            <li><strong>Разрешение конфликта</strong> — 409 обрабатывается по выбранной стратегии (LWW/версии).</li>
+            <li><strong>Dead-letter без зацикливания</strong> — операция, превысившая лимит попыток, выкидывается, а не блокирует очередь вечно.</li>
+          </ul>
+
+          <details class="qa"><summary>Как тестировать exponential backoff с задержками в минуты, не заставляя CI реально ждать? <span class="q-badge">★</span></summary><div class="ans"><p>Через виртуальное время <code>runTest</code>. Внутри <code>TestScope</code> работает <code>TestDispatcher</code> с виртуальными часами: <code>delay(60_000)</code> не блокирует поток, а просто двигает виртуальное время, когда ты вызываешь <code>advanceTimeBy(60_000)</code> или <code>advanceUntilIdle()</code>. Тест с backoff на минуты выполняется за миллисекунды и при этом детерминированно проверяет, что повтор случился ровно через расчётную задержку.</p><p>Условие — чтобы продакшен-код брал диспетчер извне (DI), а не хардкодил <code>Dispatchers.IO</code>: иначе подменить часы в тесте не выйдет. Реальный <code>Thread.sleep</code> в sync-коде — антипаттерн именно потому, что его нельзя промотать: тест либо реально ждёт, либо его выпиливают как «медленный», и регрессии в backoff проходят незамеченными.</p></div></details>
         </section>
 
         <section class="section" id="video">
@@ -535,6 +859,31 @@ class ImageCache(maxMemBytes: Int, private val disk: DiskLruCache) {
           <details class="qa">
             <summary>Как не потерять аналитические события? <span class="q-badge">Middle+</span></summary>
             <div class="ans"><p>Тот же outbox-паттерн: пишу события в таблицу БД, <strong>батчу</strong> по размеру/времени и отправляю через <code>WorkManager</code> при наличии сети, удаляю после ACK. Каждому событию — <code>eventId</code> (UUID) для дедупликации на бэкенде (ретраи не задвоят метрики). При переполнении буфера — дроп старых или сэмплирование. Отправлять по одному событию нельзя — это бьёт по батарее и трафику.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Спроектируй real-time чат: какой транспорт и как переживёшь обрыв соединения? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Для активного приложения — <strong>WebSocket</strong> поверх TLS (персистентное двунаправленное соединение, низкая latency для доставки и статусов). Сокет сам не реконнектится — нужен свой reconnect с экспоненциальным backoff и jitter, плюс heartbeat/ping-pong для детекта мёртвого соединения; балансировка — sticky sessions. Отправка идёт через outbox со статусами и idempotency-ключом, порядок — монотонным <code>clientSeq</code>. Для фона/убитого приложения сокет держать нельзя (Doze, ограничения фоновых сервисов с API 26) — будит <strong>FCM</strong> high-priority push, а пропущенное клиент дотягивает дельтой по <code>messagesSince</code>. На каждом реконнекте обязателен ресинк.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Push vs WebSocket vs polling — когда что, и почему не держать сокет постоянно? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Polling прост, но при коротком интервале жжёт батарею и трафик, при длинном даёт задержку — годится для редких некритичных обновлений (или long-polling как fallback). WebSocket даёт настоящий realtime, но требует foreground: в фоне ОС усыпляет радио (Doze) и режет фоновые сервисы, поэтому «вечный сокет» сажает батарею и нежизнеспособен. FCM — для фона: high-priority data-сообщение пробивает Doze, но payload ≤ 4 КБ и доставка best-effort, поэтому push используют как «звоночек разбудиться и сходить за данными». Senior-ответ — гибрид: WebSocket в foreground, FCM в фоне, дельта-ресинк на возврате, polling как деградация.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как именно ты инвалидируешь кэш? Что такое stale-while-revalidate? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Базово — <strong>TTL</strong>: у записи есть «возраст», по истечении считаем устаревшей (дёшево, self-healing, но грубо). Точнее — валидация по <strong>ETag/Last-Modified</strong>: клиент шлёт <code>If-None-Match</code>, сервер отвечает <code>304</code> (тело не качаем). Для UX поверх берут <strong>stale-while-revalidate</strong>: сразу показываем кэш (мгновенный экран), параллельно обновляем в фоне и доливаем свежее. Явную event/version-based инвалидацию добавляют точечно, где staleness критичен. Подводные камни, которые ценят: cache stampede (толпа запросов в момент истечения TTL — лечится request coalescing и jitter в TTL) и честный показ «возраста данных».</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как удаление на сервере доезжает до офлайн-клиента при дельта-синхронизации? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Через <strong>тумбстоуны</strong> (soft delete): сервер не стирает запись физически, а помечает <code>deleted=true</code> со свежим <code>updatedAt</code>, и она приходит в обычной дельте по <code>updatedSince</code> — клиент по флагу удаляет её локально. Тумбстоуны живут ограниченный TTL; клиента, который был офлайн дольше TTL, переводят на полный ресинк, иначе он пропустит удаление. Без тумбстоунов отсутствие записи в дельте неотличимо от «не менялась» — и удалённое навсегда зависает в кэше. Любимый каверзный вопрос: наивная дельта тихо ломается именно на удалениях.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как протестировать sync-движок, чтобы это не было «работает на моём телефоне»? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Через <code>runTest</code> с виртуальным временем: backoff и таймеры проматывают <code>advanceTimeBy</code>/<code>advanceUntilIdle</code>, не ожидая реальных секунд. Сеть подменяют фейком/MockWebServer (эмуляция 5xx, 409-конфликта, таймаута, обрыва), Room тестируют на in-memory базе (<code>inMemoryDatabaseBuilder</code>), WorkManager — через <code>WorkManagerTestInitHelper</code> + <code>TestDriver</code>. Проверяют: операция переживает рестарт процесса, идемпотентность гасит дубль, конфликт разрешается по стратегии, dead-letter не зацикливает очередь. Ключевой посыл — детерминизм: ни одного реального sleep и ни одной реальной сети в юнит-тестах.</p></div>
           </details>
 
         </section>
@@ -659,6 +1008,72 @@ suspend fun pushUpdate(local: ProductEntity, api: SyncApi): SyncOutcome {
             </details>
           </div>
 
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 4.</strong> Реализуй reconnect для WebSocket-клиента чата: при обрыве переподключаться с экспоненциальным backoff и jitter, ограничив задержку максимумом; при успешном подключении сбрасывать счётчик попыток и запускать дельта-ресинк (дотянуть сообщения, пришедшие пока сокета не было). Только корутины, без блокирующих <code>sleep</code>.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">// Дано:
+// suspend fun connect()            — подключиться (suspend до закрытия сокета)
+// suspend fun resyncSince(seq: Long) — дотянуть пропущенное
+// suspend fun listen()             — слушать сокет, пока он жив
+// var lastSeenSeq: Long
+
+suspend fun runConnectionLoop() {
+    var attempt = 0
+    while (currentCoroutineContext().isActive) {
+        try {
+            connect()
+            attempt = 0                          // успех — сбросили счётчик
+            resyncSince(lastSeenSeq)             // ресинк на КАЖДОМ reconnect
+            listen()                             // suspend, пока сокет жив
+        } catch (e: Exception) {
+            val backoff = minOf(BASE * (1L &lt;&lt; attempt), MAX_DELAY)
+            val jitter = Random.nextLong(JITTER) // ломаем синхронный шторм
+            delay(backoff + jitter)
+            attempt++
+        }
+    }
+}</code></pre>
+                <p>Объяснение: <code>jitter</code> разносит реконнекты тысяч клиентов после падения сервера, иначе они ударят синхронным штормом (thundering herd) и снова положат сервер. Ресинк на каждом подключении обязателен — без него теряются сообщения за время обрыва. Тестируется через <code>runTest</code> + <code>advanceTimeBy</code> (виртуальное время вместо реальных секунд), поэтому <code>delay</code>, а не <code>Thread.sleep</code>: блокирующий sleep нельзя промотать.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 5.</strong> Напиши <code>compactOutbox(ops)</code>: свернуть очередь outbox-операций над одной сущностью перед отправкой. Правила: <code>CREATE</code> затем <code>DELETE</code> для ещё не отправленного объекта = выкинуть обе (no-op); несколько <code>UPDATE</code> подряд над одним <code>id</code> = оставить последний (мерж payload); порядок операций над разными <code>id</code> и зависимости (<code>UPDATE</code>/<code>DELETE</code> не раньше <code>CREATE</code> того же id) сохранить.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">// Дано:
+// enum class OpKind { CREATE, UPDATE, DELETE }
+// data class Op(val entityId: String, val kind: OpKind, val payload: String?)
+
+fun compactOutbox(ops: List&lt;Op&gt;): List&lt;Op&gt; {
+    // группируем по entityId, сохраняя порядок ПЕРВОГО появления группы
+    val groups = LinkedHashMap&lt;String, MutableList&lt;Op&gt;&gt;()
+    for (op in ops) groups.getOrPut(op.entityId) { mutableListOf() }.add(op)
+
+    val result = mutableListOf&lt;Op&gt;()
+    for ((_, group) in groups) {
+        val hasCreate = group.any { it.kind == OpKind.CREATE }
+        val endsWithDelete = group.last().kind == OpKind.DELETE
+        if (hasCreate &amp;&amp; endsWithDelete) continue   // создан и удалён — no-op
+
+        val out = mutableListOf&lt;Op&gt;()
+        group.firstOrNull { it.kind == OpKind.CREATE }?.let { out += it }
+        // серию UPDATE схлопываем в последний
+        group.lastOrNull { it.kind == OpKind.UPDATE }?.let { out += it }
+        if (group.last().kind == OpKind.DELETE) out += group.last()
+        result += out
+    }
+    return result
+}</code></pre>
+                <p>Объяснение: <code>LinkedHashMap</code> держит межсущностный порядок (важно при зависимостях между сущностями). Внутри группы create+delete для неотправленного объекта схлопывается в ничто — лишний раунд-трип не уходит. Сложность O(n). Подвох за рамками задачи: после реального <code>CREATE</code> временный локальный <code>id</code> надо подменить на серверный во всех последующих операциях — это отдельный шаг id-ремаппинга на отправке.</p>
+              </div>
+            </details>
+          </div>
+
         </section>
 
         <div class="sources">
@@ -682,6 +1097,6 @@ suspend fun pushUpdate(local: ProductEntity, api: SyncApi): SyncOutcome {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/app.js?v=20260620-4"></script>
+  <script src="../assets/app.js?v=20260621-1"></script>
 </body>
 </html>

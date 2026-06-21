@@ -114,6 +114,14 @@ fun log(error: Throwable) { /* overload #2 */ }</code></pre>
 }</code></pre>
             </div>
           </details>
+
+          <details class="qa">
+            <summary>Kotlin-класс по умолчанию <code>final</code>. Зачем так сделали и как это связано с наследованием и хрупким базовым классом? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>В Kotlin классы и их методы закрыты для наследования по умолчанию: чтобы наследоваться или переопределять, нужны явные <code>open</code> или <code>abstract</code>. Это прямое следование совету Джошуа Блоха из Effective Java — «Design and document for inheritance or else prohibit it». Наследование от класса, который под него не проектировали, легко ломает инварианты, как только меняется база: это и есть проблема хрупкого базового класса.</p>
+              <p>Final-по-умолчанию заставляет автора осознанно открыть точку расширения, а не оставить её открытой случайно. Интерфейсы и их методы при этом всегда открыты — там переопределение реализации это нормальный сценарий. Практический эффект простой: язык подталкивает к композиции и явным контрактам вместо случайной иерархии.</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="composition">
@@ -152,6 +160,26 @@ class AndroidLogger : Logger {
 class Service(logger: Logger) : Logger by logger {
     fun doWork() { log("work started") }
 }</code></pre>
+
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TB
+  Start["Связь между A и B?"] --> Q1{"B — разновидность A и подставим везде вместо A?"}
+  Q1 -->|да| IsA["Наследование (is-a)"]
+  Q1 -->|нет| Q2{"A использует B как зависимость?"}
+  Q2 -->|да| HasA["Композиция (has-a)"]
+  Q2 -->|нет| CanDo["Интерфейс-роль (can-do)"]
+          </div>
+          <div class="cap">Дерево выбора связи: подстановка → наследование, зависимость → композиция, способность → роль</div>
+          </div>
+
+          <details class="qa">
+            <summary>При делегировании через <code>by</code> метод делегата не видит <code>override</code> класса-обёртки. Почему, и к какому багу это приводит? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>Делегирование <code>class A(b: B) : I by b</code> генерирует методы интерфейса <code>I</code>, которые просто зовут тот же метод на сохранённой ссылке <code>b</code>. Делегат <code>b</code> ничего не знает об обёртке <code>A</code>. Если <code>A</code> переопределяет метод <code>m()</code>, а другой метод делегата внутри себя вызывает <code>m()</code> — вызовется реализация из <code>b</code>, а не <code>override</code> из <code>A</code>. Это не «динамический» self, как при наследовании: <code>b</code> и <code>A</code> — разные объекты, и виртуальная диспетчеризация идёт по <code>b</code>.</p>
+              <p>Эффект: попытка частично подменить поведение через <code>override</code> поверх делегата молча не работает для внутренних self-вызовов делегата. Это фундаментальное отличие композиции-делегирования от наследования и причина, почему <code>by</code> нельзя использовать как замену наследованию там, где нужен переопределяемый self-call.</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="solid">
@@ -264,6 +292,14 @@ class UserRepositoryImpl(private val api: Api) : UserRepository {
               </tbody>
             </table>
           </div>
+
+          <details class="qa">
+            <summary>Сформулируй LSP формально через пред- и постусловия. Почему переопределение, которое только усиливает проверку входных данных, уже нарушает принцип? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>Формально (по Лисков — Уинг): подтип не должен усиливать предусловия и не должен ослаблять постусловия и инварианты базового типа; история-свойство и набор исключений тоже должны сохраняться. Усиление предусловия — это когда подтип принимает более узкий набор входов, чем база. Скажем, базовый метод принимал любой <code>String</code>, а <code>override</code> бросает исключение на пустой строке. Клиент, который писался под контракт базы, законно передаёт значение, валидное для базового типа, — и ломается.</p>
+              <p>Клиент при этом не делает ничего «неправильного»: он опирается на опубликованный контракт. Поэтому LSP — про поведенческую совместимость, а не только про совпадение сигнатур: компилятор подстановку разрешит, а рантайм-контракт сломается. Параметры в <code>override</code> должны быть контравариантны, а возвращаемый тип — ковариантен (Kotlin поддерживает ковариантность возвращаемого типа при переопределении).</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="patterns">
@@ -319,6 +355,112 @@ class UserRepositoryImpl(private val api: Api) : UserRepository {
               </tbody>
             </table>
           </div>
+
+          <details class="qa">
+            <summary>Kotlin <code>object</code> потокобезопасен при ленивой инициализации. Что именно это гарантирует и зачем тогда знать про double-checked locking? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>Kotlin <code>object</code> компилируется в Java-класс со статическим финальным полем <code>INSTANCE</code>, которое создаётся в статическом инициализаторе. Потокобезопасность здесь даёт сама JVM: загрузка и инициализация класса проходят под блокировкой инициализации класса (JLS §12.4), поэтому <code>INSTANCE</code> создаётся ровно один раз и виден всем потокам без ручной синхронизации. Это идиома holder / lazy-class-init.</p>
+              <p>Double-checked locking с <code>volatile</code> нужен в другом случае — когда singleton зависит от рантайм-параметра (например, требует <code>Context</code>) и поэтому не может быть простым <code>object</code>: пишется ручная фабрика <code>getInstance(context)</code>. Без <code>volatile</code> и двойной проверки тут возможны гонка и публикация недоинициализированного объекта. То есть <code>object</code> закрывает беспараметрический случай, а DCL — параметризованный; знать надо оба, потому что на Android параметризованный singleton встречается постоянно.</p>
+            </div>
+          </details>
+        </section>
+
+        <section class="section" id="strategy-state-decorator">
+          <h2>Strategy, State, Decorator — паттерны на композиции</h2>
+          <p>Три паттерна, которые на собесе путают чаще остальных. Это прямой мостик от «композиция лучше наследования» к конкретике: все три прячут варьируемое поведение за интерфейсом, но решают разные задачи.</p>
+
+          <p class="subhead">Strategy — алгоритм за интерфейсом, выбор снаружи</p>
+          <p>Алгоритм выносим за интерфейс, а конкретную реализацию выбирает и подставляет клиент. Способ оплаты, способ сортировки, загрузчик картинок — стратегии не знают друг о друге и не переключают себя сами.</p>
+<pre><code class="language-kotlin">interface ImageLoader { suspend fun load(url: String): Bitmap }
+class CoilLoader : ImageLoader { /* ... */ }
+class GlideLoader : ImageLoader { /* ... */ }
+
+// клиент получает стратегию извне (через конструктор/DI)
+class Avatar(private val loader: ImageLoader) {
+    suspend fun show(url: String) = loader.load(url)
+}</code></pre>
+
+          <p class="subhead">State — поведение меняется по внутреннему состоянию</p>
+          <p>Объект меняет поведение при смене внутреннего состояния, и сами состояния обычно знают про переходы — переключают контекст на следующее состояние. В Android это чаще всего sealed-иерархия <code>UiState</code> и <code>when</code> по ней.</p>
+<pre><code class="language-kotlin">sealed interface UiState {
+    data object Loading : UiState
+    data class Content(val items: List&lt;Item&gt;) : UiState
+    data class Error(val message: String) : UiState
+}
+
+fun render(state: UiState) = when (state) {
+    UiState.Loading      -&gt; showSpinner()
+    is UiState.Content   -&gt; showList(state.items)
+    is UiState.Error     -&gt; showError(state.message)
+}</code></pre>
+
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Критерий</th><th>Strategy</th><th>State</th></tr></thead>
+              <tbody>
+                <tr><td>Кто переключает реализацию</td><td>Клиент извне</td><td>Сам объект изнутри</td></tr>
+                <tr><td>Реализации знают друг о друге</td><td>Нет</td><td>Знают переходы</td></tr>
+                <tr><td>Что моделирует</td><td>Алгоритм, «как делать»</td><td>Состояние, «что умею сейчас»</td></tr>
+                <tr><td>Android-пример</td><td>Внедрённый <code>PaymentMethod</code></td><td>sealed <code>UiState</code> + <code>when</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><strong>Почему UML совпадает.</strong> Структурно оба — делегирование поведения вынесенному интерфейсу, диаграммы классов одинаковые. Разница в намерении: Strategy задаётся извне и стабилен, State меняется изнутри по ходу жизни объекта.</div>
+          </div>
+
+          <p class="subhead">Decorator — наращиваем поведение обёрткой</p>
+          <p>Декоратор оборачивает объект и добавляет поведение динамически, сохраняя тот же интерфейс. Декораторы комбинируются в рантайме в любом порядке: логирование + кэш + ретрай поверх одного клиента. Наследование дало бы класс под каждую комбинацию фич — комбинаторный взрыв. В Android это OkHttp <code>Interceptor</code> (цепочка декораторов запроса) и <code>ContextWrapper</code>.</p>
+<pre><code class="language-kotlin">interface ApiClient { suspend fun get(url: String): String }
+
+class LoggingApiClient(private val delegate: ApiClient) : ApiClient {
+    override suspend fun get(url: String): String {
+        Log.d("API", "-&gt; $url")
+        return delegate.get(url).also { Log.d("API", "&lt;- $it") }
+    }
+}
+
+// обёртки складываются как угодно — все реализуют ApiClient
+val client = LoggingApiClient(RealApiClient())</code></pre>
+
+          <details class="qa">
+            <summary>Decorator и Proxy реализуют тот же интерфейс и оборачивают объект. В чём разница? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>Совпадает структура — оба держат ссылку на обёрнутый объект того же типа и делегируют ему. Разница в намерении. Decorator добавляет новое поведение поверх существующего и рассчитан на стекирование: несколько декораторов навешивают независимые фичи (лог, кэш, ретрай). Proxy контролирует доступ к объекту, не меняя его обязанности: ленивое создание, проверка прав, удалённый вызов, подсчёт ссылок.</p>
+              <p>Грубая проверка: если оборачиваешь, чтобы объект «умел больше» — это декоратор; если чтобы решать, можно ли и когда обращаться к настоящему объекту — это прокси. На Android к прокси ближе ленивая инициализация тяжёлого ресурса и обёртки безопасности, к декоратору — цепочка <code>Interceptor</code>.</p>
+            </div>
+          </details>
+        </section>
+
+        <section class="section" id="solid-cost">
+          <h2>Когда SOLID мешает: over-engineering и YAGNI</h2>
+          <p>Сильный сигнал для Senior — не догматичное применение SOLID. SOLID толкает к абстракциям, YAGNI запрещает строить лишнее, и конфликт между ними реальный. Абстракция не бесплатна: за неё платят лишним слоем косвенности и тем, что по коду труднее ходить.</p>
+
+          <p class="subhead">Типичные перегибы</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Анти-паттерн</th><th>Чем плох</th></tr></thead>
+              <tbody>
+                <tr><td>Интерфейс с единственной реализацией «ради DIP»</td><td>Лишний слой косвенности; мок не нужен, второй реализации не предвидится. Ходить по коду сложнее без выгоды.</td></tr>
+                <tr><td>SRP-дробление до классов-однострочников</td><td>«Лазанья» из мелких типов: логику приходится собирать по всему проекту.</td></tr>
+                <tr><td>Преждевременный OCP под будущее</td><td>Ось расширения угадана неверно, абстракцию всё равно ломают при первом же реальном требовании.</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Критерий ввода абстракции.</strong> Вводи её, когда есть вторая реализация, реальная потребность подменить зависимость в тесте или граница реально нестабильна. Иначе KISS/YAGNI важнее «галочки SOLID». SOLID — эвристики, а не закон.</div>
+          </div>
+
+          <details class="qa">
+            <summary>Где проходит граница между «здоровой абстракцией» и over-engineering, если требований ещё нет? <span class="q-badge">★</span></summary>
+            <div class="ans">
+              <p>Полезный критерий — «правило трёх» и стоимость отката. Пока вариация одна, абстракция спекулятивна: ты угадываешь ось изменения, не зная её. Появилась вторая реализация — гипотеза подтвердилась, абстракцию вводят по факту, а не на упреждение. Это дешевле, потому что рефакторинг к интерфейсу из конкретного класса — механическая операция, а вот ломать неверно угаданную абстракцию дорого: она уже расползлась по вызовам.</p>
+              <p>Отдельно стоит «абстракция ради теста»: если зависимость и так подменяема (передаётся через конструктор, имеет fake-реализацию), интерфейс может не понадобиться — мок можно сделать и поверх открытого класса. Граница проходит там, где косвенность начинает стоить дороже, чем гибкость, которую она даёт прямо сейчас, а не гипотетически.</p>
+            </div>
+          </details>
         </section>
 
         <section class="section" id="video">
@@ -373,6 +515,26 @@ class UserRepositoryImpl(private val api: Api) : UserRepository {
           <details class="qa">
             <summary>Что такое coupling и cohesion? <span class="q-badge">Middle</span></summary>
             <div class="ans"><p><strong>Coupling</strong> — степень зависимости модулей друг от друга (хотим низкую). <strong>Cohesion</strong> — насколько элементы внутри модуля связаны общей задачей (хотим высокую). Хороший дизайн: low coupling + high cohesion. SOLID, по сути, инструменты для достижения именно этого баланса.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Что такое diamond problem и как Kotlin его решает для интерфейсов с дефолтными методами? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Diamond problem возникает, когда класс наследует один и тот же метод по двум путям и неясно, чью реализацию брать. Множественного наследования классов в Kotlin нет, но два интерфейса могут дать дефолтную реализацию одного метода. Kotlin в этом случае требует, чтобы класс-наследник явно переопределил метод, иначе ошибка компиляции. Внутри <code>override</code> доступен квалифицированный super-вызов <code>super&lt;Interface&gt;.method()</code>, которым выбирают конкретную реализацию или комбинируют обе. Неоднозначность решается явно на стороне наследника, а не молчаливым выбором компилятора.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Зачем нужны абстрактные классы, если есть интерфейсы с дефолтными методами? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Интерфейсы с дефолтными методами дают разделяемое поведение, но не дают разделяемое изменяемое состояние: у интерфейса нет backing field, свойство в нём либо абстрактно, либо вычисляется через геттер без хранения. Абстрактный класс может иметь конструктор, поля-состояние и инициализацию и гарантирует единственную базу. Берём <code>abstract class</code>, когда нескольким наследникам нужна общая база с хранимым состоянием и общим конструктором (<code>BaseViewModel</code> с <code>_state</code>). Берём интерфейс, когда нужна роль/контракт, которую класс совмещает с другими. Ещё отличие: добавить дефолтный метод в интерфейс — не сломать существующих реализаторов, что важно для эволюции публичного API.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Глубокая иерархия наследования — почему это плохо и какая метрика это ловит? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Глубокая иерархия (большой DIT, depth of inheritance tree) усиливает связанность: изменение в базовом классе каскадом задевает всех потомков, поведение объекта размазано по цепочке, и труднее удержать LSP на каждом уровне. Чем глубже дерево, тем сложнее понять и протестировать лист, потому что его реальное поведение — сумма всех предков. Лечится это через «favor composition over inheritance»: вместо нового уровня иерархии выносим поведение в отдельный объект и внедряем его. На практике держат иерархии плоскими (1–2 уровня), а варьируемость прячут в композицию/стратегии.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Пример нарушения OCP в типичном Android-коде и как его убрать? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>Классика — большой <code>when</code> по типу: рендер разных типов элементов ленты или обработка аналитических событий через <code>when (item.type)</code>, который растёт при каждом новом типе и правится в одном месте. Это нарушает OCP: добавление типа = модификация существующего кода. Убирают полиморфизмом/Strategy — каждый тип реализует общий интерфейс (делегаты в RecyclerView через AdapterDelegate или sealed-тип с собственным рендером), и добавление типа становится добавлением класса. Нюанс: с sealed-иерархией <code>when</code> по веткам тоже придётся расширять, зато компилятор подсветит все неполные <code>when</code> — это контролируемое, а не молчаливое нарушение.</p></div>
           </details>
 
         </section>
@@ -461,7 +623,7 @@ fun main() {
         Rectangle(4.0, 6.0),
         Triangle(3.0, 8.0)      // добавили без правки totalArea
     )
-    println(totalArea(shapes))  // 139.539...
+    println(totalArea(shapes))  // 114.539...
 }</code></pre>
                 <p>Объяснение: <code>totalArea()</code> открыт для расширения (новые типы фигур) и закрыт для изменения — он никогда не правится при добавлении фигуры. Полиморфизм через <code>interface</code> — классический приём реализации OCP. Альтернатива: <code>sealed interface Shape</code> с <code>when</code>, но тогда каждое новое плечо потребует правки <code>when</code>, что нарушает OCP.</p>
               </div>
@@ -516,6 +678,81 @@ fun main() {
             </details>
           </div>
 
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 4.</strong> Реализуй паттерн <strong>Decorator</strong>: базовый <code>ApiClient</code> с методом <code>suspend fun get(url: String): String</code> и два декоратора поверх него — <code>LoggingApiClient</code> (логирует запрос/ответ) и <code>RetryingApiClient</code> (повторяет до N раз при исключении). Покажи, что декораторы комбинируются в любом порядке и оба реализуют тот же интерфейс. Объясни, почему это лучше иерархии подклассов.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">interface ApiClient {
+    suspend fun get(url: String): String
+}
+
+class RealApiClient : ApiClient {
+    override suspend fun get(url: String): String = TODO("реальный http")
+}
+
+// декоратор 1: логирование
+class LoggingApiClient(private val delegate: ApiClient) : ApiClient {
+    override suspend fun get(url: String): String {
+        Log.d("API", "-&gt; $url")
+        val response = delegate.get(url)
+        Log.d("API", "&lt;- $response")
+        return response
+    }
+}
+
+// декоратор 2: повтор при ошибке
+class RetryingApiClient(
+    private val delegate: ApiClient,
+    private val times: Int = 3
+) : ApiClient {
+    override suspend fun get(url: String): String {
+        repeat(times - 1) {
+            runCatching { return delegate.get(url) }
+        }
+        return delegate.get(url)   // последняя попытка пробрасывает ошибку
+    }
+}
+
+// сборка: обёртки складываются в любом порядке
+val client: ApiClient = RetryingApiClient(LoggingApiClient(RealApiClient()))</code></pre>
+                <p>Объяснение: все три класса реализуют <code>ApiClient</code>, поэтому декораторы складываются как угодно и сохраняют единый интерфейс для клиента. Наследование потребовало бы отдельный класс под каждую комбинацию (<code>LoggingRetryingApiClient</code> и т.д.) — комбинаторный взрыв при росте числа независимых фич. Decorator добавляет поведение в рантайме без правки базового класса (OCP).</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 5.</strong> Дан тип <code>Bird</code> с методом <code>fly()</code>. В иерархии появляется <code>Penguin</code>, который не летает, и его <code>fly()</code> бросает <code>UnsupportedOperationException</code>. Покажи клиент, который из-за этого ломается (нарушение LSP), и перепроектируй иерархию так, чтобы нарушения не было.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">// ❌ нарушение LSP
+interface Bird { fun fly() }
+class Penguin : Bird {
+    override fun fly() = throw UnsupportedOperationException("пингвины не летают")
+}
+// клиент законно работает с Bird — и падает на Penguin
+fun makeAllFly(birds: List&lt;Bird&gt;) = birds.forEach { it.fly() }
+
+// ✅ разделяем способности через интерфейсы-роли (ISP + LSP)
+interface Bird { fun eat() }
+interface Flyable { fun fly() }
+
+class Sparrow : Bird, Flyable {
+    override fun eat() { /* ... */ }
+    override fun fly() { /* ... */ }
+}
+class Penguin : Bird {
+    override fun eat() { /* ... */ }
+}
+
+// клиенту нужен полёт — он принимает Flyable, Penguin туда не попадает
+fun makeAllFly(birds: List&lt;Flyable&gt;) = birds.forEach { it.fly() }</code></pre>
+                <p>Объяснение: LSP-проблема — это сигнал, что иерархия выбрана неверно. «Умеет летать» — это can-do (роль/интерфейс), а не is-a <code>Bird</code>. После разделения подстановка больше не ломается: клиент, которому нужен полёт, работает с <code>List&lt;Flyable&gt;</code>, и нелетающий <code>Penguin</code> в этот контракт просто не входит — компилятор не даст передать его туда.</p>
+              </div>
+            </details>
+          </div>
+
         </section>
 
         <div class="sources">
@@ -543,6 +780,6 @@ fun main() {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/app.js?v=20260620-4"></script>
+  <script src="../assets/app.js?v=20260621-1"></script>
 </body>
 </html>

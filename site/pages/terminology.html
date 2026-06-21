@@ -73,6 +73,69 @@
               </tbody>
             </table>
           </div>
+
+          <div class="diagram">
+            <svg viewBox="0 0 640 230" role="img" xmlns="http://www.w3.org/2000/svg">
+              <title>Контракт метода: предусловие, тело, постусловие под рамкой инварианта</title>
+              <desc>Слева направо: вызывающий гарантирует предусловие до вызова, выполняется тело метода, вызываемый гарантирует постусловие после; поверх всего — инвариант, истинный и до, и после вызова.</desc>
+              <rect x="14" y="20" width="612" height="120" rx="10" fill="none" stroke="var(--accent)" stroke-width="1.5"/>
+              <text x="28" y="40" font-family="Inter, sans-serif" font-size="13" font-weight="700" fill="var(--accent)">Инвариант — истинен до и после вызова</text>
+              <rect x="36" y="58" width="170" height="60" rx="8" fill="var(--panel)" stroke="var(--border)" stroke-width="1"/>
+              <text x="121" y="84" text-anchor="middle" font-family="Inter, sans-serif" font-size="13" font-weight="600" fill="var(--text)">Предусловие</text>
+              <text x="121" y="103" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" fill="var(--text-dim)">гарантирует caller</text>
+              <rect x="236" y="58" width="170" height="60" rx="8" fill="var(--panel)" stroke="var(--border)" stroke-width="1"/>
+              <text x="321" y="92" text-anchor="middle" font-family="Inter, sans-serif" font-size="13" font-weight="600" fill="var(--text)">Тело метода</text>
+              <rect x="436" y="58" width="170" height="60" rx="8" fill="var(--panel)" stroke="var(--border)" stroke-width="1"/>
+              <text x="521" y="84" text-anchor="middle" font-family="Inter, sans-serif" font-size="13" font-weight="600" fill="var(--text)">Постусловие</text>
+              <text x="521" y="103" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" fill="var(--text-dim)">гарантирует callee</text>
+              <line x1="206" y1="88" x2="234" y2="88" stroke="var(--text-dim)" stroke-width="1.5" marker-end="url(#tm-arr)"/>
+              <line x1="406" y1="88" x2="434" y2="88" stroke="var(--text-dim)" stroke-width="1.5" marker-end="url(#tm-arr)"/>
+              <text x="28" y="172" font-family="Inter, sans-serif" font-size="12" font-weight="700" fill="var(--text)">Правила LSP для подтипа:</text>
+              <text x="28" y="194" font-family="Inter, sans-serif" font-size="12" fill="var(--text-dim)">предусловие — только ослабить · постусловие — только усилить · инвариант — сохранить</text>
+              <defs>
+                <marker id="tm-arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                  <path d="M0,0 L6,3 L0,6 Z" fill="var(--text-dim)"/>
+                </marker>
+              </defs>
+            </svg>
+            <div class="cap">Тройка ⟨предусловие, постусловие, инвариант⟩ и что с ней делает наследование.</div>
+          </div>
+
+          <p class="subhead">Шкала coupling: от data до content</p>
+          <p>Связанность бывает разной силы. Чем дальше по этой шкале, тем дороже изменение и тем сильнее модуль завязан на чужое устройство. Цель — двигаться к data-coupling, а не к нулю: модули обязаны взаимодействовать, иначе системы нет.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Вид</th><th>Что передаётся</th><th>Знание о чужом устройстве</th><th>Вред</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Data</strong></td><td>Примитивы и ровно те поля, что нужны</td><td>Минимум — только контракт</td><td>Низкий (цель)</td></tr>
+                <tr><td><strong>Stamp</strong></td><td>Целая структура, хотя нужна часть (tramp data)</td><td>Знает форму структуры</td><td>Умеренный</td></tr>
+                <tr><td><strong>Control</strong></td><td>Флаг, управляющий ветвлением в чужом модуле</td><td>Знает логику ветвления</td><td>Заметный</td></tr>
+                <tr><td><strong>Common</strong></td><td>Общее глобальное изменяемое состояние</td><td>Делит изменяемое состояние</td><td>Высокий</td></tr>
+                <tr><td><strong>Content</strong></td><td>Лезет во внутренности другого модуля</td><td>Полное — знает приватные детали</td><td>Критический (худший)</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <details class="qa"><summary>Идемпотентность определена как f(f(x)) = f(x). Но DELETE считается идемпотентным, хотя первый вызов отдаёт 200, а второй — 404. Где тут противоречие, и чем идемпотентность отличается от чистоты и детерминизма? <span class="q-badge">★</span></summary><div class="ans"><p>Противоречия нет: идемпотентность — это свойство эффекта на состояние сервера, а не возвращаемого значения. После DELETE ресурса нет, и повторный DELETE оставляет состояние тем же — ресурса по-прежнему нет. Состояние идемпотентно, хотя статус-коды (200 → 404) различаются. Ровно это и отличает идемпотентность от чистоты и детерминизма.</p><p>Детерминированная функция при равных аргументах возвращает равный результат. Чистая — детерминирована <em>и</em> без побочных эффектов. Идемпотентная операция при этом может иметь побочный эффект на первом вызове и быть недетерминированной по возвращаемому значению — важно лишь, что повторные одинаковые вызовы не меняют состояние дальше. Поэтому всякая чистая функция идемпотентна в смысле эффекта на состояние (побочных эффектов нет — повторять нечего), но не обязательно по возвращаемому значению; и обратное тоже неверно: идемпотентность ничего не говорит ни о побочных эффектах, ни о детерминизме результата.</p></div></details>
+        </section>
+
+        <section class="section" id="contract-lsp-coupling">
+          <h2>Связанность глубже: закон Деметры и connascence</h2>
+          <p>В таблице coupling и cohesion — две строки определений. На собесе Middle+/Senior по этим словам копают глубже: просят шкалу связанности (она выше), закон Деметры и, реже, connascence. Разберём прикладную часть.</p>
+
+          <p class="subhead">Закон Деметры — «только непосредственные друзья»</p>
+          <p>Закон Деметры (принцип наименьшего знания) — частный случай слабой связанности. Объект обращается только к своим полям, аргументам метода и объектам, которые он сам создал, но не к их внутренностям. Цепочка <code>a.getB().getC().doThing()</code> («train wreck») его нарушает: вызывающий код знает о структуре <code>B</code> и <code>C</code>, и любое изменение этой структуры его ломает. Это форма structural coupling — связанность с внутренним устройством.</p>
+          <pre><code class="language-kotlin">// Train wreck: знаем про устройство address и city
+val zip = user.getAddress().getCity().getZipCode()
+
+// Tell, Don't Ask: user сам отдаёт нужное, цепочка скрыта внутри
+val zip = user.zipCode()</code></pre>
+          <p>Лечится тем, что <code>A</code> предоставляет метод, делающий нужное действие сам (Tell, Don't Ask), пряча цепочку. Оговорка: на fluent-builder'ы и на data-классы/DTO закон обычно не распространяют — там цепочки не вскрывают поведенческие инварианты, а просто конфигурируют или читают данные.</p>
+
+          <p class="subhead">Connascence — более тонкая линза</p>
+          <p>Connascence измеряет связь по трём осям: <em>вид</em> (по имени, типу, позиции, значению, времени, идентичности), <em>степень</em> (сколько сущностей завязано) и <em>локальность</em> (как близко в коде они разнесены). Чем дальше связанные сущности друг от друга и чем выше степень связи, тем дороже изменение. Связанность по позиции (порядок аргументов) слабее связанности по имени, но опаснее, когда разнесена через весь модуль — её и стоит превращать в более явную и локальную.</p>
+
+          <details class="qa"><summary>Что такое закон Деметры, и как train wreck вроде <code>a.b().c().d()</code> его нарушает? <span class="q-badge">★</span></summary><div class="ans"><p>Закон Деметры — принцип наименьшего знания: метод обращается только к «непосредственным друзьям» — своим полям, своим аргументам и объектам, которые сам создал, — не вскрывая их внутренности. Цепочка вызовов вынуждает код знать промежуточную структуру: <code>a.b().c().d()</code> завязан на то, что у <code>a</code> есть <code>b</code>, у <code>b</code> есть <code>c</code> и так далее. Поменяется любое звено — сломается вызывающий. Это structural coupling. Лечение — Tell, Don't Ask: <code>a</code> сама делает нужное действие и не отдаёт наружу промежуточные объекты. Исключение — fluent-builder'ы (<code>builder.setX().setY().build()</code>) и чтение полей DTO: там цепочка не раскрывает поведение, и буквально применять закон смысла нет.</p></div></details>
         </section>
 
         <section class="section" id="kotlin">
@@ -95,6 +158,8 @@
               </tbody>
             </table>
           </div>
+
+          <details class="qa"><summary>Data-класс с <code>var</code>-полем компилируется, и <code>hashCode</code> из него считается. Что сломается, если положить такой объект в <code>HashSet</code> и потом изменить <code>var</code>, и почему это нарушение контракта, хотя equals и hashCode согласованы? <span class="q-badge">★</span></summary><div class="ans"><p>Сломается достижимость элемента. При вставке <code>HashSet</code> считает <code>hashCode</code> и кладёт объект в бакет по этому значению. После мутации <code>var</code>-поля <code>hashCode</code> меняется, и <code>contains</code>/<code>remove</code> ищут объект в бакете, соответствующем <em>новому</em> хешу, а лежит он в старом. Объект «теряется», хотя физически он в коллекции.</p><p>Формально нарушается не согласованность equals↔hashCode — она как раз сохраняется. Нарушается отдельное требование: пока объект служит ключом хеш-коллекции, его <code>hashCode</code> обязан оставаться стабильным. Именно поэтому в data-классах для ключей берут только <code>val</code>-поля, а сам класс делают неизменяемым. И документация Kotlin, и Effective Java прямо предписывают не использовать изменяемые объекты как ключи <code>Map</code> или элементы <code>Set</code>.</p></div></details>
         </section>
 
         <section class="section" id="concurrency">
@@ -117,6 +182,55 @@
               </tbody>
             </table>
           </div>
+
+          <div class="diagram">
+            <svg viewBox="0 0 560 300" role="img" xmlns="http://www.w3.org/2000/svg">
+              <title>Вложенность понятий: race condition включает data race и check-then-act</title>
+              <desc>Внешнее множество — race condition. Внутри него две области: data race (неупорядоченный доступ к памяти) и отдельно от него check-then-act / TOCTOU — гонка без data race на потокобезопасной структуре.</desc>
+              <rect x="14" y="14" width="532" height="220" rx="14" fill="none" stroke="var(--accent)" stroke-width="1.5"/>
+              <text x="30" y="38" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="var(--accent)">Race condition (логическая гонка)</text>
+              <rect x="42" y="58" width="220" height="150" rx="12" fill="none" stroke="var(--accent-2)" stroke-width="1.5"/>
+              <text x="152" y="82" text-anchor="middle" font-family="Inter, sans-serif" font-size="13" font-weight="600" fill="var(--accent-2)">Data race</text>
+              <text x="152" y="104" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" fill="var(--text-dim)">конфликт доступов</text>
+              <text x="152" y="120" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" fill="var(--text-dim)">к памяти без</text>
+              <text x="152" y="136" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" fill="var(--text-dim)">happens-before</text>
+              <rect x="300" y="58" width="220" height="150" rx="12" fill="none" stroke="var(--text-dim)" stroke-width="1.5"/>
+              <text x="410" y="82" text-anchor="middle" font-family="Inter, sans-serif" font-size="13" font-weight="600" fill="var(--text)">check-then-act</text>
+              <text x="410" y="100" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" fill="var(--text-dim)">TOCTOU</text>
+              <text x="410" y="124" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" fill="var(--text-dim)">гонка даже на</text>
+              <text x="410" y="140" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" fill="var(--text-dim)">потокобезопасной</text>
+              <text x="410" y="156" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" fill="var(--text-dim)">структуре</text>
+              <text x="30" y="262" font-family="Inter, sans-serif" font-size="12" fill="var(--accent-2)">Синхронизация доступов убирает только data race.</text>
+              <text x="30" y="284" font-family="Inter, sans-serif" font-size="12" fill="var(--text)">Атомарность составного действия убирает остальное.</text>
+            </svg>
+            <div class="cap">Все data race — это race condition, но не наоборот: check-then-act остаётся даже когда каждый доступ атомарен.</div>
+          </div>
+
+          <details class="qa"><summary>Классический check-then-act баг (проверил <code>getOrNull</code>, потом <code>put</code>) бывает и на потокобезопасной <code>ConcurrentHashMap</code>, где каждая операция атомарна. Это всё ещё race condition? И чем тогда race condition отличается от data race? <span class="q-badge">★</span></summary><div class="ans"><p>Да, это race condition, и пример показывает, что синхронизация каждого отдельного доступа её не устраняет. Data race (гонка данных) — частный случай: два конфликтующих доступа к одной переменной (хотя бы один — запись) без отношения happens-before между ними. Она лечится любой синхронизацией. Race condition (логическая гонка) шире: корректность зависит от относительного порядка операций, и проблема остаётся даже когда каждый доступ атомарен.</p><p>check-then-act / TOCTOU — ровно этот случай. Между потокобезопасным <code>get</code> и потокобезопасным <code>put</code> другой поток успевает вставить значение, и составное действие «проверить-и-вставить» теряет атомарность. Лечится не <code>volatile</code> или atomic на отдельных полях, а атомарностью всего составного действия: <code>putIfAbsent</code>/<code>compute</code> у <code>ConcurrentHashMap</code>, CAS-цикл или блокировка вокруг проверки и действия вместе. Все data race — это race condition, но не наоборот.</p></div></details>
+        </section>
+
+        <section class="section" id="race-data-toctou">
+          <h2>Race condition vs data race vs TOCTOU — три разных бага</h2>
+          <p>«В чём разница между race condition и data race» — один из самых каверзных senior-вопросов. Глава определяет гонку одной строкой и не вводит data race вообще, а без явного разведения этих понятий не объяснить, почему потокобезопасная коллекция не спасает от логической гонки.</p>
+
+          <p class="subhead">Data race — про память</p>
+          <p>Data race — это два конфликтующих доступа к одной переменной (хотя бы один — запись) без отношения happens-before между ними. Чисто про модель памяти: видимость и упорядоченность чтений-записей. Лечится любой синхронизацией, которая устанавливает happens-before — <code>volatile</code>, <code>synchronized</code>, atomic-операции.</p>
+
+          <p class="subhead">Race condition — про порядок</p>
+          <p>Race condition шире: корректность зависит от относительного порядка операций. Она остаётся, даже когда каждый отдельный доступ атомарен и потокобезопасен. Ломается не доступ, а составное действие.</p>
+          <pre><code class="language-kotlin">val map = ConcurrentHashMap&lt;String, Int&gt;()
+
+// Race condition БЕЗ data race: каждый вызов потокобезопасен,
+// но между get и put другой поток успевает вставить ключ.
+if (map[key] == null) {        // check
+    map[key] = compute()       // act — может затереть чужую вставку
+}
+
+// Лечение — атомарность всего составного действия:
+map.computeIfAbsent(key) { compute() }   // атомарно относительно ключа</code></pre>
+          <p>TOCTOU (Time-Of-Check to Time-Of-Use) — это та же check-then-act гонка, но с акцентом на безопасность: между проверкой («есть права», «хватает баланса») и действием состояние успевает измениться. Защита одна и та же — сделать проверку и действие одной атомарной операцией (<code>compute</code>/<code>putIfAbsent</code>, транзакция БД с уникальным ограничением, блокировка вокруг всего составного действия), а не синхронизировать доступы по отдельности. Связь с уже знакомыми терминами: data race снимается через happens-before и atomicity, а вот логическую гонку добивает только атомарность составного действия (CAS-цикл, <code>compute</code>).</p>
+
+          <details class="qa"><summary>Если каждый доступ к структуре атомарен, может ли остаться гонка? <span class="q-badge">★</span></summary><div class="ans"><p>Может — и это именно race condition без data race. Атомарность отдельного доступа гарантирует, что один <code>get</code> или один <code>put</code> не «порвётся» посередине, но ничего не говорит о связке из нескольких операций. Между потокобезопасной проверкой и потокобезопасным действием остаётся окно, в которое вклинивается другой поток. Поэтому потокобезопасная коллекция — необходимое, но не достаточное условие корректности: составное инвариантное действие («если нет — вставить», «прочитать-увеличить-записать») нужно делать атомарным целиком через <code>compute</code>/<code>computeIfAbsent</code>, CAS-цикл или внешнюю блокировку.</p></div></details>
         </section>
 
         <section class="section" id="perf">
@@ -138,6 +252,8 @@
               </tbody>
             </table>
           </div>
+
+          <details class="qa"><summary>Офлайн-first приложение хранит данные в Room, UI подписан на <code>StateFlow</code> в ViewModel, а из сети прилетают пуши. Где здесь должен быть SSOT, и почему делать источником истины именно <code>StateFlow</code> — частая ошибка? <span class="q-badge">★</span></summary><div class="ans"><p>В офлайн-first архитектуре источником истины должна быть локальная БД (Room), а не <code>StateFlow</code> в ViewModel — это прямая рекомендация гайда Android по архитектуре. Запись идёт в БД, а UI наблюдает за БД через поток (Room возвращает <code>Flow</code>), так что любое изменение — из сети, с другого экрана, из фонового sync — единообразно доезжает до UI.</p><p>Если истиной сделать <code>StateFlow</code> в ViewModel, появляется вторая копия состояния, живущая лишь пока жив ViewModel. Данные из пуша или фонового воркера, записанные в Room, не попадут в этот <code>StateFlow</code> без ручной ресинхронизации, а пересоздание ViewModel потеряет состояние. ViewModel должен держать производное UI-состояние (результат <code>map</code>/<code>combine</code> над потоком из репозитория), но авторитетным хранилищем выступает БД. Кэш в памяти допустим как ускоритель чтения, но запись всегда сначала в SSOT. Подробнее — в главе <a href="background-work.html">Фоновая работа</a>.</p></div></details>
         </section>
 
         <section class="section" id="netsec">
@@ -159,6 +275,103 @@
               </tbody>
             </table>
           </div>
+
+          <details class="qa"><summary>Команды чаще пинят публичный ключ (SPKI-хэш), а не сам сертификат. Почему, и какой главный операционный риск любого pinning заставляет Android отговаривать от него? <span class="q-badge">★</span></summary><div class="ans"><p>Пиннинг по публичному ключу (хэш SPKI) переживает ротацию сертификата: пока сервер при перевыпуске сохраняет ту же ключевую пару, прежний пин остаётся валиден. Пиннинг самого сертификата ломается при каждом продлении.</p><p>Главный операционный риск — «закирпичивание» (bricking). Если все запиненные ключи и сертификаты сменились, а у клиента нет резервного пина или способа обновить конфиг, приложение теряет связь с сервером и чинится только обновлением через стор. Поэтому документация Android по Network Security Config предупреждает: без тщательного планирования (несколько пинов, включая backup-ключ, и <code>expiration</code>-дата у pin-set) pinning приносит больше вреда, чем пользы, и рекомендует его в основном там, где клиент и сервер контролирует одна организация.</p></div></details>
+        </section>
+
+        <section class="section" id="idempotency">
+          <h2>Идемпотентность на практике: HTTP-методы, ключи, ретраи</h2>
+          <p>В таблице идемпотентность — это <code>f(f(x)) = f(x)</code>. На собесе по этому термину почти всегда спрашивают прикладное: какие HTTP-методы идемпотентны, как сделать <code>POST</code> безопасным для повтора и почему «exactly-once» на практике — это идемпотентность поверх ненадёжной доставки.</p>
+
+          <p class="subhead">Safe ≠ idempotent</p>
+          <p>Это два разных свойства метода. <em>Safe</em> — метод только читает и не меняет состояние сервера. <em>Idempotent</em> — повтор не меняет состояние дальше первого вызова. Все safe-методы идемпотентны, но не наоборот.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Метод</th><th>Safe</th><th>Idempotent</th><th>Комментарий</th></tr></thead>
+              <tbody>
+                <tr><td><strong>GET, HEAD, OPTIONS, TRACE</strong></td><td>да</td><td>да</td><td>Только чтение</td></tr>
+                <tr><td><strong>PUT</strong></td><td>нет</td><td>да</td><td>Перезапись в то же состояние</td></tr>
+                <tr><td><strong>DELETE</strong></td><td>нет</td><td>да</td><td>Повтор оставляет ресурс удалённым</td></tr>
+                <tr><td><strong>POST</strong></td><td>нет</td><td>нет</td><td>Повтор создаёт дубль</td></tr>
+                <tr><td><strong>PATCH</strong></td><td>нет</td><td>не гарантируется</td><td>Зависит от семантики патча</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Классификация — из RFC 9110. <code>DELETE</code> идемпотентен, несмотря на <code>200 → 404</code>: меняется статус-код, а состояние (ресурса нет) остаётся тем же. Практический смысл идемпотентности — запрос таким методом клиент может безопасно повторить при таймауте или обрыве, не боясь задвоить эффект.</p>
+
+          <p class="subhead">Idempotency-Key делает POST безопасным</p>
+          <p>Для <code>POST</code> задвоение предотвращают идемпотентным ключом: клиент шлёт уникальный <code>Idempotency-Key</code>, сервер по нему отбрасывает повтор и возвращает результат первого вызова. Тонкость — гонка на параллельных ретраях: если два запроса с одним ключом одновременно проходят проверку «ключа ещё нет», оба спишут. Поэтому ключ резервируют атомарно (вставка под UNIQUE-ограничением или <code>putIfAbsent</code>) до начала работы.</p>
+
+          <p class="subhead">Exactly-once = at-least-once + идемпотентность</p>
+          <p>Семантики доставки сообщения: <em>at-most-once</em> (0 или 1 раз — возможны потери, но не дубли), <em>at-least-once</em> (1+ раз — потерь нет, но возможны дубли; так работают SQS и Kafka по умолчанию). Exactly-once как физическую доставку в распределённой системе с обрывами сетей в общем случае получить нельзя. Приём такой: берут надёжную at-least-once доставку и делают <em>обработку</em> идемпотентной (по уникальному ключу сообщения отбросить повтор или сделать upsert). Тогда наблюдаемый бизнес-эффект эквивалентен exactly-once, хотя физически сообщение могло обработаться несколько раз. Важно разделять delivery semantics (сколько раз доставлено) и processing semantics (как это влияет на состояние).</p>
+
+          <details class="qa"><summary>Почему exactly-once в распределённой системе обычно достигают идемпотентностью обработки, а не «честной» доставкой? <span class="q-badge">★</span></summary><div class="ans"><p>Потому что «честная» exactly-once доставка в системе с ненадёжной сетью в общем случае невозможна. Отправитель не может отличить «сообщение не дошло» от «дошло, но ack потерялся», и любой выбор — повторить или не повторить — даёт либо дубль, либо потерю. Поэтому на практике берут at-least-once (потерь точно нет) и переносят ответственность на приёмник: он по уникальному ключу сообщения отбрасывает уже обработанные повторы или применяет upsert. Эффект на состояние становится таким, будто сообщение обработано ровно раз, хотя физически обработчик мог запуститься несколько раз. Это и есть «effectively exactly-once»: гарантия не на уровне доставки, а на уровне идемпотентного эффекта.</p></div></details>
+        </section>
+
+        <section class="section" id="idempotent-pure-deterministic">
+          <h2>Идемпотентность vs чистота vs детерминизм vs неизменяемость</h2>
+          <p>Эти четыре термина лежат в главе в разных строках таблицы как изолированные определения, но на собесе их сравнивают друг с другом: «всякая ли чистая функция идемпотентна?», «идемпотентна ли недетерминированная операция?», «делает ли <code>val</code> объект неизменяемым?». Разведём импликации явно.</p>
+
+          <p class="subhead">Импликации между свойствами функции</p>
+          <p>Чистая функция всегда детерминирована (детерминизм — часть определения чистоты). А вот «чистая ⇒ идемпотентна» верно только в смысле эффекта на состояние: у чистой функции нет побочных эффектов, поэтому повторный вызов ничего в состоянии не меняет. По возвращаемому значению чистая функция идемпотентной быть не обязана — <code>f(x)=x+1</code> чиста и детерминирована, но <code>f(f(x))=x+2</code>, а не <code>f(x)</code>. Обратные стрелки тоже не работают: идемпотентная операция не обязана быть ни чистой, ни детерминированной — <code>DELETE</code> идемпотентен, при этом имеет побочный эффект и возвращает разные коды.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Свойство</th><th>Детерминизм результата</th><th>Без side effect</th><th>Повтор не меняет состояние</th></tr></thead>
+              <tbody>
+                <tr><td><strong>Детерминизм</strong></td><td>да</td><td>не требует</td><td>не требует</td></tr>
+                <tr><td><strong>Чистота (pure)</strong></td><td>да</td><td>да</td><td>да (следствие)</td></tr>
+                <tr><td><strong>Идемпотентность</strong></td><td>не требует</td><td>не требует</td><td>да</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <p class="subhead">Immutable по ссылке ≠ по содержимому ≠ thread-safe</p>
+          <p><code>val</code> в Kotlin запрещает переприсваивать саму ссылку, но не запрещает мутировать объект за ней.</p>
+          <pre><code class="language-kotlin">val list: MutableList&lt;Int&gt; = mutableListOf(1, 2)
+// list = mutableListOf()  // ошибка: ссылку менять нельзя
+list.add(3)                // ОК: содержимое меняется свободно</code></pre>
+          <p>Аналогично read-only тип <code>List</code> — это интерфейс без мутаторов, а не гарантия неизменяемости: под ним может лежать <code>ArrayList</code>, который кто-то меняет через другую ссылку. И даже честная неизменяемость не равна автоматической потокобезопасности «бесплатно»: глубоко неизменяемый и безопасно опубликованный объект thread-safe, потому что после конструктора его состояние не меняется и гонок по записи нет. А вот <code>val list: MutableList</code> — неизменяемая ссылка на изменяемый список — не потокобезопасен. Для конкурентного доступа нужны либо честно неизменяемые структуры, либо явная синхронизация.</p>
+
+          <details class="qa"><summary>Делает ли <code>val</code> объект неизменяемым, и значит ли immutable «автоматически thread-safe»? <span class="q-badge">★</span></summary><div class="ans"><p>Нет на оба вопроса по отдельности — и важно понимать, где граница. <code>val</code> фиксирует только ссылку: <code>val list: MutableList&lt;Int&gt;</code> нельзя переприсвоить, но <code>list.add(...)</code> работает. Неизменяемость по ссылке — не неизменяемость по содержимому. Read-only <code>List</code> в Kotlin тоже не гарантия: это интерфейс без мутаторов, а под ним может лежать <code>ArrayList</code>, который меняют через другую ссылку.</p><p>Про thread-safety: глубоко неизменяемый объект (все поля <code>val</code> и сами ссылаются на неизменяемое, объект безопасно опубликован) действительно потокобезопасен — состояние после конструктора не меняется, гонок по записи нет. Но «immutable» здесь означает именно глубокую и настоящую неизменяемость, а не <code>val</code> на изменяемую структуру. Поэтому для конкурентного доступа берут либо честно неизменяемые структуры, либо явную синхронизацию.</p></div></details>
+        </section>
+
+        <section class="section" id="faq">
+          <h2>Частые вопросы интервьюера</h2>
+
+          <details class="qa">
+            <summary>Чем race condition отличается от data race? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Data race — узкое понятие из модели памяти: два конфликтующих доступа к одной переменной (хотя бы один — запись) без отношения happens-before между ними. Снимается любой синхронизацией. Race condition — шире: корректность зависит от относительного порядка операций, и проблема остаётся даже когда каждый доступ атомарен (классика — check-then-act на потокобезопасной коллекции). Все data race — это race condition, но не наоборот. Логическую гонку лечит атомарность всего составного действия, а не синхронизация отдельных доступов.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Какие HTTP-методы идемпотентны, и в чём разница между safe и idempotent? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>По RFC 9110 safe-методы (только чтение) — GET, HEAD, OPTIONS, TRACE. Идемпотентные (повтор не меняет состояние дальше первого вызова) — те же четыре плюс PUT и DELETE. POST не идемпотентен, PATCH — не гарантированно. Все safe идемпотентны, но не наоборот: PUT и DELETE идемпотентны, но небезопасны (меняют состояние). Практический смысл: запрос идемпотентным методом можно безопасно повторить при обрыве; для POST задвоение предотвращают <code>Idempotency-Key</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Идемпотентность, чистота, детерминизм — как они соотносятся? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Детерминированная функция при равных аргументах даёт равный результат. Чистая — детерминирована и без побочных эффектов, поэтому она идемпотентна. Но идемпотентность обратно ничего не гарантирует: операция может иметь side effect на первом вызове и возвращать разные значения (DELETE: 200 потом 404), оставаясь идемпотентной по состоянию. Идемпотентность — про эффект на состояние, а не про возвращаемое значение.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Чем coupling отличается от cohesion и куда их «крутить»? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Coupling — насколько корректность модуля зависит от устройства другого (связь между модулями). Cohesion — насколько элементы одного модуля служат единой ответственности (связь внутри модуля). Цель — низкая связанность и высокая сплочённость. Важно: «слабая связанность» — не «нулевая»; модули обязаны взаимодействовать. Слабая связанность — это зависимость только от стабильного контракта (интерфейса), а не от внутреннего устройства. Шкала силы связи: data → stamp → control → common → content, двигаться надо к data.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как правила контракта связаны с принципом подстановки Лисков? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>LSP — это Design by Contract Мейера, перенесённый на наследование. Подтип обязан: не усиливать предусловия (не требовать от вызывающего больше базового типа), не ослаблять постусловия (гарантировать не меньше) и сохранять инварианты базового типа. Самое частое нарушение — усиление предусловия: базовый метод принимал любой <code>int</code>, а override бросает на отрицательных, и код против базового типа ломается на подтипе. Классический пример нарушения — <code>Square extends Rectangle</code>: <code>setWidth</code> у квадрата вынужден менять и высоту, ломая постусловие «высота не изменилась».</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Делает ли <code>val</code> объект неизменяемым, а immutable — автоматически thread-safe? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p><code>val</code> фиксирует только ссылку: <code>val list: MutableList</code> нельзя переприсвоить, но содержимое менять можно. Read-only <code>List</code> в Kotlin — интерфейс без мутаторов, под ним может лежать изменяемый <code>ArrayList</code>. Глубоко неизменяемый и безопасно опубликованный объект действительно thread-safe (состояние после конструктора не меняется), но <code>val</code> на изменяемую структуру таким не делает. Для конкурентного доступа нужны честно неизменяемые структуры или явная синхронизация.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Что общего у TOCTOU-уязвимости и обычной гонки? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>TOCTOU (Time-Of-Check to Time-Of-Use) — это race condition в форме check-then-act с акцентом на безопасность: между проверкой условия («есть права», «хватает баланса») и действием по её результату состояние успевает измениться. От data race отличается тем, что каждая отдельная операция может быть атомарной и потокобезопасной — ломается составное «проверил-и-сделал». Защита — сделать проверку и действие одной атомарной операцией (<code>compute</code>/<code>putIfAbsent</code>, транзакция с уникальным ограничением, блокировка вокруг всего действия), а не синхронизировать доступы по отдельности.</p></div>
+          </details>
         </section>
 
         <section class="section" id="tasks">
@@ -282,6 +495,67 @@ fun main() {
             </details>
           </div>
 
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 4.</strong> Реализуй потокобезопасный кэш «get-or-compute»: <code>getOrPut(key, compute)</code> должен гарантировать, что для одного ключа дорогая <code>compute()</code> выполнится <em>ровно один раз</em> даже при конкурентном доступе из множества потоков, а параллельные вызовы с тем же ключом дождутся одного результата. Наивный вариант на <code>ConcurrentHashMap</code> с check-then-act (<code>if (map[key] == null) map[key] = compute()</code>) допускает двойной запуск <code>compute</code> — объясни почему и почини.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">import java.util.concurrent.*
+
+class Memoizer&lt;K, V&gt;(private val compute: (K) -&gt; V) {
+    private val cache = ConcurrentHashMap&lt;K, Future&lt;V&gt;&gt;()
+
+    fun getOrPut(key: K): V {
+        while (true) {
+            var f = cache[key]
+            if (f == null) {
+                val task = FutureTask { compute(key) }
+                // putIfAbsent атомарен: FutureTask запустит ровно один поток
+                f = cache.putIfAbsent(key, task) ?: task.also { it.run() }
+            }
+            try {
+                return f.get()              // остальные ждут тот же результат
+            } catch (e: CancellationException) {
+                cache.remove(key, f)        // не кэшируем отменённый расчёт
+            }
+        }
+    }
+}</code></pre>
+                <p>Объяснение: наивный <code>if</code>-then-<code>put</code> — это check-then-act race: два потока одновременно видят <code>null</code> и оба запускают <code>compute</code>. Атомарность отдельных <code>get</code>/<code>put</code> не спасает — спасает атомарность составного действия. <code>putIfAbsent</code> атомарно решает, кто создаст <code>FutureTask</code>; остальные получают тот же <code>Future</code> и блокируются на <code>get()</code>. Альтернатива — <code>computeIfAbsent</code> (атомарен относительно ключа), но он держит лок на бакете во время <code>compute</code>, что плохо для долгих вычислений и опасно при реентерабельности.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 5.</strong> Сервер обрабатывает платёж по запросу с <code>Idempotency-Key</code>. Напиши логику <code>processPayment(key, amount)</code>, которая при повторе того же ключа возвращает результат первого вызова, не списывая деньги дважды, и корректно ведёт себя, если второй запрос с тем же ключом пришёл, пока первый ещё в процессе (гонка на ключе).</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+                <pre><code class="language-kotlin">// store моделирует таблицу с UNIQUE-ограничением на key.
+// insertIfAbsent атомарен и бросает на конфликте уникальности.
+
+suspend fun processPayment(key: String, amount: Long): Receipt {
+    // 1. Атомарно резервируем ключ ДО списания.
+    val reserved = store.insertIfAbsent(key, status = IN_PROGRESS)
+    if (!reserved) {
+        // 2. Кто-то уже держит ключ — ждём его результата.
+        return store.awaitCompleted(key).receipt
+    }
+    // 3. Мы — единственный владелец ключа: списываем ровно раз.
+    return try {
+        val receipt = charge(amount)
+        store.complete(key, receipt)        // COMPLETED + результат
+        receipt
+    } catch (e: Exception) {
+        store.markFailed(key)               // даём ретраю шанс
+        throw e
+    }
+}</code></pre>
+                <p>Объяснение: ключевая ловушка — окно между «проверил, что ключа нет» и «вставил результат»: два запроса с одним ключом проходят проверку одновременно и оба списывают. Решение — атомарно зарезервировать ключ <em>до</em> работы под <code>UNIQUE</code>-ограничением (или <code>putIfAbsent</code> с маркером). Кто вставил — выполняет списание и переводит запись в <code>COMPLETED</code>; кто получил конфликт уникальности — ждёт/опрашивает запись и возвращает её результат. Уникальное ограничение БД переносит атомарность check-then-act на уровень хранилища; без него идемпотентность ломается ровно на гонке параллельных ретраев.</p>
+              </div>
+            </details>
+          </div>
+
         </section>
 
         <div class="sources">
@@ -292,6 +566,8 @@ fun main() {
             <li><a href="https://kotlinlang.org/docs/shared-mutable-state-and-concurrency.html" target="_blank" rel="noopener">Kotlin — Shared mutable state and concurrency</a> — атомарность, CAS, гонки.</li>
             <li><a href="https://refactoring.guru/design-patterns" target="_blank" rel="noopener">Refactoring.Guru — Design Patterns</a> — GoF-паттерны и принципы.</li>
             <li><a href="https://developer.android.com/training/articles/security-tips" target="_blank" rel="noopener">Android Developers — Security tips</a> — Keystore, TLS, хранение секретов.</li>
+            <li><a href="https://developer.android.com/privacy-and-security/security-config" target="_blank" rel="noopener">Android Developers — Network Security Configuration</a> — certificate pinning, риски и backup-пины.</li>
+            <li><a href="https://www.rfc-editor.org/rfc/rfc9110.html#name-method-properties" target="_blank" rel="noopener">RFC 9110 — HTTP Semantics, Method Properties</a> — safe и idempotent методы.</li>
           </ol>
         </div>
       </article>
@@ -302,6 +578,6 @@ fun main() {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/app.js?v=20260620-4"></script>
+  <script src="../assets/app.js?v=20260621-1"></script>
 </body>
 </html>

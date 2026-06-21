@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>(()=>{const k="aip-theme";let t=null;try{t=localStorage.getItem(k)}catch(e){}
+    if(t!=="dark"&&t!=="light")t=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";
+    document.documentElement.setAttribute("data-theme",t)})();</script>
+  <title>Gradle и сборка · Android-собес</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+</head>
+<body data-page="gradle-build">
+  <div class="layout">
+    <aside id="sidebar"></aside>
+    <div id="content">
+      <article class="page">
+        <div class="breadcrumb"></div>
+        <header class="page-head">
+          <span class="eyebrow">Безопасность и качество</span>
+          <h1>Gradle и сборка</h1>
+          <p class="lead">Как Gradle превращает исходники в APK или AAB: три фазы сборки и граф задач, build variants от AGP (Android Gradle Plugin), способы ускорить сборку, KSP против kapt, модуляризация, R8 и форматы доставки в Google Play. Тема, по которой видно, понимаете ли вы конвейер сборки целиком, а не только нажимаете «Run» в Android Studio.</p>
+          <div class="meta"><span class="tag lvl-mid">Middle</span><span class="tag lvl-sen">Senior</span><span class="tag hot">Частый вопрос</span></div>
+        </header>
+
+        <section class="section" id="model">
+          <h2>Модель Gradle: фазы и граф задач</h2>
+          <p>Каждая сборка Gradle проходит три фазы строго по порядку: <strong>initialization</strong>, <strong>configuration</strong>, <strong>execution</strong>. Понимание этого порядка — ключ к тому, почему одни правки в <code>build.gradle</code> ускоряют сборку, а другие незаметно тормозят вообще всё.</p>
+          <p>В <em>initialization</em> Gradle читает <code>settings.gradle(.kts)</code>, чтобы узнать состав сборки: какие модули в неё входят (через <code>include(":app", ":core")</code>) и какие included builds подключены. На этой фазе создаётся объект <code>Settings</code> и по объекту <code>Project</code> на каждый модуль — но скрипты модулей ещё не исполнялись.</p>
+          <p>В <em>configuration</em> Gradle исполняет тело каждого <code>build.gradle</code> всех участвующих модулей, регистрирует задачи и строит из них граф — по входам и выходам каждой задачи. Здесь критичный момент: код на верхнем уровне build-скрипта (вне блоков <code>tasks.register</code>) исполняется <strong>на каждой сборке</strong>, даже если вы собираете одну-единственную задачу. Поэтому тяжёлая работа в конфигурации — чтение файлов, сетевые запросы, перебор зависимостей — замедляет любую команду Gradle, включая <code>./gradlew help</code>.</p>
+          <p>В <em>execution</em> Gradle берёт построенный граф и выполняет только нужные задачи в правильном порядке, пропуская те, что уже актуальны.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart LR
+  S["settings.gradle<br/>состав модулей"] --> I["Initialization<br/>создать Project-объекты"]
+  I --> C["Configuration<br/>выполнить build.gradle,<br/>построить граф задач"]
+  C --> E["Execution<br/>запустить нужные задачи"]
+  C -. "тяжёлый код тут<br/>тормозит ВСЕ сборки" .-> C
+</div>
+          <div class="cap">Три фазы Gradle. Конфигурация исполняется на каждой сборке — поэтому её вес умножается на частоту запусков</div>
+          </div>
+          <p class="subhead">Task: dependsOn, inputs/outputs, up-to-date</p>
+          <p>Задача (<code>Task</code>) — единица работы: компиляция, копирование, упаковка. Зависимости между задачами задаются явно через <code>dependsOn</code> либо неявно — через совпадение выхода одной задачи со входом другой. Граф эти связи собирает на фазе конфигурации.</p>
+          <p>Главный механизм скорости — <strong>up-to-date checks</strong> (инкрементальность). У задачи объявлены <em>входы</em> (<code>@InputFiles</code>, <code>@Input</code>) и <em>выходы</em> (<code>@OutputFiles</code>). Перед запуском Gradle хеширует входы и сверяет с прошлой сборкой. Если ни входы, ни выходы не менялись — задача помечается <code>UP-TO-DATE</code> и пропускается. Так чистая повторная сборка делает почти ничего.</p>
+          <div class="code-label">build.gradle.kts</div>
+<pre><code class="language-kotlin">tasks.register("generateVersion") {
+    val output = layout.buildDirectory.file("version.txt")
+    // объявляем выход — без этого Gradle всегда считает задачу устаревшей
+    outputs.file(output)
+    inputs.property("version", project.version.toString())
+    doLast {
+        output.get().asFile.writeText("v=${project.version}")
+    }
+}</code></pre>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Задача без объявленных inputs/outputs не кешируется.</strong> Gradle не знает, от чего она зависит, и гоняет её каждый раз. Кастомные задачи, которые «почему-то всегда выполняются», — почти всегда забытые <code>inputs</code>/<code>outputs</code>.</div>
+          </div>
+          <details class="qa">
+            <summary>Почему добавление «безобидного» <code>println</code> с чтением файла в начало build.gradle может замедлить даже <code>./gradlew tasks</code>? <span class="q-badge">★</span></summary>
+            <div class="ans"><p>Тело build-скрипта на верхнем уровне исполняется на фазе конфигурации, а она проходит <em>при любой</em> команде Gradle — даже когда вы не собираете ничего. Чтение файла на каждой конфигурации добавляет I/O ко всем сборкам сразу. Хуже того, без configuration cache конфигурация повторяется и тогда, когда сама задача давно <code>UP-TO-DATE</code>. Правильное место для такой логики — внутри <code>doLast {}</code> задачи (фаза execution) с объявленными входами, чтобы работа выполнялась лениво и кешировалась.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="variants">
+          <h2>AGP: build types, flavors, variants</h2>
+          <p>AGP добавляет поверх Gradle понятие <strong>build variant</strong> — конкретной сборки приложения. Вариант рождается из пересечения двух осей: <em>build type</em> (как собрано) и <em>product flavor</em> (что за версия).</p>
+          <p><strong>Build type</strong> описывает технику сборки. Из коробки два: <code>debug</code> (отлаживаемый, без минификации, с дебажной подписью) и <code>release</code> (для публикации, с R8 и боевой подписью). <strong>Product flavor</strong> — это вариация продукта: free против paid, dev против prod, разные бренды. Флейворы группируются по измерениям (<code>flavorDimensions</code>), и AGP перемножает по одному флейвору из каждого измерения на каждый build type.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TB
+  subgraph Flavors["productFlavors (dim: tier)"]
+    F1["free"]
+    F2["paid"]
+  end
+  subgraph Types["buildTypes"]
+    T1["debug"]
+    T2["release"]
+  end
+  F1 --> V1["freeDebug"]
+  F1 --> V2["freeRelease"]
+  F2 --> V3["paidDebug"]
+  F2 --> V4["paidRelease"]
+  T1 -.-> V1
+  T1 -.-> V3
+  T2 -.-> V2
+  T2 -.-> V4
+</div>
+          <div class="cap">2 флейвора × 2 build type = 4 варианта. Добавили измерение из 2 флейворов — вариантов уже 8</div>
+          </div>
+          <p>Под каждый вариант AGP подмешивает свои <strong>sourceSets</strong>: код и ресурсы из <code>src/freeDebug/</code>, <code>src/free/</code>, <code>src/debug/</code> накладываются поверх <code>src/main/</code>. Так одна и та же фича получает разную реализацию без <code>if</code> в коде.</p>
+          <div class="code-label">app/build.gradle.kts</div>
+<pre><code class="language-kotlin">android {
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = true
+            signingConfig = signingConfigs.getByName("release")
+            manifestPlaceholders["appLabel"] = "MyApp"
+        }
+        getByName("debug") {
+            applicationIdSuffix = ".debug"   // ставится рядом с release
+            manifestPlaceholders["appLabel"] = "MyApp DEBUG"
+        }
+    }
+    flavorDimensions += "tier"
+    productFlavors {
+        create("free") {
+            dimension = "tier"
+            buildConfigField("boolean", "PREMIUM", "false")
+        }
+        create("paid") {
+            dimension = "tier"
+            applicationIdSuffix = ".paid"
+            buildConfigField("boolean", "PREMIUM", "true")
+        }
+    }
+}</code></pre>
+          <p><code>buildConfigField</code> прокидывает значение в сгенерированный класс <code>BuildConfig</code> — читаете его как <code>BuildConfig.PREMIUM</code> в рантайме. <code>manifestPlaceholders</code> подставляют значения в <code>AndroidManifest.xml</code> на сборке (имя приложения, ключи API под разные среды). <code>signingConfigs</code> хранят данные подписи; боевой keystore держат вне репозитория и подтягивают из переменных окружения или <code>local.properties</code>.</p>
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>Никогда не коммитьте keystore и пароли в репозиторий.</strong> Подпись release — это и есть удостоверение приложения в Play. Утёкший ключ означает, что кто-то может выпустить «обновление» под вашим именем. Храните keystore вне git и читайте пароли из окружения CI.</div>
+          </div>
+          <details class="qa">
+            <summary>Почему количество вариантов растёт мультипликативно, и чем это бьёт по сборке и тестам? <span class="q-badge">★</span></summary>
+            <div class="ans"><p>Каждое новое измерение флейворов умножает число вариантов на свой размер: при двух измерениях по 3 флейвора и двух build type получается 3 × 3 × 2 = 18 вариантов. AGP конфигурирует задачи на <em>все</em> варианты, даже если собираете один, — это раздувает фазу конфигурации и граф задач, замедляя любую команду. CI, прогоняющий тесты по матрице вариантов, растёт так же. Поэтому лишние измерения убирают, а для редких комбинаций используют <code>variantFilter</code> (или <code>androidComponents { beforeVariants }</code> в новых AGP), чтобы исключить ненужные варианты из конфигурации.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="speed">
+          <h2>Ускорение сборки</h2>
+          <p>Медленная сборка — налог на каждую итерацию разработчика. Хорошая новость: большую часть выигрыша дают несколько переключателей в <code>gradle.properties</code> и дисциплина в объявлении зависимостей.</p>
+          <p>База — <strong>Gradle daemon</strong>: фоновый JVM-процесс, который живёт между сборками и держит прогретый кеш и JIT. Он включён по умолчанию; выключать его (<code>--no-daemon</code>) есть смысл только на одноразовых CI-агентах. <strong>Parallel</strong> (<code>org.gradle.parallel=true</code>) собирает независимые модули одновременно — выигрыш тем больше, чем лучше разбит проект.</p>
+          <p class="subhead">Configuration cache против build cache</p>
+          <p>Их постоянно путают, а спрашивают почти всегда. Это два разных кеша на разных фазах:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Критерий</th><th>Configuration cache</th><th>Build cache</th></tr></thead>
+              <tbody>
+                <tr><td>Какую фазу ускоряет</td><td>Configuration — пропускает повторное построение графа задач</td><td>Execution — переиспользует выходы самих задач</td></tr>
+                <tr><td>Что кеширует</td><td>Структуру графа и сконфигурированные задачи</td><td>Артефакты: классы, dex, распакованные AAR</td></tr>
+                <tr><td>Где живёт</td><td>Локально в проекте</td><td>Локально и/или удалённо (общий на команду/CI)</td></tr>
+                <tr><td>Когда заметнее</td><td>Большой проект с тяжёлой конфигурацией</td><td>Чистые сборки и переключение веток</td></tr>
+                <tr><td>Флаг</td><td><code>org.gradle.configuration-cache=true</code></td><td><code>org.gradle.caching=true</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Они не взаимоисключающие — включают оба. Configuration cache экономит на «сколько Gradle думает, прежде чем начать работу», build cache — на «сколько работы можно не делать заново». Удалённый build cache особенно окупается на CI, где гоняются сборки и <a href="testing.html">тесты</a>: один агент собрал — остальные переиспользуют артефакты.</p>
+          <p class="subhead">Version catalogs и фиксированные версии</p>
+          <p><strong>Version catalogs</strong> (<code>gradle/libs.versions.toml</code>) собирают координаты зависимостей и их версии в один типобезопасный файл. Это не про скорость напрямую, а про порядок: одна версия Kotlin на весь проект, автодополнение в IDE, нет рассинхрона между модулями.</p>
+          <div class="code-label">gradle/libs.versions.toml</div>
+<pre><code class="language-kotlin">[versions]
+kotlin = "2.0.21"
+coroutines = "1.9.0"
+
+[libraries]
+coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+
+[plugins]
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }</code></pre>
+          <p>И обратное правило: <strong>избегайте dynamic versions</strong> вроде <code>1.+</code> или <code>latest.release</code>. Они заставляют Gradle лезть в сеть за списком версий (медленно и недетерминированно), а сборка перестаёт быть воспроизводимой — вчера собралось одно, сегодня прилетела новая минорная версия и что-то сломалось.</p>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Модульность — это и про инкрементальность.</strong> Изменили один модуль — Gradle пересобирает его и зависящих от него, а не весь проект. В одном гигантском модуле любая правка задевает всё. Разбиение на модули — самый структурный способ ускорить инкрементальную сборку (детали — в параграфе про модуляризацию).</div>
+          </div>
+          <details class="qa">
+            <summary>Почему включённый configuration cache может «упасть» там, где раньше всё работало, и при чём тут чтение <code>System.getenv()</code> в build-скрипте? <span class="q-badge">★</span></summary>
+            <div class="ans"><p>Configuration cache требует, чтобы конфигурация была детерминированной и сериализуемой: задачи не должны на этапе выполнения обращаться к «живым» объектам <code>Project</code>, <code>Gradle</code>, к переменным окружения или системным свойствам напрямую из <code>doLast</code>. Если задача читает <code>System.getenv()</code> во время выполнения, Gradle не может зафиксировать вход в кеш и помечает это нарушением. Лечится переносом чтения окружения в фазу конфигурации и передачей значения в задачу через <code>Property</code>/provider (например, <code>providers.environmentVariable("CI")</code>), которые корректно учитываются кешем. Поэтому миграция на configuration cache часто вскрывает скрытые нарушения изоляции фаз, которые годами «прощались».</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="annotation">
+          <h2>KSP vs kapt</h2>
+          <p>Аннотационные процессоры (Dagger/Hilt, Room, Moshi) генерируют код на сборке. Долгое время в Kotlin это делал <strong>kapt</strong>, и он был узким местом. KSP пришёл его заменить — и почти всегда быстрее.</p>
+          <p>Почему kapt медленный: процессоры написаны под Java и работают с Java-моделью кода. Чтобы их прогнать, kapt сначала компилирует Kotlin в <strong>Java-стабы</strong> (заглушки с сигнатурами, без тел методов), а для этого должен разрешить все символы программы. По данным команды Kotlin, генерация стабов стоит примерно треть полного анализа kotlinc. Затем эти стабы скармливаются <code>javac</code> с процессорами — отдельный проход компилятора.</p>
+          <p><strong>KSP</strong> (Kotlin Symbol Processing) читает символы Kotlin напрямую через собственный API, без стабов и без <code>javac</code>. Он понимает Kotlin-специфику нативно и разрешает ссылки лениво, по запросу. На примере из документации Kotlin: при общем времени компиляции Kotlin около 21,5 с kapt тратил на генерацию ~8,7 с, а KSP — ~1,15 с.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart LR
+  K1["Kotlin-исходники"] --> S["kapt: генерация<br/>Java-стабов"]
+  S --> J["javac + процессоры"]
+  J --> G1["сгенерированный код"]
+  K2["Kotlin-исходники"] --> P["KSP: чтение<br/>символов напрямую"]
+  P --> G2["сгенерированный код"]
+</div>
+          <div class="cap">kapt делает лишний проход через стабы и javac; KSP работает по символам Kotlin без посредников</div>
+          </div>
+          <p>Миграция обычно сводится к замене плагина и конфигурации зависимости — при условии, что процессор поддерживает KSP. Room, Moshi, Hilt, Glide уже умеют.</p>
+          <div class="code-label">build.gradle.kts</div>
+<pre><code class="language-kotlin">// было: kapt
+// kapt("androidx.room:room-compiler:2.6.1")
+
+// стало: ksp
+plugins {
+    id("com.google.devtools.ksp") version "2.0.21-1.0.25"
+}
+dependencies {
+    implementation("androidx.room:room-runtime:2.6.1")
+    ksp("androidx.room:room-compiler:2.6.1")   // тот же артефакт, другая конфигурация
+}</code></pre>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>На kapt стоит оставаться, только если процессор не поддерживает KSP.</strong> Версия KSP привязана к версии Kotlin (суффикс <code>-1.0.25</code> после версии Kotlin), поэтому при апгрейде Kotlin не забудьте поднять и KSP. Смешивать kapt и KSP в одном модуле можно, но тогда вы платите за оба конвейера.</div>
+          </div>
+          <details class="qa">
+            <summary>Почему у KSP инкрементальная пересборка обычно затрагивает меньше файлов, чем у kapt, при той же правке? <span class="q-badge">★</span></summary>
+            <div class="ans"><p>kapt для генерации стабов разрешает <em>каждую</em> ссылку на тип во всём модуле — поэтому правка в одном файле легко «загрязняет» множество других, и инкрементальный механизм перестраивает широкий набор. KSP разрешает символы динамически, по мере обращения, и отслеживает реальные зависимости между символами. Его инкрементальная модель тоньше, чем простое деление на isolating/aggregating-процессоры: изменение в файле с меньшей вероятностью тянет за собой пересборку соседних, поэтому набор переобрабатываемых файлов меньше. Это та же причина, по которой KSP выигрывает не только на чистой, но и на инкрементальной сборке.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="modularization">
+          <h2>Модуляризация и влияние на сборку</h2>
+          <p>Разбиение монолита на модули — это не только архитектура, но и рычаг скорости. Типовая раскладка по слоям: <code>:app</code> (точка сборки, DI-граф), <code>:feature:*</code> (экраны и их логика), <code>:core:*</code> (общие UI/утилиты), <code>:data</code> (репозитории, сеть, БД).</p>
+          <p class="subhead">api против implementation</p>
+          <p>Это первое, что спрашивают про модули. Зависимость в <code>api</code> <strong>протекает</strong> в compile classpath потребителей: кто зависит от вашего модуля, видит и его api-зависимости транзитивно. <code>implementation</code> остаётся внутренней — она в classpath потребителя не попадает.</p>
+          <p>Скорость отсюда следует напрямую. Меньше classpath у потребителя — быстрее его компиляция. А главное: если вы меняете <code>implementation</code>-зависимость способом, не трогающим ваш публичный API (ABI), потребителей <strong>не нужно перекомпилировать</strong> — Gradle применяет compile-avoidance. С <code>api</code> такого щита нет: любое изменение протекает дальше по графу.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Критерий</th><th><code>api</code></th><th><code>implementation</code></th></tr></thead>
+              <tbody>
+                <tr><td>Видна потребителю транзитивно</td><td>Да</td><td>Нет</td></tr>
+                <tr><td>Размер compile classpath потребителя</td><td>Больше</td><td>Меньше</td></tr>
+                <tr><td>Перекомпиляция потребителя при ABI-совместимой правке</td><td>Происходит</td><td>Избегается</td></tr>
+                <tr><td>Когда использовать</td><td>Тип зависимости в публичной сигнатуре</td><td>Зависимость только во внутренней реализации (по умолчанию)</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Дефолт — <code>implementation</code>.</strong> <code>api</code> ставьте только когда тип зависимости реально торчит в публичных сигнатурах вашего модуля (параметр публичного метода, возвращаемый тип). Привычка лепить <code>api</code> «на всякий случай» превращает модульный граф в один большой classpath и убивает выигрыш от разбиения.</div>
+          </div>
+          <p class="subhead">Параллельность и convention plugins</p>
+          <p>Независимые модули Gradle собирает параллельно (с <code>org.gradle.parallel=true</code>) — чем уже и глубже граф зависимостей, тем больше задач идут одновременно. Длинная цепочка <code>:app → :feature → :core → :data</code> сериализует сборку; широкий граф с несколькими независимыми ветками распараллеливается лучше.</p>
+          <p>Чтобы 20 модулей не повторяли один и тот же блок настроек, общую конфигурацию выносят в <strong>convention plugins</strong>. Раньше для этого использовали <code>buildSrc</code>, но любая правка в нём инвалидирует кеш всех сборок. Современный подход — отдельный included build <code>build-logic</code> с плагинами-соглашениями: модули применяют их одной строкой, а изменение одного плагина не сбрасывает кеш всего проекта целиком.</p>
+          <div class="code-label">feature/profile/build.gradle.kts</div>
+<pre><code class="language-kotlin">plugins {
+    // один плагин-соглашение вместо десятка повторяющихся настроек
+    id("myapp.android.feature")
+}
+dependencies {
+    implementation(project(":core:ui"))
+    implementation(project(":data"))   // внутренняя зависимость — не протекает выше
+}</code></pre>
+          <details class="qa">
+            <summary>Почему миграция с <code>buildSrc</code> на included build <code>build-logic</code> ускоряет сборки, хотя код плагинов тот же? <span class="q-badge">★</span></summary>
+            <div class="ans"><p><code>buildSrc</code> Gradle трактует как неявную зависимость <em>всех</em> проектов сборки: любое изменение его исходников инвалидирует кеш конфигурации и заставляет переконфигурировать весь билд, даже если правка касалась одного плагина. Included build <code>build-logic</code> подключается явно через <code>includeBuild</code> и ведёт себя как обычная композитная сборка со своим кешем — изменение одного convention-плагина инвалидирует только то, что от него зависит, а не весь проект. Плюс included builds дают более чёткие границы и лучше дружат с configuration cache. Код плагинов при этом действительно тот же — выигрыш чисто в гранулярности инвалидации кеша.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="r8">
+          <h2>R8: shrinking, obfuscation, optimization</h2>
+          <p>В release-сборке за уменьшение и защиту кода отвечает <strong>R8</strong> — он включается, когда вы ставите <code>isMinifyEnabled = true</code>. R8 делает три вещи за один проход.</p>
+          <p><strong>Shrinking</strong> (tree shaking) — находит и выкидывает недостижимый код: неиспользуемые классы, поля, методы из вашего кода и зависимостей. <strong>Obfuscation</strong> — переименовывает классы и методы в короткие имена (<code>com.example.MyActivity → a.b.a</code>), уменьшая размер dex и заодно усложняя реверс. <strong>Optimization</strong> — переписывает код: инлайнит методы, убирает мёртвые ветки, упрощает выражения.</p>
+          <p>Точка входа в анализ достижимости — <strong>keep-правила</strong>. AGP и AAPT2 генерируют базовый набор автоматически (Activity, View, Service из манифеста). Остальное, что вызывается не из Kotlin-кода напрямую, R8 «не видит» и может удалить или переименовать.</p>
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>Рефлексия, Gson и сериализация ломаются без keep-правил.</strong> Gson создаёт объект по имени поля через рефлексию. R8 переименует поля — и десериализация даст <code>null</code> или упадёт. То же с любой библиотекой, которая ищет классы/поля по строковым именам в рантайме. Симптом классический: в debug всё работает, в release-сборке падает.</div>
+          </div>
+          <p>Минимальное keep-правило для класса, который сериализует Gson — сохранить имена его членов:</p>
+          <div class="code-label">proguard-rules.pro</div>
+<pre><code class="language-kotlin"># класс данных, сериализуемый Gson по именам полей
+-keep class com.example.model.User { *; }
+
+# либо аккуратнее: оставить имена членов всех @SerializedName-полей
+-keepclassmembers class com.example.model.** {
+    @com.google.gson.annotations.SerializedName &lt;fields&gt;;
+}</code></pre>
+          <p class="subhead">mapping.txt и деобфускация</p>
+          <p>После обфускации стектрейсы из боевого приложения нечитаемы: вместо <code>UserRepository.load()</code> там <code>a.b.c()</code>. R8 пишет соответствие старых и новых имён в <code>mapping.txt</code> (обычно <code>app/build/outputs/mapping/release/</code>). Этот файл нужно <strong>сохранять на каждый релиз</strong> — без него краш-репорты с Play Console или Crashlytics не восстановить. Деобфускация делается утилитой <code>retrace</code> по соответствующему билду.</p>
+          <p>Рядом с <code>minifyEnabled</code> часто включают <code>shrinkResources = true</code> — выкидывает неиспользуемые ресурсы (картинки, layout). Работает только вместе с включённым R8: ресурсы считаются неиспользуемыми по ссылкам из кода, а код к тому моменту уже урезан. Эта же тема смыкается с <a href="profiling.html">профилированием</a>: R8-оптимизации и удаление мёртвого кода влияют на размер и время старта приложения.</p>
+          <details class="qa">
+            <summary>Почему <code>-keep class Foo { *; }</code> «чинит» краш, но это плохое решение, и чем оно отличается от <code>-keepclassmembers</code>? <span class="q-badge">★</span></summary>
+            <div class="ans"><p><code>-keep class Foo { *; }</code> делает класс точкой входа: R8 не удалит его, не переименует и <em>не будет оптимизировать</em> ни класс, ни его члены — он выпадает из tree shaking и из оптимизаций целиком. Это глушит симптом, но раздувает dex и лишает класс инлайна и прочих улучшений. <code>-keepclassmembers</code> сохраняет имена только указанных членов <em>если сам класс достижим</em> — то есть не мешает R8 удалить класс, когда тот реально не нужен, и не выключает оптимизацию остального. Грамотные keep-правила точечны: сохраняют ровно то, к чему обращаются по имени в рантайме (поля для Gson, методы для JNI/рефлексии), а не «весь класс на всякий случай». Перебор с широкими <code>-keep</code> — частая причина того, почему R8 «почти ничего не уменьшил».</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="bundle">
+          <h2>App Bundle, split APK, app size</h2>
+          <p>Сегодня в Google Play приложения публикуют как <strong>AAB</strong> (Android App Bundle), а не APK. AAB — это формат <em>публикации</em>: его нельзя установить на устройство напрямую. Play принимает один bundle и сам генерирует из него оптимизированные APK под каждое устройство.</p>
+          <p>Механизм называется <strong>split APK</strong>. Из bundle Play собирает базовый APK плюс <em>configuration APK</em> под конкретные характеристики: плотность экрана (density), архитектуру процессора (ABI) и язык. Пользователь скачивает только то, что подходит его устройству — не все ресурсы всех плотностей и не библиотеки под все ABI сразу. Отсюда меньший размер загрузки «бесплатно», без вашего кода.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Критерий</th><th>APK (universal)</th><th>AAB + split</th></tr></thead>
+              <tbody>
+                <tr><td>Что отдаётся в Play</td><td>Один APK на всех</td><td>Bundle, Play режет на части</td></tr>
+                <tr><td>Что качает устройство</td><td>Все плотности, все ABI, все языки</td><td>Только свою density/ABI/язык</td></tr>
+                <tr><td>Размер загрузки</td><td>Больше</td><td>Меньше</td></tr>
+                <tr><td>Можно установить напрямую</td><td>Да</td><td>Нет (только через Play/bundletool)</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="subhead">Play Feature Delivery</p>
+          <p>Поверх split APK работает <strong>Play Feature Delivery</strong> — доставка фич отдельными модулями. Режимы: <em>install-time</em> (модуль ставится вместе с приложением, просто отделён технически), <em>on-demand</em> (скачивается позже по запросу из кода — например, редко используемая фича не входит в первую загрузку) и <em>conditional</em> (по условиям устройства/страны).</p>
+          <div class="code-label">build.gradle.kts</div>
+<pre><code class="language-kotlin">android {
+    bundle {
+        // включить/выключить дробление по осям (по умолчанию включено)
+        language { enableSplit = true }
+        density  { enableSplit = true }
+        abi      { enableSplit = true }
+    }
+}</code></pre>
+          <p>Измерять размер удобнее всего через <strong>APK Analyzer</strong> в Android Studio — он показывает вклад dex, ресурсов и нативных библиотек, а ещё умеет сравнивать два билда. Чтобы оценить реальные размеры загрузки под разные устройства из bundle, используют <code>bundletool</code>. Главные рычаги уменьшения: включённый R8 с <code>shrinkResources</code>, AAB вместо universal APK, вынос редких фич в on-demand модули и переход на векторные/WebP-ресурсы.</p>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>«Размер APK на CI» обманчив.</strong> Локальный universal APK содержит всё под все устройства — он всегда крупнее, чем то, что реально скачает пользователь из Play. Сравнивайте размеры по APK Analyzer для конкретной конфигурации или через bundletool, а не по весу одного debug-APK.</div>
+          </div>
+          <details class="qa">
+            <summary>Почему вынос фичи в on-demand модуль не всегда уменьшает то, что скачивает обычный пользователь, и где здесь подвох? <span class="q-badge">★</span></summary>
+            <div class="ans"><p>On-demand модуль убирает свой код и ресурсы из первой загрузки — но выигрыш есть только если фичей пользуется меньшинство. Если большинство пользователей всё равно открывает эту фичу, вы просто перенесли тот же объём на отложенную докачку (часто с задержкой и риском сбоя сети), а размер базового APK уменьшили номинально. К тому же on-demand добавляет сложность: обработку отсутствия модуля, загрузку через Play Core/SplitInstall API, тестирование сценариев без модуля. Поэтому on-demand оправдан для тяжёлых и редких фич (большая игра-мини, AR, экспорт-движок), а не как способ механически «уменьшить APK» для всего подряд — для повседневного веса гораздо надёжнее работают split по density/ABI/языку, которые Play делает сам и бесплатно.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="faq">
+          <h2>Частые вопросы интервьюера</h2>
+          <details class="qa">
+            <summary>Чем отличаются три фазы сборки Gradle? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>Initialization читает <code>settings.gradle</code> и определяет состав модулей, создавая <code>Project</code>-объекты. Configuration исполняет тело каждого <code>build.gradle</code> и строит граф задач по входам и выходам. Execution выполняет нужные задачи из графа. Важно: конфигурация проходит на каждой команде Gradle, поэтому тяжёлый код в build-скриптах замедляет вообще все сборки.</p></div>
+          </details>
+          <details class="qa">
+            <summary>В чём разница между configuration cache и build cache? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Это два кеша на разных фазах. Configuration cache кеширует граф задач и сконфигурированные задачи, ускоряя фазу конфигурации. Build cache кеширует выходы задач (классы, dex, распакованные AAR), ускоряя выполнение и особенно чистые сборки. Они независимы, включают оба: <code>org.gradle.configuration-cache=true</code> и <code>org.gradle.caching=true</code>.</p></div>
+          </details>
+          <details class="qa">
+            <summary>Почему KSP быстрее kapt? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>kapt генерирует Java-стабы, чтобы прогнать через них Java-процессоры с <code>javac</code> — для стабов нужно разрешить все символы программы, это отдельный дорогой проход. KSP читает символы Kotlin напрямую через свой API, без стабов и без <code>javac</code>, и разрешает ссылки лениво. По замерам Kotlin генерация кода у KSP кратно быстрее, плюс инкрементальная пересборка затрагивает меньше файлов.</p></div>
+          </details>
+          <details class="qa">
+            <summary>Когда ставить <code>api</code>, а когда <code>implementation</code>? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>По умолчанию — <code>implementation</code>: зависимость не протекает в compile classpath потребителей, classpath меньше, и при ABI-совместимой правке потребителей не надо перекомпилировать. <code>api</code> — только когда тип зависимости торчит в публичной сигнатуре вашего модуля (параметр или возвращаемый тип публичного метода), потому что тогда потребитель обязан его видеть.</p></div>
+          </details>
+          <details class="qa">
+            <summary>Что именно делает R8 в release и почему может сломаться Gson? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>R8 за один проход выполняет shrinking (удаляет недостижимый код), obfuscation (переименовывает классы/члены в короткие имена) и optimization (инлайн, упрощения). Gson создаёт объекты по именам полей через рефлексию — R8 эти имена переименует, и десериализация сломается. Лечится keep-правилами на члены сериализуемых классов. Симптом: в debug работает, в release падает.</p></div>
+          </details>
+          <details class="qa">
+            <summary>Зачем хранить mapping.txt? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>R8 обфусцирует имена, и стектрейсы из боевых крашей нечитаемы (<code>a.b.c()</code> вместо реальных имён). <code>mapping.txt</code> хранит соответствие исходных и обфусцированных имён для конкретного билда. Без сохранённого на релиз файла краш-репорты из Play Console/Crashlytics не деобфусцировать утилитой <code>retrace</code>.</p></div>
+          </details>
+          <details class="qa">
+            <summary>Чем AAB отличается от APK и зачем он нужен? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>APK — устанавливаемый формат, AAB — формат публикации, его нельзя поставить на устройство напрямую. Вы загружаете один bundle, а Play генерирует из него split APK под каждое устройство: пользователь качает только свою плотность экрана, ABI и язык. Итог — меньше размер загрузки без изменений в коде. С августа 2021 новые приложения в Play публикуются только как AAB.</p></div>
+          </details>
+          <details class="qa">
+            <summary>Почему кастомная задача «всегда выполняется» и не кешируется? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Скорее всего у неё не объявлены <code>inputs</code>/<code>outputs</code>. Up-to-date check сравнивает хеши входов и наличие выходов с прошлой сборкой; без объявленных входов и выходов Gradle не знает, от чего задача зависит, и считает её устаревшей каждый раз. Объявите <code>inputs.files/property</code> и <code>outputs.files</code> — тогда Gradle сможет помечать её <code>UP-TO-DATE</code> и кешировать.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="tasks">
+          <h2>Задачи</h2>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 1.</strong> Класс <code>data class User(val id: Long, val name: String)</code> сериализуется в JSON и обратно через Gson. После включения R8 в release десериализация возвращает объект с пустыми полями. Напишите keep-правило и объясните, почему так происходит.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin"># proguard-rules.pro
+-keepclassmembers class com.example.model.User {
+    &lt;fields&gt;;
+}
+# или точечно по @SerializedName, если поля размечены:
+-keepclassmembers,allowobfuscation class com.example.model.** {
+    @com.google.gson.annotations.SerializedName &lt;fields&gt;;
+}</code></pre>
+                <p>Gson сопоставляет ключи JSON с полями объекта <em>по их именам</em> через рефлексию. R8 в release переименовывает поля (<code>name → a</code>), и Gson больше не находит соответствия — поля остаются со значениями по умолчанию. <code>-keepclassmembers ... &lt;fields&gt;;</code> сохраняет исходные имена полей, не превращая весь класс в точку входа (в отличие от <code>-keep class ... { *; }</code>, который ещё и выключил бы оптимизацию). Альтернатива без правил — разметить поля <code>@SerializedName("name")</code>, тогда Gson использует строку из аннотации, а не имя поля.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 2.</strong> Модуль использует Room через kapt и собирается медленно. Перепишите фрагмент <code>build.gradle.kts</code> на KSP и объясните, что меняется.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">// было:
+// plugins { kotlin("kapt") }
+// dependencies { kapt("androidx.room:room-compiler:2.6.1") }
+
+// стало:
+plugins {
+    id("com.google.devtools.ksp") version "2.0.21-1.0.25"
+}
+dependencies {
+    implementation("androidx.room:room-runtime:2.6.1")
+    ksp("androidx.room:room-compiler:2.6.1")
+}</code></pre>
+                <p>Меняем плагин <code>kapt</code> на <code>ksp</code> и переносим зависимость-процессор из конфигурации <code>kapt(...)</code> в <code>ksp(...)</code> — артефакт компилятора тот же. После этого Room-процессор работает по символам Kotlin напрямую, без генерации Java-стабов и прохода <code>javac</code>, что ускоряет и чистую, и инкрементальную сборку. Версию KSP берут под версию Kotlin (суффикс после <code>-</code>): при апгрейде Kotlin её тоже поднимают.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 3.</strong> Команда жалуется, что даже <code>./gradlew help</code> идёт несколько секунд, а инкрементальные сборки медленные. В корневом <code>build.gradle.kts</code> на верхнем уровне есть чтение файла конфигурации и запрос версии зависимости как <code>"com.lib:x:1.+"</code>, проект — один большой модуль. Объясните причины и что чинить.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">// Проблема 1: код на верхнем уровне build-скрипта
+// исполняется на КАЖДОЙ команде (фаза configuration),
+// поэтому чтение файла тормозит даже ./gradlew help.
+// Решение: убрать из верхнего уровня; читать лениво
+// внутри задачи или через providers.fileContents(...).
+
+// Проблема 2: dynamic version "1.+" заставляет Gradle
+// ходить в сеть за списком версий и ломает воспроизводимость.
+// Решение: зафиксировать версию (через version catalog).
+
+// Проблема 3: один большой модуль => любая правка
+// пересобирает всё. Решение: разбить на модули
+// (:app/:feature/:core/:data) + org.gradle.parallel=true
+// + org.gradle.caching=true + configuration-cache.</code></pre>
+                <p>Три независимых причины. Тяжёлая <strong>конфигурация</strong> (чтение файла на верхнем уровне) умножается на частоту любых команд Gradle. <strong>Dynamic version</strong> <code>1.+</code> добавляет сетевой резолв и делает сборку недетерминированной. <strong>Монолитный модуль</strong> убивает инкрементальность — менять надо всё сразу. Чинится переносом логики в задачи, фиксацией версий через version catalog и модуляризацией с включёнными кешами и параллельной сборкой.</p>
+              </div>
+            </details>
+          </div>
+        </section>
+
+        <div class="sources">
+          <h2>Источники</h2>
+          <ol>
+            <li><a href="https://docs.gradle.org/current/userguide/build_lifecycle.html" target="_blank" rel="noopener">Gradle — Build Lifecycle</a> — три фазы: initialization, configuration, execution.</li>
+            <li><a href="https://developer.android.com/build/optimize-your-build" target="_blank" rel="noopener">Android — Optimize your build speed</a> — daemon, parallel, configuration cache, build cache, dynamic versions.</li>
+            <li><a href="https://developer.android.com/build/build-variants" target="_blank" rel="noopener">Android — Configure build variants</a> — build types, product flavors, dimensions, sourceSets.</li>
+            <li><a href="https://kotlinlang.org/docs/ksp-why-ksp.html" target="_blank" rel="noopener">Kotlin — Why KSP</a> — стабы kapt, прямое чтение символов, замеры скорости.</li>
+            <li><a href="https://developer.android.com/build/migrate-to-ksp" target="_blank" rel="noopener">Android — Migrate from kapt to KSP</a> — практика миграции зависимостей.</li>
+            <li><a href="https://developer.android.com/studio/build/shrink-code" target="_blank" rel="noopener">Android — Enable app optimization with R8</a> — shrinking, obfuscation, optimization, keep-правила, mapping.txt.</li>
+            <li><a href="https://developer.android.com/guide/app-bundle" target="_blank" rel="noopener">Android — About Android App Bundles</a> — AAB против APK, split APK, генерация в Play.</li>
+            <li><a href="https://docs.gradle.org/current/userguide/java_library_plugin.html" target="_blank" rel="noopener">Gradle — Java Library Plugin</a> — api vs implementation, ABI и compile-avoidance.</li>
+          </ol>
+        </div>
+      </article>
+    </div>
+    <aside id="toc"></aside>
+  </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="../assets/app.js?v=20260621-1"></script>
+</body>
+</html>

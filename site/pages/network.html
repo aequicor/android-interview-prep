@@ -99,6 +99,8 @@
             </table>
           </div>
           <p><strong>HTTP/2</strong> — общий фундамент: бинарные фреймы, <strong>мультиплексирование</strong> (много запросов в одном TCP-соединении без head-of-line блокировки уровня HTTP), сжатие заголовков HPACK, server push. OkHttp поддерживает HTTP/2 автоматически (через ALPN при TLS) — на одном соединении параллельно идут десятки запросов, что снижает overhead на установку TCP/TLS.</p>
+
+          <details class="qa"><summary>PUT идемпотентен, а PATCH — нет. Но если PATCH присылает полный объект целиком, он же повторяется без вреда. Так почему спецификация всё равно считает PATCH не идемпотентным, и где это «кусается» при ретраях? <span class="q-badge">★</span></summary><div class="ans"><p>Идемпотентность — это свойство <em>метода</em> по спецификации (RFC 9110), а не конкретного тела запроса. PATCH объявлен не идемпотентным, потому что семантика патча в общем случае относительная: JSON Patch с операцией <code>add</code> в массив, «увеличь счётчик на 1», «допиши в конец». Сервер и любой прокси на пути не вправе предполагать, что ваш конкретный PATCH на самом деле заменяет ресурс целиком — для них метод не идемпотентен по объявлению. PUT же идемпотентен, потому что заменяет ресурс целиком: повтор даёт то же состояние.</p><p>Практическое следствие — про ретраи. Автоматический повтор (OkHttp <code>retryOnConnectionFailure</code>, ретраи прокси и инфраструктуры) безопасен для PUT/DELETE/GET. А для PATCH повтор после неясного исхода — таймаут уже <em>после</em> того, как сервер применил изменение, — может применить операцию дважды. Поэтому даже «полнообъектный» PATCH защищают <code>Idempotency-Key</code>, а не формой тела: клиент не контролирует, как метод трактует промежуточная инфраструктура.</p></div></details>
         </section>
 
         <section class="section" id="tls">
@@ -175,6 +177,8 @@ val client = OkHttpClient.Builder()
     .certificatePinner(pinner)
     .build()</code></pre>
           <p><strong>mTLS (mutual TLS)</strong> — двусторонняя аутентификация: не только клиент проверяет сервер, но и сервер требует клиентский сертификат. Применяется в банковских/корпоративных API и B2B — приложение предъявляет свой сертификат из <code>KeyStore</code>.</p>
+
+          <details class="qa"><summary>Зачем в ClientHello отправляется расширение SNI открытым текстом, в чём из-за этого дыра в приватности, и что её закрывает в TLS 1.3? <span class="q-badge">★</span></summary><div class="ans"><p>SNI (Server Name Indication) — это имя хоста прямо в <code>ClientHello</code>. Оно нужно, чтобы сервер с несколькими доменами на одном IP выбрал правильный сертификат <em>до</em> того, как узнает, что внутри HTTP-запроса — ведь <code>Host</code>-заголовок поедет уже зашифрованным. Курица и яйцо: чтобы согласовать шифрование, сервер должен знать, какой сертификат показать, а узнаёт он это из открытого SNI.</p><p>Дыра: в TLS 1.2 и базовом 1.3 SNI идёт открытым текстом. Пассивный наблюдатель — провайдер, DPI на границе сети — видит, к какому домену вы подключаетесь, даже не расшифровывая трафик. На этом строят блокировки и слежку «по доменам». Закрывает это ECH (Encrypted Client Hello, бывший ESNI) — расширение поверх TLS 1.3: оно шифрует внутренний <code>ClientHello</code> публичным ключом, который клиент берёт из DNS-записи (HTTPS/SVCB RR). На Android поддержка ECH зависит от сетевого стека и серверной стороны (Cloudflare и др.) — это уже не часть рукопожатия 1.3 по умолчанию.</p></div></details>
         </section>
 
         <section class="section" id="okhttp">
@@ -236,6 +240,27 @@ val client = OkHttpClient.Builder()
     override fun responseHeadersStart(call: Call) { /* TTFB */ }
 }
 val client = base.newBuilder().eventListener(listener).build()</code></pre>
+
+          <p class="subhead">Порядок цепочки интерсепторов</p>
+          <p>Между вашими application- и network-интерсепторами OkHttp вставляет встроенные звенья. Из их порядка следует, почему application-интерсептор вызывается один раз и не видит ни редиректы, ни gzip, а network — на каждый хоп.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TB
+App["Приложение"] --> AppI["Ваши application-интерсепторы"]
+AppI --> Bridge["BridgeInterceptor (gzip, Host, Content-Length)"]
+Bridge --> CacheI["CacheInterceptor (хит / мисс)"]
+CacheI --> Connect["ConnectInterceptor (сокет, TLS)"]
+Connect --> NetI["Ваши network-интерсепторы"]
+NetI --> CallServer["CallServerInterceptor"]
+CallServer --> Net(["Сеть"])
+Net --> CallServer
+CacheI -. "хит: ответ из кэша" .-> AppI
+          </div>
+          <div class="cap">Запрос идёт сверху вниз, ответ — обратно. До BridgeInterceptor нет gzip, до ConnectInterceptor нет соединения</div>
+          </div>
+          <p>Поэтому <code>HttpLoggingInterceptor</code> на <code>addInterceptor</code> видит уже распакованное тело и не видит <code>Accept-Encoding</code>/<code>Content-Encoding</code> — их добавляет и снимает <code>BridgeInterceptor</code> ниже. Чтобы увидеть реальные «по проводу» заголовки и каждый редирект, логгер вешают на <code>addNetworkInterceptor</code>.</p>
+
+          <details class="qa"><summary>Десять корутин одновременно дёргают один эндпоинт через один OkHttpClient. Сколько TCP-соединений к хосту откроется и почему именно столько? И что произойдёт с 11-м запросом? <span class="q-badge">★</span></summary><div class="ans"><p>По умолчанию <code>Dispatcher</code> держит <code>maxRequests = 64</code> и <code>maxRequestsPerHost = 5</code>. К одному хосту одновременно выполняется максимум 5 запросов, остальные ждут в очереди <code>readyAsyncCalls</code>. Дальше всё зависит от версии протокола:</p><ul><li><strong>HTTP/1.1</strong> — одно соединение обслуживает один запрос за раз, поэтому под пять параллельных запросов откроется до пяти отдельных TCP+TLS-соединений.</li><li><strong>HTTP/2</strong> (согласован через ALPN при TLS) — все запросы к хосту мультиплексируются в <em>одном</em> соединении, и узким местом раньше становится <code>maxRequestsPerHost</code>, а не число сокетов.</li></ul><p><code>ConnectionPool</code> по умолчанию хранит до 5 idle-соединений и закрывает их после 5 минут простоя, переиспользуя keep-alive. 11-й запрос (если первые 5 ещё идут на том же хосте по HTTP/1.1) просто ждёт освобождения слота — никакой ошибки, только лишняя латентность. Поднять параллелизм можно через <code>dispatcher.maxRequestsPerHost</code>.</p></div></details>
         </section>
 
         <section class="section" id="retrofit">
@@ -268,6 +293,8 @@ val api = retrofit.create&lt;UserApi&gt;()</code></pre>
             <div class="ic">💡</div>
             <div class="bd"><strong>DTO ≠ domain.</strong> Возвращай из API <code>*Dto</code> (поля как в JSON), а в репозитории маппь в доменную модель. Так контракт сервера не протекает в UI, а смена формата не ломает весь код.</div>
           </div>
+
+          <details class="qa"><summary>Retrofit-метод объявлен suspend и вызывается из viewModelScope. Корутину отменяют (ушли с экрана). Что физически происходит с уже улетевшим HTTP-запросом и на чём именно подвешен механизм отмены? <span class="q-badge">★</span></summary><div class="ans"><p>Для suspend-функции Retrofit под капотом адаптирует <code>Call</code> в корутину через <code>suspendCancellableCoroutine</code> и регистрирует <code>invokeOnCancellation { call.cancel() }</code>. Когда родительский scope отменяет корутину, бросается <code>CancellationException</code>, отрабатывает этот колбэк, OkHttp вызывает <code>Call.cancel()</code> — сокет закрывается, текущий блокирующий ввод-вывод выбрасывает <code>IOException</code> внутри OkHttp. То есть отмена не «магическая»: запрос реально рвётся на транспортном уровне, а не просто игнорируется результат.</p><p>Нюанс, на котором ловят: сервер мог уже получить и обработать запрос (создать заказ) <em>до</em> разрыва. Отмена на клиенте не откатывает серверный эффект — для не-идемпотентных операций это не страховка. И ещё: <code>CancellationException</code> нельзя глотать в <code>safeApiCall</code>, иначе <code>ensureActive</code> и структурированный параллелизм сломаются.</p></div></details>
         </section>
 
         <section class="section" id="errors">
@@ -346,6 +373,32 @@ val api = retrofit.create&lt;UserApi&gt;()</code></pre>
             <div class="ic">ℹ️</div>
             <div class="bd"><strong>Отмена и оффлайн.</strong> Отмену даёт сама корутина: <code>viewModelScope</code> отменит запрос при очистке VM, OkHttp прервёт сокет. Оффлайн — стратегия SSOT: репозиторий отдаёт кэш (Room) и помечает данные «устаревшими», фоновая синхронизация догоняет (single source of truth).</div>
           </div>
+
+          <p class="subhead">Когда ретраить, а когда нет</p>
+          <p>«Слепой» ретрай легко превращается в проблему — поэтому решение о повторе стоит проводить как дерево с явными отсечками.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TB
+Err["Получили ошибку"] --> Cancel{"CancellationException?"}
+Cancel -->|да| Throw["throw — не ретраить"]
+Cancel -->|нет| Idem{"Идемпотентный метод?"}
+Idem -->|нет| Fail["Отдать Failure"]
+Idem -->|да| Trans{"Транзиентная? (сеть / 429 / 5xx)"}
+Trans -->|нет| Fail
+Trans -->|да| RA{"Есть Retry-After?"}
+RA -->|да| Wait["Ждать как сказал сервер"]
+RA -->|нет| CB{"Circuit breaker открыт?"}
+CB -->|да| Fail
+CB -->|нет| Backoff["Backoff + джиттер"]
+Wait --> Backoff
+Backoff --> Left{"Попытки исчерпаны?"}
+Left -->|нет| Retry["Повторить запрос"]
+Left -->|да| Fail
+          </div>
+          <div class="cap">Алгоритм решения: отмена и не-идемпотентность отсекаются сразу, ретраятся только транзиентные ошибки</div>
+          </div>
+
+          <details class="qa"><summary>Почему «слепой» retry с экспоненциальным backoff может усугубить отказ сервера (retry storm), и какие три механизма этого избегают — что добавить помимо джиттера? <span class="q-badge">★</span></summary><div class="ans"><p>Если все клиенты при 5xx синхронно ретраят, нагрузка на уже перегруженный сервер не падает, а множится — это retry storm, амплификация: восстановиться ему становится только тяжелее. Джиттер размазывает повторы во времени, но не уменьшает их число — это лечит синхронность, а не объём. Поэтому добавляют три вещи:</p><ul><li><strong>Circuit breaker</strong> — после серии отказов цепь «размыкается», и запросы какое-то время вообще не идут на бэкенд (он остывает), а UI сразу получает ошибку.</li><li><strong>Retry budget / token bucket</strong> — лимит на долю запросов, которые вообще разрешено ретраить (например не больше 10–20% трафика), чтобы повторы не превысили исходную нагрузку.</li><li><strong>Уважение <code>Retry-After</code></strong> из заголовка ответа на 429/503 — сервер сам говорит, когда вернуться, и это приоритетнее собственного backoff.</li></ul><p>И базовое: ретраить только идемпотентные запросы и только транзиентные ошибки (сеть, 429, 5xx), а не 4xx.</p></div></details>
         </section>
 
         <section class="section" id="serialization">
@@ -378,6 +431,215 @@ val json = Json {
             <div class="ic">⚠️</div>
             <div class="bd"><strong>Главный риск Gson.</strong> Он создаёт объект через <code>Unsafe</code>, минуя конструктор Kotlin: non-null поле может оказаться <code>null</code>, default-значение проигнорируется — и приложение упадёт с NPE в неожиданном месте. На new-проектах берут kotlinx.serialization или Moshi.</div>
           </div>
+
+          <details class="qa"><summary>В kotlinx.serialization у поля есть значение по умолчанию, и сервер это поле не прислал. Поле подставится из default. Но если поле пришло как явный null, а тип non-null с default — будет ли использован default? От чего это зависит? <span class="q-badge">★</span></summary><div class="ans"><p>Это два разных случая, и путать их — классическая ошибка. Если ключа в JSON <em>вообще нет</em> — kotlinx.serialization берёт значение по умолчанию из конструктора (декодер опирается на дефолты, и в отличие от Gson их нельзя выключить). А вот если ключ <em>присутствует</em>, но значение явный <code>null</code>, а свойство объявлено non-null с default — по умолчанию это ошибка десериализации (<code>MissingFieldException</code> / несоответствие типа), и default <strong>не</strong> применяется.</p><p>Чтобы <code>null</code> трактовался как «возьми default», нужен флаг <code>Json { coerceInputValues = true }</code> — он приводит недопустимый <code>null</code> (и неизвестные значения enum) к значению по умолчанию. Отсюда разделение: <code>ignoreUnknownKeys</code> спасает от лишних полей сервера, <code>coerceInputValues</code> — от «грязных» <code>null</code>'ов. Разные настройки под разные проблемы.</p></div></details>
+        </section>
+
+        <section class="section" id="websockets">
+          <h2>WebSockets и реалтайм: Upgrade, ping/pong, реконнект</h2>
+          <p>HTTP — запрос-ответный: сервер молчит, пока его не спросят. Для чатов, котировок, статусов заказа это неудобно — нужен канал, по которому сервер сам шлёт сообщения. WebSocket поднимается поверх того же TCP через HTTP <strong>Upgrade-рукопожатие</strong>: клиент шлёт обычный GET с заголовком <code>Upgrade: websocket</code>, сервер отвечает <code>101 Switching Protocols</code>, и дальше сокет переходит в полнодуплексный режим. <code>wss://</code> — то же самое, но поверх TLS.</p>
+          <div class="diagram">
+          <div class="mermaid">
+sequenceDiagram
+participant C as Клиент
+participant S as Сервер
+C->>S: GET /ws (Upgrade: websocket, Connection: Upgrade)
+S->>C: 101 Switching Protocols
+Note over C,S: Тот же TCP-сокет, полный дуплекс
+C->>S: send("hello")
+S->>C: message (без запроса клиента)
+C->>S: ping
+S->>C: pong
+S->>C: close(1000)
+          </div>
+          <div class="cap">После 101 канал двусторонний: сервер шлёт сообщения сам, ping/pong держат соединение живым</div>
+          </div>
+          <p>В OkHttp WebSocket поднимается через <code>client.newWebSocket(request, listener)</code>, а <code>WebSocketListener</code> отдаёт колбэки <code>onOpen</code> / <code>onMessage</code> / <code>onClosing</code> / <code>onClosed</code> / <code>onFailure</code>. Закрытие — <code>webSocket.close(1000, reason)</code>.</p>
+          <div class="code-label">ChatSocket.kt</div>
+<pre><code class="language-kotlin">fun chatMessages(client: OkHttpClient, url: String): Flow&lt;String&gt; = callbackFlow {
+    val request = Request.Builder().url(url).build()
+    val listener = object : WebSocketListener() {
+        override fun onMessage(ws: WebSocket, text: String) { trySend(text) }
+        override fun onClosed(ws: WebSocket, code: Int, reason: String) { close() }
+        override fun onFailure(ws: WebSocket, t: Throwable, r: Response?) { close(t) }
+    }
+    val ws = client.newWebSocket(request, listener)
+    awaitClose { ws.close(1000, null) }   // отмена Flow -&gt; закрываем сокет
+}</code></pre>
+          <p class="subhead">Ping/pong и детект «тихо умершего» сокета</p>
+          <p>NAT и прокси умеют рвать соединение без <code>FIN</code> — для приложения сокет «как будто живой», но сообщения не доходят. OkHttp умеет автоматический ping через <code>pingInterval(20, TimeUnit.SECONDS)</code>: ping/pong — control-фреймы, которые проверяют, что канал жив, и быстро ловят такой разрыв.</p>
+          <p class="subhead">Реконнект и коды закрытия</p>
+          <p>Мобильная сеть рвёт соединения часто, поэтому reconnect пишут вручную в <code>onFailure</code>/<code>onClosed</code> с экспоненциальным backoff и джиттером. Смотрят на код закрытия: <code>1000</code> — нормальное закрытие (реконнектить не нужно), <code>1011</code> — ошибка сервера (реконнектить стоит). Вся работа — не на main-потоке, один <code>OkHttpClient</code> на всё.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Подход</th><th>Направление</th><th>Когда брать</th></tr></thead>
+              <tbody>
+                <tr><td>Polling</td><td>клиент опрашивает</td><td>редкие обновления, простота</td></tr>
+                <tr><td>SSE / long-poll</td><td>сервер → клиент</td><td>односторонний поток (лента, статусы)</td></tr>
+                <tr><td>WebSocket</td><td>двусторонний</td><td>чат, игры, котировки — нужен дуплекс</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <details class="qa"><summary>WebSocket-сокет «живой», onFailure не сработал, но сообщения не приходят уже минуту. Что произошло и как клиент должен был это поймать заранее? <span class="q-badge">★</span></summary><div class="ans"><p>Скорее всего соединение разорвал NAT или прокси без отправки <code>FIN</code> — на уровне TCP клиент об этом не узнаёт, сокет в состоянии «как будто открыт». Колбэк <code>onFailure</code> не сработает, пока вы сами не попробуете что-то отправить и не упрётесь в таймаут. Это «half-open» соединение.</p><p>Ловят это <code>pingInterval(...)</code>: OkHttp шлёт ping-фреймы и ждёт pong; если pong не пришёл за интервал, соединение признаётся мёртвым и вызывается <code>onFailure</code> — после чего отрабатывает ваш reconnect с backoff. Без активного ping приложение узнаёт о разрыве только в момент следующей отправки, и для realtime-экрана это та самая «минута тишины».</p></div></details>
+        </section>
+
+        <section class="section" id="http3">
+          <h2>HTTP/3 и QUIC: транспорт нового поколения</h2>
+          <p>HTTP/2 мультиплексирует потоки в одном TCP-соединении, но у TCP остаётся <strong>head-of-line blocking на транспортном уровне</strong>: потеря одного пакета задерживает доставку <em>всех</em> мультиплексированных потоков, пока пакет не перешлют. На мобильных сетях с потерями это бьёт особенно больно — один потерянный сегмент тормозит сразу все запросы в соединении.</p>
+          <p>HTTP/3 работает поверх <strong>QUIC</strong> — транспорта на UDP, где потоки независимы: потеря пакета в одном потоке не блокирует другие. QUIC объединяет TCP- и TLS-рукопожатие в одно (1-RTT на установку, а с 0-RTT — мгновенное возобновление сессии) и умеет <strong>connection migration</strong>: соединение переживает смену сети (Wi-Fi → LTE) по Connection ID, не разрываясь при переходе.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Критерий</th><th>HTTP/1.1</th><th>HTTP/2</th><th>HTTP/3</th></tr></thead>
+              <tbody>
+                <tr><td>Транспорт</td><td>TCP</td><td>TCP</td><td>QUIC (UDP)</td></tr>
+                <tr><td>Мультиплекс</td><td>нет</td><td>да</td><td>да</td></tr>
+                <tr><td>Head-of-line</td><td>на уровне приложения</td><td>на уровне TCP</td><td>нет</td></tr>
+                <tr><td>RTT на установку</td><td>TCP + TLS отдельно</td><td>TCP + TLS отдельно</td><td>1-RTT (0-RTT возобновл.)</td></tr>
+                <tr><td>Сжатие заголовков</td><td>нет</td><td>HPACK</td><td>QPACK</td></tr>
+                <tr><td>Смена сети</td><td>разрыв</td><td>разрыв</td><td>connection migration</td></tr>
+                <tr><td>На Android</td><td>OkHttp</td><td>OkHttp</td><td>Cronet</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>По бенчмаркам Cloudflare выигрыш TTFB порядка 10–15%, а на нестабильных сетях с потерями — до ~55%. На Android HTTP/3 даёт <strong>Cronet</strong> (сетевой стек Chromium, есть Retrofit-обёртка); OkHttp на момент стабильных версий HTTP/3 нативно не поддерживает.</p>
+
+          <details class="qa"><summary>HTTP/2 уже мультиплексирует потоки в одном соединении. Тогда какую именно проблему решает HTTP/3, если на уровне приложения head-of-line blocking в HTTP/2 уже нет? <span class="q-badge">★</span></summary><div class="ans"><p>HTTP/2 убрал head-of-line blocking на <em>уровне приложения</em>: запросы больше не ждут друг друга в очереди HTTP. Но потоки HTTP/2 едут внутри одного TCP-соединения, а TCP — это упорядоченный байтовый поток. Если теряется один TCP-сегмент, ядро не отдаёт приложению <em>ничего</em> из последующих байтов, пока сегмент не перешлют — даже если те байты относятся к совсем другому, «здоровому» потоку. То есть HoL-блокировка просто опустилась на транспортный уровень.</p><p>QUIC решает это тем, что сам управляет потоками поверх UDP и нумерует пакеты по каждому потоку отдельно: потеря в одном потоке не задерживает другие. Плюс бонусы, которых у TCP нет в принципе — 0-RTT возобновление и connection migration по Connection ID при смене сети. На мобильных потери и переключение Wi-Fi/LTE — норма, поэтому выигрыш заметен именно там.</p></div></details>
+        </section>
+
+        <section class="section" id="okhttp-cache">
+          <h2>Кэширование OkHttp на практике: офлайн, CacheControl, Vary</h2>
+          <p>Семантику <code>ETag</code>/<code>Cache-Control</code> мы разобрали со стороны сервера. Теперь клиентский слой: OkHttp умеет дисковый кэш, но включается он не сам собой. Нужен сконфигурированный <code>Cache</code>, и кэшируются только ответы с валидными <code>Cache-Control</code>/<code>ETag</code> — если сервер их не прислал, кэш молчит.</p>
+          <div class="code-label">CacheModule.kt</div>
+<pre><code class="language-kotlin">val cache = Cache(File(context.cacheDir, "http"), 10L * 1024 * 1024) // 10 МБ
+
+// network-интерсептор: навязать клиентский max-age, если сервер не задал
+val rewriteCache = Interceptor { chain -&gt;
+    chain.proceed(chain.request()).newBuilder()
+        .header("Cache-Control", "public, max-age=60")
+        .build()
+}
+
+// application-интерсептор: офлайн — отдавать устаревший кэш вместо ошибки
+val offlineCache = Interceptor { chain -&gt;
+    var request = chain.request()
+    if (!hasNetwork()) {
+        request = request.newBuilder()
+            .cacheControl(CacheControl.Builder().onlyIfCached().maxStale(7, TimeUnit.DAYS).build())
+            .build()
+    }
+    chain.proceed(request)
+}
+
+val client = OkHttpClient.Builder()
+    .cache(cache)
+    .addNetworkInterceptor(rewriteCache)
+    .addInterceptor(offlineCache)
+    .build()</code></pre>
+          <p>Помимо этого есть готовые директивы: <code>CacheControl.FORCE_CACHE</code> берёт только из кэша (вернёт <code>504</code>, если данных нет), <code>FORCE_NETWORK</code> игнорирует кэш. Заголовок <strong>Vary</strong> говорит кэшу, по каким заголовкам запроса различать варианты ответа (<code>Vary: Accept-Encoding, Authorization</code>) — без него кэш может вернуть «чужой» вариант, например ответ для другого пользователя.</p>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Один кэш на клиент.</strong> <code>Cache</code> потокобезопасен, но один и тот же каталог нельзя делить между несколькими <code>OkHttpClient</code> — они затрут данные друг друга. Диагностика хита/мисса — через <code>response.cacheResponse</code> и <code>response.networkResponse</code>: хит = есть cacheResponse и нет networkResponse.</div>
+          </div>
+
+          <details class="qa"><summary>Настроили Cache, сервер шлёт Cache-Control: max-age=60, но в офлайне OkHttp всё равно отдаёт ошибку вместо кэша. Почему, и что добавить? <span class="q-badge">★</span></summary><div class="ans"><p>Обычный <code>max-age=60</code> делает ответ «свежим» только 60 секунд. Через минуту запись в кэше есть, но считается устаревшей, и без сети OkHttp не имеет права её отдать — он попытается сходить на сервер, упрётся в отсутствие сети и вернёт <code>IOException</code>. Кэш не пустой, просто «протух» по правилам.</p><p>Чинит это application-интерсептор, который офлайн переписывает запрос на <code>CacheControl</code> с <code>onlyIfCached()</code> и <code>maxStale(...)</code>: «возьми из кэша, и мне ок устаревшее на N дней». Тогда OkHttp отдаёт старую запись вместо ошибки. Важно вешать это именно как application-интерсептор (он видит запрос до решения о сети) и проверять наличие сети самому — кэш сам по себе про офлайн-политику ничего не знает.</p></div></details>
+        </section>
+
+        <section class="section" id="nsc">
+          <h2>Network Security Configuration: декларативная политика доверия</h2>
+          <p>Pinning через <code>CertificatePinner</code> живёт в коде и работает только для запросов через конкретный клиент. Параллельный механизм — <strong>Network Security Configuration</strong>: декларативный XML в <code>res/xml</code>, подключённый через <code>android:networkSecurityConfig</code> в манифесте. Он применяется ко всему сетевому стеку приложения и описывает доверие политикой, а не кодом.</p>
+          <div class="code-label">res/xml/network_security_config.xml</div>
+<pre><code class="language-kotlin">&lt;network-security-config&gt;
+    &lt;domain-config&gt;
+        &lt;domain includeSubdomains="true"&gt;api.example.com&lt;/domain&gt;
+        &lt;pin-set expiration="2026-12-31"&gt;
+            &lt;pin digest="SHA-256"&gt;AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=&lt;/pin&gt;
+            &lt;pin digest="SHA-256"&gt;BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=&lt;/pin&gt;
+        &lt;/pin-set&gt;
+    &lt;/domain-config&gt;
+
+    &lt;debug-overrides&gt;
+        &lt;trust-anchors&gt;
+            &lt;certificates src="user"/&gt;   &lt;!-- доверять user-CA ТОЛЬКО в debug --&gt;
+        &lt;/trust-anchors&gt;
+    &lt;/debug-overrides&gt;
+&lt;/network-security-config&gt;</code></pre>
+          <p>Главное, что любят спрашивать: с <strong>Android 7.0 (API 24)</strong> приложение по умолчанию <em>не доверяет</em> пользовательским CA. Поэтому прокси-снифферы (Charles, Proxyman) без NSC <code>debug-overrides</code> не видят трафик — их сертификат лежит в user-store, а приложение его игнорирует. Override вешают только в debug-сборку, чтобы прод остался защищённым.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Критерий</th><th>CertificatePinner</th><th>NSC (XML)</th></tr></thead>
+              <tbody>
+                <tr><td>Область</td><td>конкретный OkHttpClient</td><td>весь сетевой стек приложения</td></tr>
+                <tr><td>Где задаётся</td><td>в коде, гибко в рантайме</td><td>декларативно в res/xml</td></tr>
+                <tr><td>Expiration пинов</td><td>нет</td><td>обязателен в pin-set</td></tr>
+                <tr><td>Debug-снифферы</td><td>отдельно</td><td>debug-overrides из коробки</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>Pinning без плана ротации = «кирпич».</strong> NSC требует <code>expiration</code> у <code>pin-set</code>: после этой даты pinning отключается — это защита от ситуации «сертификат сменили, а пины забыли». Любой pinning без backup-пина и плана обновления рискует отрезать пользователей при смене сертификата до выката апдейта.</div>
+          </div>
+
+          <details class="qa"><summary>Поставили pinning через NSC, всё работало. Через год сертификат на сервере планово сменили — и приложение у старых пользователей продолжило работать, хотя пины не совпадают. Как так? <span class="q-badge">★</span></summary><div class="ans"><p>Сработала защита от «кирпича»: у <code>pin-set</code> в NSC обязателен атрибут <code>expiration</code>. После этой даты Android просто <em>перестаёт применять</em> pinning для домена и откатывается к обычной проверке цепочки до системных CA. Если дата истечения уже прошла к моменту смены сертификата, новый валидный сертификат пройдёт штатную проверку, и приложение продолжит работать, несмотря на несовпадение пинов.</p><p>Это палка о двух концах: с одной стороны — страховка от того, что забытые пины навсегда отрежут пользователей; с другой — после expiration вы теряете защиту от MITM, ради которой pinning и ставили. Поэтому expiration выбирают с запасом под цикл обновления приложения, держат backup-пин и обновляют пины релизом заранее, а не полагаются на их «протухание».</p></div></details>
+        </section>
+
+        <section class="section" id="okhttp-internals">
+          <h2>Внутренности OkHttp: Dispatcher, ConnectionPool, DNS</h2>
+          <p>Senior-вопросы про сеть быстро уходят «под капот» клиента: сколько соединений откроется, как ограничить параллелизм, можно ли подменить DNS. Три узла, которые стоит держать в голове.</p>
+          <p class="subhead">Dispatcher — очередь и параллелизм</p>
+          <p><code>Dispatcher</code> управляет асинхронными вызовами: <code>maxRequests = 64</code> (всего одновременно) и <code>maxRequestsPerHost = 5</code> (на один хост) по умолчанию. Вызовы сверх лимита ждут в <code>readyAsyncCalls</code> и переезжают в <code>runningAsyncCalls</code>, когда освобождается слот. У диспетчера свой <code>ExecutorService</code> — можно подменить.</p>
+          <p class="subhead">ConnectionPool — keep-alive</p>
+          <p><code>ConnectionPool</code> по умолчанию хранит до 5 idle-соединений и закрывает их после 5 минут простоя. Живое соединение переиспользуется (keep-alive), экономя TCP+TLS на каждом запросе. По HTTP/1.1 одно соединение = один запрос за раз; по HTTP/2 в одном соединении мультиплексируются все запросы к хосту — поэтому число реальных сокетов зависит от протокола.</p>
+          <p class="subhead">DNS — свой резолвер</p>
+          <p>Интерфейс <code>Dns</code> можно переопределить: подставить свой резолвер, отфильтровать IPv4/IPv6, реализовать DoH. <code>retryOnConnectionFailure</code> перебирает адреса из DNS — если первый IP не отвечает, OkHttp пробует следующий.</p>
+          <div class="code-label">CustomDns.kt</div>
+<pre><code class="language-kotlin">val client = OkHttpClient.Builder()
+    .dns { hostname -&gt;
+        // например: только IPv4, или свой DoH-резолвер
+        Dns.SYSTEM.lookup(hostname).filter { it is java.net.Inet4Address }
+    }
+    .build()</code></pre>
+          <p>Для диагностики «почему медленно» вешают <code>EventListener</code> — он даёт тайминги фаз (DNS, connect, TLS-handshake, время до первого байта), и сразу видно, где именно уходит время.</p>
+
+          <details class="qa"><summary>На одном хосте по HTTP/2 запустили 30 параллельных запросов через OkHttp. Сколько TCP-соединений откроется и упрётся ли что-то в maxRequestsPerHost? <span class="q-badge">★</span></summary><div class="ans"><p>По HTTP/2 все запросы к одному хосту мультиплексируются в <em>одном</em> TCP+TLS-соединении — отдельный сокет под каждый запрос не нужен. Так что соединение в норме будет одно (плюс, возможно, ещё одно, пока первое устанавливается).</p><p>А вот <code>maxRequestsPerHost = 5</code> в <code>Dispatcher</code> ограничивает именно число одновременно <em>выполняемых</em> вызовов к хосту, независимо от того, что транспорт легко тянет больше в одном HTTP/2-соединении. Из 30 запросов одновременно «в полёте» будет 5, остальные 25 ждут в очереди <code>readyAsyncCalls</code>. То есть в HTTP/2-сценарии искусственным узким местом становится диспетчер, а не сокеты — и поднимать тут надо <code>maxRequestsPerHost</code>, а не пул соединений.</p></div></details>
+        </section>
+
+        <section class="section" id="image-loading">
+          <h2>Загрузка изображений: Coil и Glide</h2>
+          <p>Картинки в списке — отдельная сетевая задача со своими ловушками: один и тот же URL запрашивают десятки раз при скролле, bitmap'ы съедают память, а view переиспользуются в RecyclerView/LazyColumn. Coil и Glide решают это многоуровневым кэшем и привязкой загрузки к жизненному циклу view.</p>
+          <p class="subhead">Многоуровневый кэш</p>
+          <p>Оба держат два уровня: <strong>memory cache</strong> (декодированные bitmap'ы в <code>LruCache</code> — мгновенно при повторном показе) и <strong>disk cache</strong> (сырые байты ответа, переживают перезапуск). Запрос идёт по цепочке: память → диск → сеть. Glide дополнительно делает <strong>bitmap pooling</strong> — переиспользует уже выделенные bitmap'ы вместо новых аллокаций, снижая работу GC при быстром скролле.</p>
+          <p class="subhead">Downsampling под размер view</p>
+          <p>Главная экономия памяти — не грузить картинку 4000×3000 в <code>ImageView</code> размером 200×200. Библиотека измеряет целевой view и декодирует bitmap под его размер (downsampling через <code>inSampleSize</code>). Отсюда классическая проблема: если у view на момент запроса <strong>ширина = 0</strong> (ещё не прошёл layout), библиотека не знает целевой размер — Glide ждёт layout-прохода, а в Compose размер задают через модификатор. Поэтому грузить картинку в ноль-размерный контейнер без явного размера — частый баг «ничего не отображается» или «грузится оригинал».</p>
+          <p class="subhead">Отмена при rebind</p>
+          <p>Когда RecyclerView переиспользует строку под новый элемент (или LazyColumn пересобирает item), старая загрузка должна отмениться — иначе в ячейку прилетит чужая картинка. Библиотеки привязывают запрос к target/lifecycle и отменяют его при rebind автоматически.</p>
+          <div class="code-label">ImageLoad.kt</div>
+<pre><code class="language-kotlin">// Coil под Compose — размер берётся из модификатора
+AsyncImage(
+    model = url,
+    contentDescription = null,
+    modifier = Modifier.size(96.dp),   // даём явный размер -&gt; корректный downsampling
+)
+
+// Coil из кода
+imageView.load(url) {
+    crossfade(true)
+    placeholder(R.drawable.ph)
+}</code></pre>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Критерий</th><th>Coil</th><th>Glide</th></tr></thead>
+              <tbody>
+                <tr><td>Язык / API</td><td>Kotlin, корутины</td><td>Java, колбэки</td></tr>
+                <tr><td>Compose</td><td>первоклассно (<code>AsyncImage</code>)</td><td>через обёртку</td></tr>
+                <tr><td>Размер библиотеки</td><td>компактнее, тянет OkHttp/корутины</td><td>крупнее, свой стек</td></tr>
+                <tr><td>Bitmap pooling</td><td>опирается на GC</td><td>явный пул</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <details class="qa"><summary>В Compose картинка через AsyncImage то грузит оригинал на 12 МП, то не отображается вовсе, хотя URL верный. Что не так с размером и как Coil вообще узнаёт, под какой размер декодировать? <span class="q-badge">★</span></summary><div class="ans"><p>Coil декодирует bitmap под размер цели, а размер он берёт из ограничений компоновки (constraints) того места, куда рисует <code>AsyncImage</code>. Если контейнер не задаёт ширину/высоту — например <code>AsyncImage</code> стоит в <code>Row</code> без веса и без <code>size</code>, и на момент запроса ширина равна 0 или «бесконечности», — Coil не может вычислить целевой размер. В итоге он либо падает на оригинал (грузит все 12 МП в память), либо рисует в нулевой бокс, и картинки «нет».</p><p>Лечится явным размером: <code>Modifier.size(...)</code> / <code>fillMaxWidth().aspectRatio(...)</code> — чтобы у композабла были конечные constraints до загрузки. Это прямой аналог проблемы <code>width = 0</code> в RecyclerView, где Glide ждёт layout-прохода: библиотека не магически знает, насколько уменьшать bitmap — ей нужен измеренный размер цели, иначе downsampling не срабатывает.</p></div></details>
         </section>
 
         <section class="section" id="video">
@@ -441,6 +703,21 @@ val json = Json {
           <details class="qa">
             <summary>kotlinx.serialization, Moshi или Gson — что и почему? <span class="q-badge">Senior</span></summary>
             <div class="ans"><p>Для нового кода — kotlinx.serialization (compile-time, без рефлексии, понимает default-значения, null-safety и sealed-полиморфизм) или Moshi с codegen. Gson — в режиме поддержки: он использует рефлексию и <code>Unsafe</code>, создаёт объект минуя конструктор Kotlin, поэтому игнорирует default-значения и может поставить <code>null</code> в non-null поле → NPE. Это его главный подводный камень. Производительность и безопасность типов на стороне kotlinx/Moshi.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Запрос завис на 40 секунд, хотя connectTimeout = 10 с. Как такое возможно и какой таймаут это ловит? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p><code>connectTimeout</code> (по умолчанию 10 с) ограничивает только установку TCP+TLS-соединения, а не получение ответа. После успешного коннекта сервер может «думать» сколько угодно — это область <code>readTimeout</code> (ожидание следующего байта, по умолчанию 10 с) и <code>writeTimeout</code> (отправка тела). Но и они применяются к <em>отдельному</em> чтению/записи: если сервер шлёт по байту раз в 9 секунд, <code>readTimeout</code> не сработает, а суммарно запрос тянется минутами. Жёсткий лимит на <strong>весь</strong> вызов — включая DNS, коннект, редиректы, повторы и чтение тела — даёт <code>callTimeout</code> (по умолчанию 0 = выключен), его и ставят в проде. Ещё <code>retryOnConnectionFailure</code> может незаметно удваивать время, переподключаясь к другому IP.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Почему вы почти никогда не увидите Accept-Encoding: gzip в своём логирующем application-интерсепторе? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p><code>BridgeInterceptor</code> — встроенное звено OkHttp между application- и network-слоем. Если вы сами не задали <code>Accept-Encoding</code>, он добавляет <code>Accept-Encoding: gzip</code>, а когда приходит сжатый ответ — прозрачно распаковывает его и <em>убирает</em> заголовки <code>Content-Encoding</code> и <code>Content-Length</code>. Поскольку <code>BridgeInterceptor</code> стоит ниже application-интерсепторов, ваш <code>HttpLoggingInterceptor</code> на <code>addInterceptor</code> видит уже распакованное тело и не видит этих заголовков. Чтобы залогировать реальные «по проводу» сжатые заголовки, вешайте логгер как network-интерсептор (<code>addNetworkInterceptor</code>). Это прямое следствие порядка цепочки.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Почему для рефреша токена на 401 предпочтительнее Authenticator, чем интерсептор? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>OkHttp <code>Authenticator</code> вызывается ядром реактивно — именно при <code>401</code> (для прокси — <code>407</code>), и OkHttp сам встраивает повтор запроса с новыми заголовками, отслеживая <code>responseCount</code>, чтобы не зациклиться. В интерсепторе ретрай и защиту от рекурсии вы пишете руками. Общая для обоих проблема — гонка: при просроченном токене несколько запросов одновременно ловят 401 и кидаются рефрешить. Решение: синхронизировать рефреш (<code>Mutex</code>/<code>synchronized</code>) и внутри критической секции сравнить токен из заголовка пришедшего запроса с актуальным в хранилище — если они уже разные, другой поток успел обновить, и надо просто взять новый токен без повторного refresh. В <code>Authenticator</code> возврат <code>null</code> означает «сдаться» — отдать 401 наверх (например разлогинить).</p></div>
           </details>
 
         </section>
@@ -579,6 +856,93 @@ val api = retrofit.create(UserApi::class.java)</code></pre>
             </details>
           </div>
 
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 4.</strong> Реализуй OkHttp <code>Authenticator</code> для рефреша access-токена на <code>401</code>, устойчивый к гонке: при одновременном 401 от нескольких параллельных запросов <code>refresh()</code> должен вызваться ровно один раз, остальные — подхватить уже обновлённый токен. Если refresh не удался — верни <code>null</code> (сдаться). Защити от бесконечного цикла повторов.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">class TokenAuthenticator(
+    private val store: TokenStore,
+    private val refresher: Refresher,
+) : Authenticator {
+
+    private val lock = Any()
+
+    override fun authenticate(route: Route?, response: Response): Request? {
+        // защита от цикла: если повторов уже &gt;= 2 — сдаёмся
+        if (responseCount(response) &gt;= 2) return null
+
+        synchronized(lock) {
+            val current = store.access()
+            val failedToken = response.request.header("Authorization")
+
+            // другой поток уже обновил токен, пока мы ждали lock
+            if (failedToken != null &amp;&amp; failedToken != "Bearer $current") {
+                return response.request.newBuilder()
+                    .header("Authorization", "Bearer $current")
+                    .build()
+            }
+
+            val fresh = refresher.refresh() ?: return null  // не вышло — отдать 401 наверх
+            store.save(fresh)
+            return response.request.newBuilder()
+                .header("Authorization", "Bearer $fresh")
+                .build()
+        }
+    }
+
+    private fun responseCount(response: Response): Int {
+        var r: Response? = response.priorResponse
+        var count = 1
+        while (r != null) { count++; r = r.priorResponse }
+        return count
+    }
+}</code></pre>
+                <p>Объяснение: ключевой приём — внутри <code>synchronized</code> сравнить токен из заголовка <em>упавшего</em> запроса (<code>failedToken</code>) с текущим в хранилище. Если они уже различаются, значит другой поток успел обновить токен, пока мы ждали блокировку — тогда просто берём актуальный токен без повторного <code>refresh()</code>. Так refresh реально выполняется один раз. <code>responseCount</code> по цепочке <code>priorResponse</code> отсекает бесконечный цикл, а возврат <code>null</code> = «сдаться», OkHttp отдаст 401 наверх.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 5.</strong> Напиши на OkHttp WebSocket-клиент с авто-реконнектом: при <code>onFailure</code> или ненормальном закрытии (код ≠ 1000) переподключаться с экспоненциальным backoff (1с → 2с → 4с → … → макс 30с) и джиттером; при успешном <code>onOpen</code> счётчик backoff сбрасывается. При <code>close(1000)</code> — не реконнектить. Отдавай входящие сообщения через <code>Flow</code>.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">fun webSocketFlow(
+    client: OkHttpClient,
+    request: Request,
+    scope: CoroutineScope,
+): Flow&lt;String&gt; = callbackFlow {
+    var attempt = 0
+    var current: WebSocket? = null
+
+    fun connect() {
+        current = client.newWebSocket(request, object : WebSocketListener() {
+            override fun onOpen(ws: WebSocket, response: Response) { attempt = 0 }
+            override fun onMessage(ws: WebSocket, text: String) { trySend(text) }
+            override fun onClosing(ws: WebSocket, code: Int, reason: String) {
+                if (code == 1000) close() else scheduleReconnect()
+            }
+            override fun onFailure(ws: WebSocket, t: Throwable, r: Response?) {
+                scheduleReconnect()
+            }
+        })
+    }
+
+    fun scheduleReconnect() {
+        val delayMs = minOf(1_000L shl attempt, 30_000L) + Random.nextLong(0, 1_000)
+        attempt++
+        scope.launch { delay(delayMs); connect() }
+    }
+
+    connect()
+    awaitClose { current?.close(1000, null) }
+}</code></pre>
+                <p>Объяснение: <code>onOpen</code> сбрасывает <code>attempt</code> — после успешного коннекта backoff начинается заново. <code>1_000L shl attempt</code> даёт 1с→2с→4с…, <code>minOf(..., 30_000L)</code> ставит потолок, <code>Random.nextLong(0, 1_000)</code> добавляет джиттер. Код закрытия <code>1000</code> = нормально, канал закрываем без реконнекта; всё остальное и <code>onFailure</code> запускают повтор. <code>awaitClose</code> закрывает сокет при отмене Flow. На клиенте полезен <code>pingInterval(...)</code> для детекта мёртвого сокета, и один <code>OkHttpClient</code> переиспользуется.</p>
+              </div>
+            </details>
+          </div>
+
         </section>
 
         <div class="sources">
@@ -591,6 +955,9 @@ val api = retrofit.create(UserApi::class.java)</code></pre>
             <li><a href="https://square.github.io/retrofit/" target="_blank" rel="noopener">Retrofit — официальная документация</a> — аннотации, конвертеры, suspend и call-адаптеры.</li>
             <li><a href="https://github.com/Kotlin/kotlinx.serialization" target="_blank" rel="noopener">kotlinx.serialization (GitHub)</a> — конфигурация Json и сравнение подходов сериализации.</li>
             <li><a href="https://developer.mozilla.org/en-US/docs/Web/HTTP/Methods" target="_blank" rel="noopener">MDN — HTTP request methods</a> — safe/idempotent семантика методов и статус-коды.</li>
+            <li><a href="https://square.github.io/okhttp/features/calls/" target="_blank" rel="noopener">OkHttp Docs — Calls, Dispatcher & ConnectionPool</a> — лимиты параллелизма, пул соединений, таймауты.</li>
+            <li><a href="https://blog.cloudflare.com/http3-the-past-present-and-future/" target="_blank" rel="noopener">Cloudflare — HTTP/3 & QUIC</a> — head-of-line blocking, 0-RTT, connection migration.</li>
+            <li><a href="https://coil-kt.github.io/coil/" target="_blank" rel="noopener">Coil — официальная документация</a> — кэш, downsampling, AsyncImage под Compose.</li>
             <li><a href="https://www.youtube.com/watch?v=eBOaBucNUJg" target="_blank" rel="noopener">Работа с сетью в Android: Retrofit, OkHttp, Coroutines (RU)</a> — практический видео-разбор стека.</li>
           </ol>
         </div>
@@ -602,6 +969,6 @@ val api = retrofit.create(UserApi::class.java)</code></pre>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/app.js?v=20260620-4"></script>
+  <script src="../assets/app.js?v=20260621-1"></script>
 </body>
 </html>

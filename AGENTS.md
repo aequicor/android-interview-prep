@@ -37,7 +37,7 @@ The study material has exactly **three** structural levels. Use these names ever
 | Term | EN | What it is | In code / markup |
 | --- | --- | --- | --- |
 | **Группа** | group | An umbrella category that unites thematically-close **главы** (e.g. «Язык и проектирование», «Данные и сеть»). | An entry in the `GROUPS` map in `app.js`. Rendered as the sidebar group headers, the mind-map legend, the topic-card eyebrow, and the breadcrumb. **9** groups. |
-| **Глава** | chapter | A self-contained area of study — one interview topic (e.g. «ООП и SOLID», «Язык Kotlin»). | An entry in the `TOPICS` array = one page `site/pages/*.html` carrying `<body data-page="ID">`. **18** chapters. |
+| **Глава** | chapter | A self-contained area of study — one interview topic (e.g. «ООП и SOLID», «Язык Kotlin»). | An entry in the `TOPICS` array = one page `site/pages/*.html` carrying `<body data-page="ID">`. **21** chapters. |
 | **Параграф** | paragraph | A specific topic *inside* a глава (e.g. «Null-safety», «Scope-функции»). One entry in the on-page table of contents. | A `<section class="section" id="…">` whose first child is an `<h2>`. `buildTOC` emits one TOC link per параграф. |
 
 **Подпараграфов нет (no sub-paragraphs).** The hierarchy stops at the параграф — `группа → глава → параграф` — and nothing below it is a navigational level. Inside a параграф a minor sub-point may be set off with a run-in lead-in `<p class="subhead">…</p>`, but that is **plain text: not a heading, not a TOC entry**. Never reintroduce `<h3>`/`<h4>` as a structural sub-level. The on-page TOC is therefore single-level (параграфы only).
@@ -69,7 +69,7 @@ Edits to `.html`/`.css`/`.js` show up on reload (mind the cache-busting note bel
 **The wiring contract you must keep consistent:**
 - `<body data-page="X">` **must equal** the `id` of the matching `TOPICS` entry **and** the page's filename base (`NN-X.html`). A mismatch leaves the page with no sidebar highlight, breadcrumb, or prev/next.
 - `TOPICS` **order matters**: it sets the mind-map node angles and the prev/next chain. `buildSidebar` groups entries by their `group` field assuming **same-group entries are contiguous** — don't interleave groups.
-- The homepage hero hard-codes counts ("18 глав", "9 групп") in `index.html`. These are *not* derived from the data — update them by hand when adding/removing a глава or группа. (The `0/18` progress stat *is* dynamic.)
+- The homepage hero hard-codes counts ("21 глава", "9 групп") in `index.html`. These are *not* derived from the data — update them by hand when adding/removing a глава or группа. (The `0/21` progress stat *is* dynamic.)
 
 **State lives in `localStorage`**, no backend:
 - `aip-progress-v1` — set of completed глава ids (the "mark done" checkmarks).
@@ -108,7 +108,7 @@ The hard rules from that skill that, if violated, break rendering:
 - **Videos use the `.ytcard` link card, never `<iframe>`** — some videos block embedding (error 153); the card always works and opens YouTube at a timestamp.
 - **Files must end at `</html>`** with no trailing junk/NUL bytes.
 
-After changing `app.js` or `style.css`, **bump the cache-busting version** `assets/app.js?v=YYYYMMDD-N` (currently `?v=20260620-4`) in **all** HTML files (root + every page in `site/pages/`) so browsers don't serve a stale copy.
+After changing `app.js` or `style.css`, **bump the cache-busting version** `assets/app.js?v=YYYYMMDD-N` (currently `?v=20260621-1`) in **all** HTML files (root + every page in `site/pages/`) so browsers don't serve a stale copy.
 
 If you edit a packaged skill (`.claude/skills/interview-prep-author/` or `.claude/skills/infographic-author/`), repackage its `.skill` bundle (a zip whose top-level folder is the skill name, containing `SKILL.md` + `references/`) so the bundled copy stays current.
 

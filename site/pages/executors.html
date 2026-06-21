@@ -56,6 +56,21 @@
 val future = pool.submit(java.util.concurrent.Callable { heavyCompute() })  // Future&lt;T&gt;
 val result = future.get()        // блокирующе ждём результат (или исключение в ExecutionException)
 pool.shutdown()                  // корректное завершение</code></pre>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TB
+X["В задаче выброшено исключение"] --> M{"Как отправлена?"}
+M -->|"execute(Runnable)"| E1["Всплывает как uncaught"]
+E1 --> E2["UncaughtExceptionHandler потока"]
+E2 --> E3["Поток гибнет, пул создаёт замену"]
+M -->|"submit(Callable)"| S1["Оседает в FutureTask"]
+S1 --> S2{"Кто-то вызвал get()?"}
+S2 -->|да| S3["ExecutionException (причина в getCause)"]
+S2 -->|нет| S4["Молча проглочено"]
+          </div>
+          <div class="cap">Путь исключения зависит от способа отправки: execute() кричит в лог, submit() прячет ошибку до get()</div>
+          </div>
+          <details class="qa"><summary>Чем поведение при исключении различается у <code>submit()</code> и <code>execute()</code>, и куда «уходит» исключение, если результат <code>Future</code> никто не запросил? <span class="q-badge">★</span></summary><div class="ans"><p>При <code>execute(Runnable)</code> необработанное исключение всплывает как uncaught и попадает в <code>UncaughtExceptionHandler</code> потока. Поток при этом завершается, а пул создаёт ему замену — то есть ошибку вы хотя бы увидите в логе.</p><p>А вот <code>submit()</code> оборачивает задачу в <code>FutureTask</code>: исключение перехватывается и сохраняется как результат. <code>Future.get()</code> перебросит его обёрнутым в <code>ExecutionException</code> (исходная причина — в <code>getCause()</code>). Подвох в том, что если результат <code>submit()</code> никто не вызовет через <code>get()</code>, исключение просто проглатывается — оно не всплывёт и не залогируется, баг останется невидимым. Поэтому для fire-and-forget задач берите либо <code>execute()</code>, либо переопределяйте <code>afterExecute()</code> и доставайте исключение из <code>Future</code> руками.</p></div></details>
         </section>
 
         <section class="section" id="tpe-params">
@@ -71,6 +86,7 @@ pool.shutdown()                  // корректное завершение</c
     RejectedExecutionHandler handler  // что делать, когда пул и очередь переполнены
 )</code></pre>
           <p>По умолчанию (без <code>allowCoreThreadTimeOut</code>) <code>keepAliveTime</code> касается только потоков сверх <code>corePoolSize</code>: core-потоки живут постоянно. Если задать <code>corePoolSize == maximumPoolSize</code>, получится пул фиксированного размера.</p>
+          <details class="qa"><summary><code>corePoolSize=4</code>, но пул простаивает — все 4 потока уже созданы и «греются»? И как заставить core-потоки умирать при простое? <span class="q-badge">★</span></summary><div class="ans"><p>Нет: core-потоки создаются лениво, по мере поступления задач, а не в конструкторе. Пока не пришла ни одна задача, в пуле ноль потоков. Прогреть их заранее можно вызовом <code>prestartAllCoreThreads()</code> (или <code>prestartCoreThread()</code> по одному).</p><p>По умолчанию core-потоки не завершаются по <code>keepAliveTime</code> — живут вечно. Чтобы они тоже умирали при простое, нужен <code>allowCoreThreadTimeOut(true)</code>, и при этом <code>keepAliveTime</code> обязан быть ненулевым (иначе бросится <code>IllegalArgumentException</code>). Это частый приём для пулов, которые должны схлопываться до нуля потоков в idle — например, чтобы фоновый пул не держал ресурсы, пока приложение свёрнуто.</p></div></details>
         </section>
 
         <section class="section" id="growth-model">
@@ -99,6 +115,7 @@ C -->|нет| R["Отклонить (handler)"]
             <div class="ic">⚠️</div>
             <div class="bd"><strong>Следствие, на котором ловят.</strong> Новый поток сверх <code>corePoolSize</code> создаётся <em>только когда очередь полна</em>. С неограниченной очередью шаг 3 не наступает никогда — значит <code>maximumPoolSize</code> просто <strong>игнорируется</strong>, и пул не вырастет за пределы core, сколько бы задач ни пришло.</div>
           </div>
+          <details class="qa"><summary>Технически как именно пул решает «очередь полна»? Что вызывается на <code>BlockingQueue</code> и почему <code>SynchronousQueue</code> всегда «полна»? <span class="q-badge">★</span></summary><div class="ans"><p>На шаге постановки в очередь пул вызывает <code>workQueue.offer(task)</code> — неблокирующий вариант, который возвращает <code>false</code>, если поставить нельзя. Именно <code>false</code> (а не блокировка) трактуется как «очередь полна» и запускает попытку создать не-core поток.</p><p>У <code>SynchronousQueue</code> ёмкость нулевая: <code>offer()</code> возвращает <code>true</code> только если прямо сейчас есть поток, уже ждущий в <code>take()</code>; иначе сразу <code>false</code>. Поэтому в cached-пуле каждая задача либо мгновенно подхватывается простаивающим потоком, либо <code>offer</code> падает и создаётся новый поток — отсюда и «взрывной» рост. У неограниченной <code>LinkedBlockingQueue</code> <code>offer()</code> не возвращает <code>false</code> никогда, поэтому ветка роста до <code>maximumPoolSize</code> недостижима — это и есть механика, объясняющая предыдущий callout.</p></div></details>
         </section>
 
         <section class="section" id="queues">
@@ -114,6 +131,7 @@ C -->|нет| R["Отклонить (handler)"]
               </tbody>
             </table>
           </div>
+          <details class="qa"><summary><code>PriorityBlockingQueue</code> в <code>ThreadPoolExecutor</code>: даст ли это приоритетное исполнение, и какие два подвоха тут вылезают? <span class="q-badge">★</span></summary><div class="ans"><p>Формально да — задачи будут выниматься из очереди по приоритету (через <code>compareTo</code>), но с оговорками.</p><p>Во-первых, <code>PriorityBlockingQueue</code> неограниченна, поэтому пул, как и с <code>LinkedBlockingQueue</code>, никогда не вырастет за <code>corePoolSize</code> и может копить бэклог до OOM. Во-вторых, <code>submit()</code> оборачивает задачу в <code>FutureTask</code>, который не реализует <code>Comparable</code>, — очередь бросит <code>ClassCastException</code>. Нужно либо подавать через <code>execute()</code> свои <code>Comparable</code>-Runnable, либо переопределять <code>newTaskFor()</code>, чтобы <code>FutureTask</code> нёс приоритет. И помните: приоритет действует только на ожидающие в очереди задачи — уже запущенную он не вытеснит.</p></div></details>
         </section>
 
         <section class="section" id="factories">
@@ -134,6 +152,7 @@ C -->|нет| R["Отклонить (handler)"]
             <div class="ic">ℹ️</div>
             <div class="bd"><strong>Про виртуальные потоки.</strong> Java 21 добавила <code>newVirtualThreadPerTaskExecutor()</code> (Project Loom). Но это фича <em>JVM</em>; среда исполнения Android (ART) виртуальные потоки <strong>не предоставляет</strong>, поэтому в Android-проекте на неё не рассчитывают — лёгкую конкурентность там дают корутины.</div>
           </div>
+          <details class="qa"><summary>Сколько потоков ставить в пул: какая формула для CPU-bound и для IO-bound задач, и откуда в ней берётся коэффициент? <span class="q-badge">★</span></summary><div class="ans"><p>Для чисто CPU-bound работы оптимум — около числа доступных ядер (<code>Runtime.getRuntime().availableProcessors()</code>, иногда +1, чтобы перекрыть редкие page-fault'ы). Больше потоков лишь добавят накладных расходов на переключение контекста, не ускорив счёт.</p><p>Для IO-bound задач потоков нужно заметно больше: большую часть времени поток блокирован в ожидании сети или диска и не грузит CPU. Классическая оценка (Brian Goetz, «Java Concurrency in Practice»): N = ядра × (1 + время_ожидания / время_счёта). При соотношении ожидание/счёт = 9 на 8 ядрах получится около 80 потоков. На Android это и есть аргумент в пользу корутин: они мультиплексируют тысячи suspend-задач на маленький пул вместо того, чтобы плодить дорогие ОС-потоки. Подробнее про формулу — в параграфе «Сколько потоков заводить».</p></div></details>
         </section>
 
         <section class="section" id="rejection">
@@ -151,6 +170,7 @@ C -->|нет| R["Отклонить (handler)"]
             </table>
           </div>
           <p><code>CallerRunsPolicy</code> — частый ответ на «как сделать мягкий backpressure без OOM»: когда пул перегружен, поток-отправитель сам исполняет задачу и временно перестаёт принимать новые.</p>
+          <details class="qa"><summary>У <code>CallerRunsPolicy</code> есть неочевидный побочный эффект помимо «замедления отправителя». Какой, и где он стреляет? <span class="q-badge">★</span></summary><div class="ans"><p>Пока поток-отправитель сам выполняет отклонённую задачу, он не может подавать новые задачи в пул — отсюда и backpressure. Но если отправитель один-единственный (цикл, читающий из сокета, или Main/UI-поток), он на время задачи перестаёт делать свою основную работу. На UI-потоке это прямой ANR или фриз — поэтому отдавать <code>CallerRunsPolicy</code> пулу, в который шлёт задачи главный поток, опасно.</p><p>Второй подвох: <code>CallerRunsPolicy</code> выполнит задачу даже после <code>shutdown()</code> пула (проверка идёт в самом handler). А <code>DiscardOldestPolicy</code> при работе с очередью-приоритетом выбросит не «самую старую по времени», а голову очереди — для <code>PriorityQueue</code> это самый приоритетный элемент, что обычно противоположно ожиданию.</p></div></details>
         </section>
 
         <section class="section" id="scheduled">
@@ -174,6 +194,41 @@ ses.scheduleWithFixedDelay({ sync() }, 0, 10, java.util.concurrent.TimeUnit.SECO
             <div class="ic">⚠️</div>
             <div class="bd"><strong>Необработанное исключение убивает периодику.</strong> Если периодическая задача бросит исключение наружу, <strong>последующие запуски подавляются</strong> (молча перестают выполняться). Поэтому тело периодической задачи оборачивают в <code>try/catch</code>, иначе «таймер тихо умрёт».</div>
           </div>
+          <div class="diagram">
+          <svg viewBox="0 0 640 230" role="img" xmlns="http://www.w3.org/2000/svg">
+            <title>scheduleAtFixedRate против scheduleWithFixedDelay на таймлайне</title>
+            <desc>Задача длиннее периода. У fixedRate следующий старт привязан к сетке времени и запуски идут впритык; у fixedDelay пауза delay отсчитывается от конца блока.</desc>
+            <!-- fixedRate -->
+            <text x="0" y="20" fill="var(--text)" font-size="14" font-weight="600">scheduleAtFixedRate — сетка от начала</text>
+            <line x1="0" y1="70" x2="640" y2="70" stroke="var(--border)" stroke-width="1" fill="none"/>
+            <!-- grid ticks at 0,140,280,420 -->
+            <line x1="40" y1="62" x2="40" y2="78" stroke="var(--text-dim)" stroke-width="1"/>
+            <line x1="180" y1="62" x2="180" y2="78" stroke="var(--text-dim)" stroke-width="1"/>
+            <line x1="320" y1="62" x2="320" y2="78" stroke="var(--text-dim)" stroke-width="1"/>
+            <line x1="460" y1="62" x2="460" y2="78" stroke="var(--text-dim)" stroke-width="1"/>
+            <text x="40" y="94" fill="var(--text-dim)" font-size="11" text-anchor="middle">t0</text>
+            <text x="180" y="94" fill="var(--text-dim)" font-size="11" text-anchor="middle">+p</text>
+            <text x="320" y="94" fill="var(--text-dim)" font-size="11" text-anchor="middle">+2p</text>
+            <text x="460" y="94" fill="var(--text-dim)" font-size="11" text-anchor="middle">+3p</text>
+            <!-- run blocks longer than period, back-to-back -->
+            <rect x="40" y="46" width="170" height="18" rx="3" fill="var(--accent)"/>
+            <rect x="210" y="46" width="170" height="18" rx="3" fill="var(--accent)"/>
+            <rect x="380" y="46" width="170" height="18" rx="3" fill="var(--accent)"/>
+            <!-- fixedDelay -->
+            <text x="0" y="140" fill="var(--text)" font-size="14" font-weight="600">scheduleWithFixedDelay — пауза от конца</text>
+            <line x1="0" y1="190" x2="640" y2="190" stroke="var(--border)" stroke-width="1" fill="none"/>
+            <rect x="40" y="166" width="170" height="18" rx="3" fill="var(--accent-2)"/>
+            <rect x="270" y="166" width="170" height="18" rx="3" fill="var(--accent-2)"/>
+            <rect x="500" y="166" width="120" height="18" rx="3" fill="var(--accent-2)"/>
+            <!-- delay gap markers -->
+            <line x1="210" y1="175" x2="270" y2="175" stroke="var(--text-dim)" stroke-width="1" stroke-dasharray="3 3"/>
+            <line x1="440" y1="175" x2="500" y2="175" stroke="var(--text-dim)" stroke-width="1" stroke-dasharray="3 3"/>
+            <text x="240" y="214" fill="var(--text-dim)" font-size="11" text-anchor="middle">delay</text>
+            <text x="470" y="214" fill="var(--text-dim)" font-size="11" text-anchor="middle">delay</text>
+          </svg>
+          <div class="cap">Задача длиннее периода: у fixedRate запуски жмутся к временной сетке впритык, у fixedDelay между ними всегда выдержана пауза delay</div>
+          </div>
+          <details class="qa"><summary>Создали <code>newScheduledThreadPool(1)</code> с одной разовой задачей через 10 минут. Можно ли получить эту задачу обратно из <code>shutdownNow()</code> прямо сейчас, и что внутри хранит этот пул? <span class="q-badge">★</span></summary><div class="ans"><p>Да: внутри <code>ScheduledThreadPoolExecutor</code> использует <code>DelayedWorkQueue</code> — специализированную неограниченную очередь-кучу, упорядоченную по времени срабатывания. Ещё не наступившая отложенная задача всё это время лежит в этой очереди (а не «спит» в потоке), поэтому <code>shutdownNow()</code> вернёт её в списке невыполненных <code>Runnable</code>.</p><p>Из-за неограниченности <code>DelayedWorkQueue</code> параметры <code>maximumPoolSize</code> и политика очереди у scheduled-пула фактически не работают — рост за core не происходит, как и с обычной неограниченной очередью. Отмена через <code>ScheduledFuture.cancel()</code> помечает задачу, но по умолчанию она остаётся в очереди до своего времени; убрать её сразу можно, включив <code>setRemoveOnCancelPolicy(true)</code>.</p></div></details>
         </section>
 
         <section class="section" id="shutdown">
@@ -192,6 +247,35 @@ ses.scheduleWithFixedDelay({ sync() }, 0, 10, java.util.concurrent.TimeUnit.SECO
             <div class="ic">ℹ️</div>
             <div class="bd"><code>shutdownNow()</code> прерывает <em>best-effort</em>: задача, которая не реагирует на <code>interrupt</code> (нет проверки <code>isInterrupted</code>, не ловит <code>InterruptedException</code>), может не остановиться. Прерывание — это кооперативный механизм, как и отмена корутин.</div>
           </div>
+          <div class="diagram">
+          <div class="mermaid">
+stateDiagram-v2
+[*] --> RUNNING
+RUNNING --> SHUTDOWN: shutdown()
+RUNNING --> STOP: shutdownNow()
+SHUTDOWN --> STOP: shutdownNow()
+SHUTDOWN --> TIDYING: очередь и пул пусты
+STOP --> TIDYING: пул пуст
+TIDYING --> TERMINATED: terminated()
+TERMINATED --> [*]
+note right of TERMINATED
+  awaitTermination()
+  разблокируется здесь
+end note
+          </div>
+          <div class="cap">Жизненный цикл пула. Без shutdown()/shutdownNow() он навсегда в RUNNING — TERMINATED не наступит, и awaitTermination провисит весь таймаут</div>
+          </div>
+          <details class="qa"><summary>После <code>shutdown()</code> пул надо «дождаться» — почему один <code>awaitTermination()</code> без предварительного <code>shutdown()</code> будет ждать вечно, и как выглядит канонический двухфазный shutdown? <span class="q-badge">★</span></summary><div class="ans"><p><code>awaitTermination()</code> блокирует, пока пул не перейдёт в состояние <code>TERMINATED</code>, а туда он попадает только после <code>shutdown()</code>/<code>shutdownNow()</code> и завершения всех задач. Без вызова <code>shutdown()</code> пул остаётся в <code>RUNNING</code> и принимает новые задачи — <code>TERMINATED</code> не наступит никогда, поэтому <code>awaitTermination</code> просто провисит весь таймаут и вернёт <code>false</code>.</p><p>Канонический шаблон из документации:</p>
+<pre><code class="language-kotlin">pool.shutdown()
+try {
+    if (!pool.awaitTermination(60, TimeUnit.SECONDS)) {
+        pool.shutdownNow()                              // дёрнуть зависшие
+        pool.awaitTermination(60, TimeUnit.SECONDS)     // дождаться ещё раз
+    }
+} catch (e: InterruptedException) {
+    pool.shutdownNow()
+    Thread.currentThread().interrupt()                  // восстановить флаг
+}</code></pre></div></details>
         </section>
 
         <section class="section" id="asynctask-workmanager">
@@ -208,7 +292,112 @@ ses.scheduleWithFixedDelay({ sync() }, 0, 10, java.util.concurrent.TimeUnit.SECO
             <div class="bd"><strong>Что вместо.</strong> Для in-process фоновой работы — <code>ExecutorService</code> или <strong>корутины</strong> (привязка к <code>lifecycleScope</code>/<code>viewModelScope</code> с авто-отменой решает и утечки, и читаемость). См. раздел <a href="coroutines.html">«Корутины и Flow»</a>.</div>
           </div>
           <p class="subhead">Граница с WorkManager</p>
-          <p>Важно не путать две задачи. <code>Executor</code>/корутины — это <strong>in-process</strong> работа: она умирает вместе с процессом приложения. <strong>WorkManager</strong> — для <em>отложенной и гарантированной</em> работы, которая обязана выполниться, даже если пользователь ушёл с экрана, приложение закрылось или устройство перезагрузилось (синхронизация, выгрузка логов, периодические задачи). Не используйте пул потоков для гарантированной фоновой работы и WorkManager — для мгновенных внутрипроцессных вычислений.</p>
+          <p>Важно не путать две задачи. <code>Executor</code>/корутины — это <strong>in-process</strong> работа: она умирает вместе с процессом приложения. <strong>WorkManager</strong> — для <em>отложенной и гарантированной</em> работы, которая обязана выполниться, даже если пользователь ушёл с экрана, приложение закрылось или устройство перезагрузилось (синхронизация, выгрузка логов, периодические задачи). Не используйте пул потоков для гарантированной фоновой работы и WorkManager — для мгновенных внутрипроцессных вычислений. Разбор инструментов фоновой работы — в главе <a href="background-work.html">«Фоновая работа»</a>.</p>
+          <details class="qa"><summary>Корутина на <code>Dispatchers.IO</code> — это «свой поток на корутину»? Что под капотом этого диспетчера и чем он отличается от голого <code>ExecutorService</code>? <span class="q-badge">★</span></summary><div class="ans"><p>Нет. <code>Dispatchers.IO</code> — это разделяемый пул поверх <code>Dispatchers.Default</code>, с лимитом по умолчанию 64 потока (или числу ядер, если их больше), причём <code>Default</code> и <code>IO</code> делят общий набор рабочих потоков. Тысячи корутин мультиплексируются на эти потоки: пока корутина приостановлена (на сетевом вызове), её поток свободен для другой корутины — поэтому корутины дешевле, чем «поток на задачу» у <code>ExecutorService</code>.</p><p>Любой <code>ExecutorService</code> можно превратить в диспетчер через <code>asCoroutineDispatcher()</code>, а ограниченную параллельность внутри IO задают через <code>limitedParallelism(n)</code>. Принципиальная разница: пул потоков параллелит блокирующие задачи, а корутины ещё и кооперативно отдают поток на точках приостановки, не занимая его на время ожидания.</p></div></details>
+        </section>
+
+        <section class="section" id="future-api">
+          <h2>Future: get, отмена и переход к CompletableFuture</h2>
+          <p>В таблице выше <code>Future</code> мелькнул одной строкой, а на собесе по нему гоняют отдельно. Это дескриптор ещё не готового результата, и весь его API — про то, как этот результат забрать или отменить задачу.</p>
+          <p><code>get()</code> без аргументов <strong>блокирует</strong> вызывающий поток до готовности. Что он может бросить:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Исключение из <code>get()</code></th><th>Когда</th></tr></thead>
+              <tbody>
+                <tr><td><code>ExecutionException</code></td><td>Задача упала с исключением; исходная причина — в <code>getCause()</code>.</td></tr>
+                <tr><td><code>CancellationException</code></td><td>Задачу отменили до или во время исполнения.</td></tr>
+                <tr><td><code>InterruptedException</code></td><td>Прервали <em>поток, ждущий в get()</em>; сама задача при этом продолжит работать.</td></tr>
+                <tr><td><code>TimeoutException</code></td><td>Только у <code>get(timeout, unit)</code>: вышел срок ожидания, задача остаётся работать.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Отмена — <code>cancel(mayInterruptIfRunning)</code>. Если задача ещё не стартовала, её просто выкидывают из очереди. Если уже бежит: <code>cancel(true)</code> шлёт исполняющему потоку <code>interrupt()</code> (кооперативно — задача должна на него реагировать), а <code>cancel(false)</code> уже запущенную не трогает вовсе. После успешной отмены <code>isCancelled()</code> и <code>isDone()</code> вернут <code>true</code>.</p>
+          <p class="subhead">Чего голому Future не хватает</p>
+          <p>Из обычного <code>Future</code> нельзя «подписаться» на готовность — только заблокироваться в <code>get()</code> или крутить <code>isDone()</code> в опросе. Цепочки без блокировки не собрать. Это и закрывает <code>CompletableFuture</code> (Java 8): неблокирующая композиция <code>thenApply</code>/<code>thenCompose</code>/<code>thenCombine</code>, обработка ошибок <code>exceptionally</code>/<code>handle</code>, объединение нескольких через <code>allOf</code>/<code>anyOf</code> и явный выбор executor'а на каждый шаг.</p>
+<pre><code class="language-kotlin">val cf = CompletableFuture
+    .supplyAsync({ fetchUser(id) }, pool)         // в нашем пуле
+    .thenApply { user -&gt; user.name.uppercase() }  // неблокирующая трансформация
+    .exceptionally { "anonymous" }                // фолбэк при ошибке
+// результат заберём позже — get() блокирует только если уже нужен прямо сейчас</code></pre>
+          <p>В Kotlin-коде на Android ту же роль играют корутины с <code>suspend</code> и <code>async</code>/<code>await</code> — поэтому <code>CompletableFuture</code> часто спрашивают как мост к пониманию структурированной конкурентности. Подробнее — в главе <a href="coroutines.html">«Корутины и Flow»</a>.</p>
+          <details class="qa"><summary>Чем <code>CompletableFuture</code> лучше обычного <code>Future</code> на практике, и где он берёт потоки по умолчанию? <span class="q-badge">★</span></summary><div class="ans"><p>Обычный <code>Future</code> умеет только блокирующий <code>get()</code>, <code>isDone()</code> и <code>cancel()</code> — из него нельзя собрать неблокирующую цепочку. <code>CompletableFuture</code> добавляет композицию, обработку ошибок и объединение нескольких фьючерсов.</p><p>Тонкость: если у <code>supplyAsync</code>/<code>thenApplyAsync</code> не передать свой executor, работа по умолчанию уходит на <code>ForkJoinPool.commonPool()</code>. Блокирующая операция там надолго займёт общий поток и затормозит всё, что им пользуется (включая параллельные стримы), — поэтому для IO всегда передавайте собственный пул.</p></div></details>
+        </section>
+
+        <section class="section" id="pool-sizing">
+          <h2>Сколько потоков заводить: sizing пула</h2>
+          <p>«Сколько потоков в пуле?» — один из самых частых практических вопросов, и ответ «побольше» неверный. Отправная точка — число доступных ядер: <code>Runtime.getRuntime().availableProcessors()</code>. Дальше всё зависит от того, чем заняты задачи.</p>
+          <p class="subhead">CPU-bound</p>
+          <p>Если задача считает (парсинг, шифрование, обработка картинки) и почти не ждёт, оптимум — около числа ядер, иногда +1, чтобы перекрыть редкие page-fault'ы. Лишние потоки сверх ядер счёт не ускорят: они лишь добавят переключений контекста и борьбы за кэш.</p>
+          <p class="subhead">IO-bound</p>
+          <p>Если задача большую часть времени ждёт сеть или диск, поток в это время простаивает и не грузит CPU — значит потоков нужно заметно больше ядер. Классическая оценка из «Java Concurrency in Practice» (Brian Goetz):</p>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><strong>N = ядра × (1 + W/C)</strong>, где W — среднее время ожидания задачи, C — время счёта. Чем больше доля ожидания, тем выше множитель. Для 8 ядер при W/C = 9 получаем 8 × 10 = 80 потоков.</div>
+          </div>
+<pre><code class="language-kotlin">val cores = Runtime.getRuntime().availableProcessors()
+val cpuPool = Executors.newFixedThreadPool(cores)          // CPU-bound: ~ядра
+val ioPool  = Executors.newFixedThreadPool(cores * 10)     // IO-bound: при W/C≈9</code></pre>
+          <p>Отсюда же — мотивация корутин на Android. Раздувать пул до 80 ОС-потоков ради IO дорого: каждый поток ест память под стек и нагружает планировщик. Корутины на <code>Dispatchers.IO</code> мультиплексируют тысячи suspend-задач на маленький пул, отдавая поток на время ожидания, — и формула «поток на ожидающую задачу» становится не нужна.</p>
+          <details class="qa"><summary>Почему просто «поставить 200 потоков на всякий случай» — плохой ответ даже для IO-задач? <span class="q-badge">★</span></summary><div class="ans"><p>Каждый ОС-поток резервирует адресное пространство под стек (порядка сотен КБ), и планировщику есть что переключать. До какого-то предела рост числа потоков на IO помогает, но дальше выигрыша нет: упрёшься либо в реальный лимит внешнего ресурса (пул соединений к серверу, диск), либо в накладные расходы самого планировщика.</p><p>Поэтому число берут из ожидаемого W/C и из ёмкости ресурса, а не «с запасом». А когда ожидающих задач реально тысячи — это сигнал, что нужны не потоки, а корутины: они держат столько же конкурентных операций на пуле в десяток потоков.</p></div></details>
+        </section>
+
+        <section class="section" id="memory-visibility">
+          <h2>Память и happens-before в пулах</h2>
+          <p>Отдали задачу в пул, она что-то посчитала и записала в общий объект — увидит ли отправитель свежее значение? Без правильной синхронизации не факт: на это и ловят на Senior-уровне.</p>
+          <p>Хорошая новость в том, что <code>java.util.concurrent</code> даёт <strong>happens-before</strong> гарантии. Действия в потоке <em>до</em> <code>submit()</code>/<code>execute()</code> видны коду задачи. Действия задачи <em>до её завершения</em> видны потоку, который успешно дождался её через <code>Future.get()</code>. Поэтому передавать результат через <code>Future</code> безопасно — никаких <code>volatile</code> и <code>synchronized</code> вокруг него не нужно.</p>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Где гарантия пропадает.</strong> Если задача пишет в общий изменяемый объект, который читают <em>мимо</em> <code>Future</code> (без <code>get()</code> и без <code>volatile</code>/<code>synchronized</code>), happens-before не возникает. Читающий поток может увидеть устаревшее значение или вообще словить data race — баг, который воспроизводится «через раз».</div>
+          </div>
+<pre><code class="language-kotlin">var result = 0                          // обычное поле, без volatile
+
+val f = pool.submit { result = compute() }
+f.get()                                 // happens-before: запись result видна
+println(result)                         // OK — увидим свежее значение
+
+pool.submit { result = compute() }      // get() не вызываем
+println(result)                         // data race: можем прочитать устаревшее</code></pre>
+          <details class="qa"><summary>Результат я беру через <code>Future.get()</code>, но задача ещё и пишет в общий список параллельно с другими задачами. Этого достаточно для корректности? <span class="q-badge">★</span></summary><div class="ans"><p>Нет. Happens-before от <code>get()</code> связывает только задачу и того, кто её дождался, — он ничего не говорит про доступ <em>между параллельными задачами</em> к общему списку. Если несколько задач одновременно пишут в обычный <code>ArrayList</code>, это data race с непредсказуемым результатом вплоть до порчи внутренней структуры.</p><p>Для общей изменяемой коллекции под конкурентным доступом берут потокобезопасную структуру (<code>ConcurrentHashMap</code>, <code>CopyOnWriteArrayList</code>) или внешнюю синхронизацию. <code>Future.get()</code> решает только передачу результата от одной задачи к её ожидателю, не защищает разделяемое состояние.</p></div></details>
+        </section>
+
+        <section class="section" id="starvation-deadlock">
+          <h2>Тупики и голодание потоков в пуле</h2>
+          <p>Пул может застрять сам из-за себя — без единого <code>synchronized</code> и без классического deadlock на двух локах. Имя этому — <strong>thread starvation deadlock</strong>.</p>
+          <p>Схема простая: задача в пуле блокируется в ожидании результата <em>другой</em> задачи, отправленной в <strong>тот же</strong> пул, а свободных потоков уже не осталось. Ждущий поток занят ожиданием, выполнить вложенную задачу некому — обе зависают навсегда.</p>
+<pre><code class="language-kotlin">val pool = Executors.newSingleThreadExecutor()   // ровно один поток
+pool.submit {
+    // этот поток занят; он отправляет вложенную задачу и ждёт её
+    val inner = pool.submit(Callable { 42 })
+    inner.get()                                  // зависнет навсегда: исполнить inner некому
+}</code></pre>
+          <p>Правило: не блокируйтесь в ожидании задачи того же ограниченного пула. Зависимые подзадачи гоняют через <em>отдельный</em> пул, либо собирают неблокирующей композицией (<code>CompletableFuture.thenCompose</code>), либо — на Android — структурированной конкурентностью корутин, где вложенный <code>async</code> не «съедает» поток на время ожидания.</p>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Тот же риск у common pool.</strong> <code>parallelStream()</code> и <code>CompletableFuture</code> без явного executor'а работают на общем <code>ForkJoinPool.commonPool()</code> (размер по умолчанию — ядра − 1). Блокирующая операция там надолго занимает дефицитный поток и тормозит всё остальное. Если без блокировки в нём никак, оборачивают её в <code>ManagedBlocker</code> или передают свой executor.</div>
+          </div>
+          <details class="qa"><summary>Почему этот тупик особенно коварен на пуле размером больше единицы — он же «иногда работает»? <span class="q-badge">★</span></summary><div class="ans"><p>Именно поэтому и коварен. На пуле из, скажем, 8 потоков вложенный <code>submit().get()</code> проходит, пока есть свободные потоки, — на тестах с малой нагрузкой всё зелёное. А под продакшен-нагрузкой, когда все 8 потоков одновременно встанут в ожидание своих вложенных задач, пул мгновенно защёлкивается в deadlock. Баг «плавающий» и привязан к нагрузке, что делает его трудновоспроизводимым.</p><p>Поэтому правило формулируют жёстко: ограниченный пул не должен исполнять задачи, которые блокируются в ожидании других задач этого же пула, — независимо от его размера.</p></div></details>
+        </section>
+
+        <section class="section" id="android-executors">
+          <h2>Executors в Android-стеке</h2>
+          <p>На Android голый <code>ExecutorService</code> редко живёт сам по себе: результат фоновой работы почти всегда нужно вернуть на главный поток, а сам пул часто спрятан внутри библиотек. Где он реально встречается:</p>
+          <p class="subhead">ExecutorService + Handler(mainLooper)</p>
+          <p>Каноничная замена связки <code>doInBackground</code>/<code>onPostExecute</code> из <code>AsyncTask</code> без всяких корутин: фоновый пул считает, <code>Handler</code> главного <code>Looper</code> возвращает результат в UI-поток.</p>
+<pre><code class="language-kotlin">val io = Executors.newFixedThreadPool(4)
+val main = Handler(Looper.getMainLooper())
+
+io.execute {
+    val data = repository.load()        // фоновый поток
+    main.post { textView.text = data }  // обратно в UI-поток
+}</code></pre>
+          <p>С API 28 для главного исполнителя есть готовый <code>ContextCompat.getMainExecutor(context)</code> — это <code>Executor</code>, постящий в главный <code>Looper</code>, его удобно отдавать API, которые принимают <code>Executor</code>.</p>
+          <p class="subhead">HandlerThread и Looper</p>
+          <p><code>HandlerThread</code> — поток с собственным <code>Looper</code>: фактически очередь-на-одном-потоке с гарантией последовательности. Удобно, когда нужен один выделенный поток под серию упорядоченных задач (например, запись в файл). Связку <code>Looper</code>/<code>Handler</code> подробно разбираем в главе <a href="looper-handler.html">«Looper и Handler»</a>.</p>
+          <p class="subhead">Dispatchers как пул</p>
+          <p><code>Dispatchers.IO</code> и <code>Dispatchers.Default</code> — это разделяемые пулы под капотом корутин. Свой <code>ExecutorService</code> превращается в диспетчер через <code>asCoroutineDispatcher()</code>, а ограничить параллельность внутри <code>IO</code> можно через <code>limitedParallelism(n)</code>.</p>
+          <p class="subhead">Свой Executor в библиотеках</p>
+          <p>Room принимает <code>setQueryExecutor()</code> и <code>setTransactionExecutor()</code> в билдере базы — так задаётся, на каком пуле выполняются запросы и транзакции. Retrofit умеет принимать <code>callbackExecutor</code>. Это места, где знание о пулах пригождается напрямую, даже если весь остальной код на корутинах.</p>
+          <details class="qa"><summary>Почему нельзя просто обновить <code>View</code> из фонового потока пула, и что именно проверяет Android? <span class="q-badge">★</span></summary><div class="ans"><p>Android-тулкит однопоточный: иерархия <code>View</code> не синхронизирована, и обращаться к ней разрешено только из потока, который её создал, — главного. При попытке тронуть <code>View</code> из чужого потока <code>ViewRootImpl.checkThread()</code> бросает <code>CalledFromWrongThreadException</code> («Only the original thread that created a view hierarchy can touch its views»).</p><p>Проверка появляется только после первого прохода отрисовки, поэтому из <code>onCreate</code> до показа экрана случайное обновление из фона иногда «прокатывает» — и тем коварнее. Правильный путь — вернуть результат на главный поток через <code>Handler(Looper.getMainLooper())</code>, <code>getMainExecutor()</code> или <code>Dispatchers.Main</code>.</p></div></details>
         </section>
 
         <section class="section" id="faq">
@@ -242,6 +431,21 @@ ses.scheduleWithFixedDelay({ sync() }, 0, 10, java.util.concurrent.TimeUnit.SECO
           <details class="qa">
             <summary>Почему <code>AsyncTask</code> устарел и что вместо него? <span class="q-badge">Middle</span></summary>
             <div class="ans"><p>Устарел в API 30 (Android 11): утечки через ссылку на <code>Activity</code>, проблемы при смене конфигурации, неудобная обработка ошибок, последовательный исполнитель по умолчанию. Документация рекомендует <code>java.util.concurrent</code> или корутины. Для гарантированной фоновой работы, переживающей закрытие приложения, — отдельный инструмент, <code>WorkManager</code>; пул потоков и корутины живут лишь в пределах процесса.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Что произойдёт, если вызвать <code>Future.get()</code> на ещё выполняющейся задаче, и можно ли его прервать? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p><code>get()</code> без аргументов блокирует вызывающий поток до готовности результата. Если задача упадёт с исключением — перебросит его в <code>ExecutionException</code> (причина в <code>getCause()</code>); если её отменили — бросит <code>CancellationException</code>. Если прервут (interrupt) сам поток, ждущий в <code>get()</code>, — бросится <code>InterruptedException</code>, при этом задача в пуле продолжит выполняться. Чтобы не виснуть навсегда, берут <code>get(timeout, unit)</code>: по истечении срока он бросит <code>TimeoutException</code>, оставив задачу работать.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Что такое <code>ForkJoinPool</code> и common pool, и почему важно не блокировать его потоки? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p><code>ForkJoinPool</code> — пул с work-stealing: каждый поток держит свою деку задач, а простаивающий «крадёт» задачи у загруженного, что хорошо для рекурсивных divide-and-conquer алгоритмов (fork/join). У него есть общий статический <code>ForkJoinPool.commonPool()</code> (размер по умолчанию — ядра − 1), на котором по умолчанию работают параллельные стримы (<code>.parallelStream()</code>) и <code>CompletableFuture</code> без явного executor'а. Опасность: блокирующая задача (IO, sleep, get) надолго занимает поток common pool и тормозит всё, что им пользуется. Поэтому для блокирующих операций передают свой executor или применяют <code>ManagedBlocker</code>.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Почему создавать <code>new Thread()</code> на каждую задачу — плохо, и что именно это съедает? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>Каждый ОС-поток дорог: под стек резервируется порядка сотен КБ адресного пространства, плюс затраты ядра на создание, планирование и переключение контекста. При тысячах коротких задач время на создание потока превышает саму работу, а память на стеки приводит к <code>OutOfMemoryError</code> («unable to create new native thread»). Пул решает это переиспользованием фиксированного набора потоков и очередью задач. Это же — мотивация корутин на Android: тысячи suspend-задач живут на маленьком пуле, не выделяя поток на каждую.</p></div>
           </details>
 
         </section>
@@ -355,6 +559,72 @@ fun main() {
             </details>
           </div>
 
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 4.</strong> Реализуй функцию <code>runWithTimeout(task: () -&gt; T, timeoutMs: Long): T?</code>, которая выполняет блокирующую задачу в общем пуле и возвращает её результат, но если та не уложилась в <code>timeoutMs</code> — возвращает <code>null</code> и отменяет задачу, не давая ей утечь. Корректно обработай <code>ExecutionException</code>, <code>TimeoutException</code> и <code>InterruptedException</code>.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">import java.util.concurrent.*
+
+private val pool = Executors.newCachedThreadPool()   // общий, не закрываем на каждый вызов
+
+fun &lt;T&gt; runWithTimeout(task: () -&gt; T, timeoutMs: Long): T? {
+    val future: Future&lt;T&gt; = pool.submit(Callable { task() })
+    return try {
+        future.get(timeoutMs, TimeUnit.MILLISECONDS)
+    } catch (e: TimeoutException) {
+        future.cancel(true)                          // шлём interrupt задаче
+        null
+    } catch (e: ExecutionException) {
+        throw e.cause ?: e                           // разворачиваем настоящую причину
+    } catch (e: InterruptedException) {
+        future.cancel(true)
+        Thread.currentThread().interrupt()           // восстанавливаем флаг прерывания
+        null
+    }
+}</code></pre>
+                <p>Объяснение: <code>get(timeout)</code> ждёт результат не дольше срока. По <code>TimeoutException</code> зовём <code>cancel(true)</code> — но это лишь <em>посылает</em> interrupt, реально остановится только кооперативная задача, проверяющая флаг. <code>ExecutionException</code> оборачивает исключение из задачи, поэтому пробрасываем <code>cause</code>. При <code>InterruptedException</code> (прервали нас самих) отменяем задачу и восстанавливаем флаг прерывания, чтобы не «съесть» сигнал. Пул общий и между вызовами не закрывается; накладные на задачу — O(1).</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 5.</strong> Напиши простой пул потоков с нуля (без <code>ThreadPoolExecutor</code>): N worker-потоков, потокобезопасная очередь, метод <code>submit(Runnable)</code> и graceful <code>shutdown()</code>, дожидающийся доисполнения уже принятых задач. Объясни, как воркеры засыпают на пустой очереди без busy-wait.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">import java.util.concurrent.*
+import java.util.concurrent.atomic.AtomicBoolean
+
+class MiniPool(n: Int) {
+    private val queue = LinkedBlockingQueue&lt;Runnable&gt;()
+    private val running = AtomicBoolean(true)
+    private val workers = (1..n).map { id -&gt;
+        Thread({
+            while (running.get() || queue.isNotEmpty()) {
+                // poll с таймаутом: блокирует на пустой очереди — никакого busy-wait,
+                // но просыпается проверить флаг running при shutdown
+                val task = queue.poll(200, TimeUnit.MILLISECONDS) ?: continue
+                runCatching { task.run() }   // исключение воркера не должно ронять поток
+            }
+        }, "mini-worker-$id").apply { start() }
+    }
+
+    fun submit(task: Runnable) {
+        if (!running.get()) throw RejectedExecutionException("pool is shut down")
+        queue.put(task)
+    }
+
+    fun shutdown() {                 // graceful: добираем очередь, потом выходим
+        running.set(false)
+        workers.forEach { it.join() }
+    }
+}</code></pre>
+                <p>Объяснение: <code>LinkedBlockingQueue.poll(timeout)</code> блокирует поток на пустой очереди вместо холостого цикла (busy-wait), а таймаут даёт воркеру шанс периодически перечитать флаг <code>running</code> и завершиться. Условие <code>running || queue.isNotEmpty()</code> обеспечивает graceful shutdown: после <code>shutdown()</code> воркеры доедают остаток очереди и только потом выходят, а <code>join()</code> дожидается каждого. Альтернатива таймауту — «отравленная» задача (poison pill): кладём в очередь специальный маркер, увидев который воркер завершается. Сама <code>BlockingQueue</code> даёт happens-before между <code>put</code> и <code>poll</code>, поэтому задача видит данные, записанные до постановки в очередь.</p>
+              </div>
+            </details>
+          </div>
+
         </section>
 
         <div class="sources">
@@ -375,6 +645,6 @@ fun main() {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/app.js?v=20260620-4"></script>
+  <script src="../assets/app.js?v=20260621-1"></script>
 </body>
 </html>

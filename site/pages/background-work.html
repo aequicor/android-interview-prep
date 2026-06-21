@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>(()=>{const k="aip-theme";let t=null;try{t=localStorage.getItem(k)}catch(e){}
+    if(t!=="dark"&&t!=="light")t=window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";
+    document.documentElement.setAttribute("data-theme",t)})();</script>
+  <title>Фоновая работа · Android-собес</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+</head>
+<body data-page="background-work">
+  <div class="layout">
+    <aside id="sidebar"></aside>
+    <div id="content">
+      <article class="page">
+        <div class="breadcrumb"></div>
+        <header class="page-head">
+          <span class="eyebrow">Платформа Android</span>
+          <h1>Фоновая работа</h1>
+          <p class="lead">Как выполнить задачу, когда пользователь свернул приложение или погасил экран, — и почему система этому всеми силами мешает. Doze, App Standby, лимиты фоновых сервисов, WorkManager, foreground service, AlarmManager и FCM как способ разбудить процесс. Тема, на которой видно, отличаешь ли ты «надо сделать гарантированно» от «надо сделать прямо сейчас» — а это два разных инструмента.</p>
+          <div class="meta">
+            <span class="tag lvl-mid">Middle</span>
+            <span class="tag lvl-sen">Senior</span>
+            <span class="tag hot">Частый вопрос</span>
+          </div>
+        </header>
+
+        <section class="section" id="limits">
+          <h2>Ограничения фона: Doze, App Standby, лимиты</h2>
+          <p>Начнём с главного, что нужно держать в голове весь разговор: <strong>для системы батарея пользователя важнее вашей задачи</strong>. Любое приложение, ушедшее в фон, для Android — подозреваемый, который тратит CPU и сеть, пока экран погашен. Поэтому начиная с разных версий ОС платформа последовательно закручивала гайки. Если кандидат не понимает этой логики, он будет городить голые <code>Service</code> и <code>Thread</code>, которые в проде просто не запустятся.</p>
+          <p class="subhead">Doze (с Android 6.0, API 23)</p>
+          <p>Телефон лежит на столе: экран погашен, не на зарядке, не двигается. Через какое-то время система вводит устройство в <strong>Doze</strong> — глубокий сон. В этом режиме сеть для приложений отрезается, <code>WakeLock</code> игнорируются, <code>JobScheduler</code> и синхронизации откладываются, обычные алармы не срабатывают. Процесс не убит — он заморожен.</p>
+          <p>Периодически система ненадолго выходит из сна — это <strong>maintenance-окно</strong>. В нём прогоняются накопившиеся задачи, алармы и синхронизации, открывается сеть. Затем снова сон, и окна идут всё реже: чем дольше телефон лежит, тем длиннее интервалы между ними. Расчёт простой — отложенную работу схлопнуть в редкие пачки, чтобы радио и CPU просыпались не по двадцать раз в час, а пару раз за ночь.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart LR
+A["Экран гаснет,<br/>не движется"] --> B["Doze:<br/>сеть и алармы<br/>заморожены"]
+B --> C["Maintenance:<br/>сеть открыта,<br/>задачи бегут"]
+C --> B
+B -.->|"экран<br/>включён"| D["Активный<br/>режим"]
+          </div>
+          <div class="cap">Doze чередует сон и короткие maintenance-окна; окна со временем редеют</div>
+          </div>
+          <p class="subhead">App Standby Buckets</p>
+          <p>Doze смотрит на устройство целиком. <strong>App Standby</strong> — на каждое приложение в отдельности и расставляет их по «корзинам» (buckets) по тому, как часто вы ими пользуетесь. Чем реже — тем жёстче лимиты на задачи, алармы и доступ к сети.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Bucket</th><th>Когда</th><th>Ограничения</th></tr></thead>
+              <tbody>
+                <tr><td><code>active</code></td><td>Используется прямо сейчас или только что</td><td>Нет</td></tr>
+                <tr><td><code>working_set</code></td><td>В регулярном употреблении</td><td>Мягкие, на задачи и алармы</td></tr>
+                <tr><td><code>frequent</code></td><td>Часто, но не каждый день</td><td>Сильнее</td></tr>
+                <tr><td><code>rare</code></td><td>Редко</td><td>Жёсткие, плюс лимит на сеть</td></tr>
+                <tr><td><code>restricted</code></td><td>Жрёт ресурсы или ведёт себя странно</td><td>Самые жёсткие из «обычных»</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Есть ещё особый bucket <code>never</code> — для установленных, но ни разу не запущенных приложений. Корзина пересматривается динамически: открыли приложение — оно подскочило в <code>active</code>, забросили на неделю — съехало в <code>rare</code>.</p>
+          <p class="subhead">Background execution limits (с Android 8.0, API 26)</p>
+          <p>Это уже не про спящий телефон, а про обычную работу. Начиная с Android 8.0 действуют два жёстких правила. Первое: приложение в фоне не может держать запущенным фоновый <code>Service</code> — через несколько минут после ухода в фон система его остановит (точнее, <code>startService()</code> для фонового приложения бросит <code>IllegalStateException</code>). Второе: большинство <strong>неявных</strong> broadcast'ов больше нельзя ловить через манифест — статически зарегистрированный <code>BroadcastReceiver</code> на системное событие вроде смены коннекта просто не вызовется (есть исключения, например <code>BOOT_COMPLETED</code>). Подробнее про сами компоненты — в главе <a href="android-components.html">Компоненты и IPC</a>.</p>
+          <div class="callout danger">
+            <div class="ic">🛑</div>
+            <div class="bd"><strong>Старый рецепт мёртв.</strong> «Запущу <code>Service</code>, повешу <code>WakeLock</code>, а внутри <code>Thread</code> с циклом синхронизации» — на современном Android это не работает: сервис остановят, <code>WakeLock</code> в Doze проигнорируют, broadcast не прилетит. Любую отложенную работу отдают планировщику (WorkManager), а не держат руками.</div>
+          </div>
+          <details class="qa">
+            <summary>Почему maintenance-окна со временем становятся реже, а не идут с фиксированным периодом? <span class="q-badge">★</span></summary>
+            <div class="ans"><p>Это компромисс между свежестью данных и расходом батареи, и он нелинейный. Каждое окно — это пробуждение CPU и, главное, радиомодуля: подъём сети из сна стоит ощутимого заряда независимо от объёма переданного. Если телефон лежит пять минут, шанс, что пользователь вот-вот вернётся, высок — окна частые, чтобы данные были свежими. Если он лежит восемь часов (ночь), смысла будить радио каждые 10 минут нет: пользователь спит, и система растягивает интервалы, экономя десятки циклов пробуждения. То есть период не фиксирован намеренно — фиксированный давал бы либо лишний расход на коротком сне, либо неприемлемую задержку компенсировать было бы нечем. Вывод для разработчика: точное время доставки в Doze не гарантировано в принципе, и закладываться на него (через обычные алармы или периодический Work) нельзя.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="workmanager">
+          <h2>WorkManager: гарантированная отложенная работа</h2>
+          <p>WorkManager — ответ Google на весь зоопарк выше. Это рекомендованный способ для задач, которые <strong>должны выполниться</strong>, но не обязаны прямо сейчас: отправить накопленную аналитику, синхронизировать кэш, сжать и залить фото. Ключевое слово — гарантия: Work переживает перезапуск приложения и перезагрузку устройства, потому что состояние лежит в БД (на старых API под капотом он использует <code>JobScheduler</code>/<code>AlarmManager</code>). Когда условия выполнения наступят — задача отработает, даже если приложение к тому моменту закрыто.</p>
+          <p class="subhead">Worker vs CoroutineWorker</p>
+          <p>Единица работы — класс-наследник. Простой <code>Worker</code> выполняет <code>doWork()</code> синхронно на фоновом потоке из пула. <code>CoroutineWorker</code> делает <code>doWork()</code> suspend-функцией — это идиоматичный выбор для проекта на корутинах: можно дёргать suspend-репозитории, переключать диспетчеры, корректно отменяться. Если вы уже на корутинах (см. <a href="coroutines.html">Корутины</a>), берите <code>CoroutineWorker</code>.</p>
+          <div class="code-label">UploadWorker.kt</div>
+<pre><code class="language-kotlin">class UploadWorker(
+    ctx: Context,
+    params: WorkerParameters
+) : CoroutineWorker(ctx, params) {
+
+    override suspend fun doWork(): Result {
+        val id = inputData.getString(KEY_PHOTO_ID) ?: return Result.failure()
+        return try {
+            repository.uploadPhoto(id)            // suspend-вызов
+            Result.success()
+        } catch (e: IOException) {
+            Result.retry()                         // временный сбой — повторим
+        } catch (e: SerializationException) {
+            Result.failure()                       // битые данные — повтор бессмысленен
+        }
+    }
+
+    companion object { const val KEY_PHOTO_ID = "photo_id" }
+}</code></pre>
+          <p>Три исхода <code>doWork()</code>: <code>Result.success()</code> — готово; <code>Result.failure()</code> — провал без надежды (повтор не поможет, не зовём его); <code>Result.retry()</code> — временная неудача, перепланировать по выбранной <code>BackoffPolicy</code> (по умолчанию экспоненциальная, старт 30 секунд; меньше 10 секунд задать нельзя). Различать <code>failure</code> и <code>retry</code> критично: вернёте <code>retry()</code> на неустранимую ошибку — словите бесконечный цикл повторов, который ест батарею; вернёте <code>failure()</code> на сетевой таймаут — потеряете задачу.</p>
+          <p class="subhead">Constraints: условия запуска</p>
+          <p>Можно не запускать Work, пока не сложатся условия: есть сеть, идёт зарядка, устройство в простое, достаточно памяти. Система сама дождётся момента.</p>
+          <div class="code-label">WorkRequest.kt</div>
+<pre><code class="language-kotlin">val constraints = Constraints.Builder()
+    .setRequiredNetworkType(NetworkType.UNMETERED)  // только Wi-Fi
+    .setRequiresCharging(true)
+    .build()
+
+val request = OneTimeWorkRequestBuilder&lt;UploadWorker&gt;()
+    .setConstraints(constraints)
+    .setInputData(workDataOf(UploadWorker.KEY_PHOTO_ID to "42"))
+    .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+    .build()</code></pre>
+          <p class="subhead">OneTime vs Periodic</p>
+          <p><code>OneTimeWorkRequest</code> — задача один раз. <code>PeriodicWorkRequest</code> — повторяющаяся, но с важным ограничением: <strong>минимальный интервал — 15 минут</strong> (тот же лимит, что у <code>JobScheduler</code>). Захотите «каждые 5 минут» — не выйдет, и это специально: частый периодический фон убивал бы батарею. Точное время старта периодики тоже не гарантировано — система сама выбирает момент внутри интервала, учитывая Doze и bucket.</p>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Periodic — не «по расписанию».</strong> WorkManager даёт гарантию <em>выполнения</em>, но не <em>момента</em>. Для «ровно в 9:00» periodic Work не годится — там нужен <code>AlarmManager</code>. Для «примерно раз в час, когда удобно системе» — годится идеально.</div>
+          </div>
+          <p class="subhead">Уникальные цепочки</p>
+          <p>Чтобы не наплодить дублей одной и той же задачи (классика: пользователь жмёт «синхронизировать» десять раз), используют уникальную работу с политикой коллизии.</p>
+          <div class="code-label">Enqueue.kt</div>
+<pre><code class="language-kotlin">WorkManager.getInstance(context).enqueueUniqueWork(
+    "sync_photos",
+    ExistingWorkPolicy.KEEP,   // уже есть такая работа — не трогаем
+    request
+)
+// REPLACE — отменить старую, поставить новую
+// APPEND  — поставить в очередь ПОСЛЕ предыдущей (цепочка)
+
+// последовательная цепочка с зависимостями:
+WorkManager.getInstance(context)
+    .beginWith(compressWork)
+    .then(uploadWork)
+    .enqueue()</code></pre>
+          <p class="subhead">Наблюдение за статусом</p>
+          <p>Прогресс и итог Work читают через <code>getWorkInfoByIdFlow()</code> (или <code>...LiveData()</code>), получая <code>WorkInfo</code> с текущим <code>State</code>.</p>
+          <div class="code-label">Observe.kt</div>
+<pre><code class="language-kotlin">WorkManager.getInstance(context)
+    .getWorkInfoByIdFlow(request.id)
+    .collect { info ->
+        when (info?.state) {
+            WorkInfo.State.SUCCEEDED -> showDone()
+            WorkInfo.State.FAILED    -> showError()
+            else -> Unit
+        }
+    }</code></pre>
+          <div class="diagram">
+          <div class="mermaid">
+stateDiagram-v2
+[*] --> ENQUEUED: enqueue()
+ENQUEUED --> RUNNING: условия сложились
+RUNNING --> SUCCEEDED: Result.success()
+RUNNING --> FAILED: Result.failure()
+RUNNING --> ENQUEUED: Result.retry()
+ENQUEUED --> CANCELLED: cancel()
+RUNNING --> CANCELLED: cancel()
+SUCCEEDED --> [*]
+FAILED --> [*]
+CANCELLED --> [*]
+note right of ENQUEUED
+BLOCKED — отдельное состояние,
+если работа ждёт цепочку
+end note
+          </div>
+          <div class="cap">Состояния WorkInfo.State. SUCCEEDED/FAILED/CANCELLED — терминальные</div>
+          </div>
+          <p class="subhead">Expedited work</p>
+          <p>Иногда задача и гарантированная, и срочная — например, отправить сообщение, которое пользователь только что написал. Для этого есть <code>setExpedited()</code> (с WorkManager 2.7): система постарается запустить как можно скорее. Но у срочной работы есть системная квота времени выполнения, и на случай её исчерпания вы обязаны указать политику:</p>
+          <div class="code-label">Expedited.kt</div>
+<pre><code class="language-kotlin">val urgent = OneTimeWorkRequestBuilder&lt;SendMessageWorker&gt;()
+    .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+    .build()</code></pre>
+          <p><code>RUN_AS_NON_EXPEDITED_WORK_REQUEST</code> означает: квота кончилась — выполни как обычную работу, не срочно. Кроме того, на старых версиях ОС expedited work выполняется как foreground service, поэтому <code>CoroutineWorker</code> должен уметь отдать <code>ForegroundInfo</code> — реализуйте <code>getForegroundInfo()</code> с нотификацией.</p>
+          <p class="subhead">Когда WorkManager НЕ подходит</p>
+          <p>Не для точного времени («ровно в 8:00 разбуди») — это <code>AlarmManager</code>. Не для мгновенной доставки извне («пришёл звонок, покажи сейчас») — это <code>FCM</code> + foreground service. WorkManager — про «гарантированно, но когда система сочтёт уместным».</p>
+          <details class="qa">
+            <summary>Почему минимальный интервал PeriodicWork — именно 15 минут, и можно ли его честно обойти? <span class="q-badge">★</span></summary>
+            <div class="ans"><p>15 минут — это не цифра WorkManager, а лимит нижележащего <code>JobScheduler</code> (<code>getMinPeriodMillis()</code>), на который WorkManager опирается на современных API. Причина — та же экономия пробуждений: батчинг работы по устройству имеет смысл только при достаточно длинном окне, а более частая периодика свела бы его на нет. «Честно обойти» нельзя: попросите интервал меньше — фреймворк молча поднимет его до минимума. Псевдо-обходы (цепочка <code>OneTimeWork</code>, где каждый воркер в конце ставит следующий с задержкой) технически работают, но это антипаттерн: вы воюете с платформой, теряете гарантии батчинга и первыми попадёте под ужесточение лимитов или в bucket <code>restricted</code>. Если бизнесу реально нужна минутная частота — это сигнал, что задача не фоновая: либо приложение должно быть открыто (foreground service), либо событие должно прилетать снаружи (push), а не опрашиваться по таймеру.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="foreground-service">
+          <h2>Foreground service и типы FGS</h2>
+          <p>Foreground service (FGS) — это сервис, про который система и пользователь знают, что он работает прямо сейчас и осознанно: воспроизведение музыки, навигация, запись звука, выгрузка большого файла на глазах у пользователя. В обмен на видимость такому сервису не действуют фоновые лимиты — он живёт, пока вы его не остановите.</p>
+          <p class="subhead">Обязательная нотификация</p>
+          <p>Плата за привилегию — <strong>постоянная нотификация</strong>, которую нельзя смахнуть. Пользователь всегда видит, что приложение что-то делает в фоне. Сервис обязан показать её через <code>startForeground()</code>, причём с дедлайном: если после <code>startForegroundService()</code> вы не вызовете <code>startForeground()</code> в течение нескольких секунд, система убьёт сервис с <code>ANR</code>-подобной ошибкой.</p>
+          <div class="code-label">PlaybackService.kt</div>
+<pre><code class="language-kotlin">class PlaybackService : Service() {
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val notification = buildNotification()
+        // тип ОБЯЗАТЕЛЕН на Android 14+
+        ServiceCompat.startForeground(
+            this,
+            NOTIF_ID,
+            notification,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+        )
+        return START_STICKY
+    }
+    override fun onBind(intent: Intent?): IBinder? = null
+}</code></pre>
+          <p class="subhead">Типы FGS обязательны с Android 14 (API 34)</p>
+          <p>Раньше FGS был «общего назначения». С Android 14 каждый foreground service обязан объявить <strong>тип</strong> через <code>android:foregroundServiceType</code> в манифесте, а под тип — запросить соответствующее разрешение. Не объявите тип — <code>startForeground()</code> бросит <code>MissingForegroundServiceTypeException</code>. Это сделано, чтобы система понимала, <em>зачем</em> сервис работает, и могла применять профильные правила.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Тип</th><th>Для чего</th><th>Разрешение</th></tr></thead>
+              <tbody>
+                <tr><td><code>mediaPlayback</code></td><td>Аудио/видео плеер</td><td><code>FOREGROUND_SERVICE_MEDIA_PLAYBACK</code></td></tr>
+                <tr><td><code>location</code></td><td>Навигация, трекинг</td><td><code>FOREGROUND_SERVICE_LOCATION</code> + runtime-локация</td></tr>
+                <tr><td><code>dataSync</code></td><td>Выгрузка/загрузка данных</td><td><code>FOREGROUND_SERVICE_DATA_SYNC</code></td></tr>
+                <tr><td><code>microphone</code></td><td>Запись звука</td><td><code>FOREGROUND_SERVICE_MICROPHONE</code> + <code>RECORD_AUDIO</code></td></tr>
+                <tr><td><code>phoneCall</code></td><td>VoIP-звонки</td><td><code>FOREGROUND_SERVICE_PHONE_CALL</code></td></tr>
+                <tr><td><code>connectedDevice</code></td><td>Bluetooth/USB-устройства</td><td><code>FOREGROUND_SERVICE_CONNECTED_DEVICE</code></td></tr>
+                <tr><td><code>shortService</code></td><td>Короткая критичная задача (до ~3 мин)</td><td>только <code>FOREGROUND_SERVICE</code></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><strong>В манифесте — оба разрешения.</strong> Сервису нужны и базовое <code>FOREGROUND_SERVICE</code>, и профильное <code>FOREGROUND_SERVICE_*</code> под тип. А сам <code>&lt;service&gt;</code> — с атрибутом <code>android:foregroundServiceType="mediaPlayback"</code>, совпадающим с типом в <code>startForeground()</code>.</div>
+          </div>
+          <p class="subhead">Запуск из фона запрещён (с Android 12, API 31)</p>
+          <p>Главная грабля. С Android 12 приложение, находясь в фоне, <strong>не может стартовать foreground service</strong> — попытка кинет <code>ForegroundServiceStartNotAllowedException</code>. Есть исключения (приложение в недавнем взаимодействии, прилетел high-priority FCM, пользователь нажал кнопку в нотификации и т.п.), но по умолчанию из чистого фона FGS не поднять. Поэтому типовой сценарий «пришёл push → подними сервис» работает только потому, что high-priority push даёт временное окно-исключение.</p>
+          <details class="qa">
+            <summary>Почему нельзя просто стартовать foreground service из фона по таймеру, ведь нотификация всё равно видна пользователю? <span class="q-badge">★</span></summary>
+            <div class="ans"><p>Потому что видимость постфактум не равна осознанности в момент запуска. До Android 12 разработчики массово эксплуатировали FGS именно как обход фоновых лимитов: поднимали «foreground»-сервис без реальной нужды в видимой длительной задаче, лишь бы обойти Doze и background execution limits, — нотификация при этом мелькала и игнорировалась. Запрет старта из фона бьёт ровно по этому: чтобы поднять FGS, нужен контекст недавнего взаимодействия пользователя или внешнего события (нажатие, high-priority push, точный аларм с разрешением). Идея — привязать привилегию к причине, а не к факту показа иконки. Отсюда же связка push + FGS: high-priority сообщение даёт системное окно-исключение именно потому, что событие пришло снаружи и, предположительно, требует немедленной видимой реакции. Если же реакция не видимая и не срочная — место задаче в WorkManager, а не в FGS.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="alarmmanager">
+          <h2>AlarmManager: будильники и точное время</h2>
+          <p><code>AlarmManager</code> — единственный инструмент, который умеет «сработать в конкретный момент времени», в том числе разбудив устройство из Doze. Звучит мощно, и именно поэтому система ограничивает его сильнее всего: точный аларм — дорогое пробуждение, и злоупотребление им бьёт по батарее всех приложений.</p>
+          <p class="subhead">Inexact: дёшево и батчится</p>
+          <p>По умолчанию надо брать <strong>неточные</strong> алармы. Система вольна сдвинуть их момент и схлопнуть несколько алармов разных приложений в одно пробуждение — это и есть экономия. У <code>setInexactRepeating()</code> нельзя задать произвольный период: только константы вроде <code>INTERVAL_FIFTEEN_MINUTES</code>, <code>INTERVAL_HOUR</code>, <code>INTERVAL_DAY</code>.</p>
+          <div class="code-label">InexactAlarm.kt</div>
+<pre><code class="language-kotlin">alarmManager.setInexactRepeating(
+    AlarmManager.RTC_WAKEUP,
+    triggerAtMillis,
+    AlarmManager.INTERVAL_DAY,   // только из набора констант
+    pendingIntent
+)</code></pre>
+          <p class="subhead">Exact: дорого и под разрешением</p>
+          <p>Точные алармы — <code>setExact()</code> и <code>setExactAndAllowWhileIdle()</code> (последний пробивает Doze). С Android 12 для них нужно особое разрешение, и тут две разные двери:</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Разрешение</th><th>С API</th><th>Выдача</th><th>Для кого</th></tr></thead>
+              <tbody>
+                <tr><td><code>SCHEDULE_EXACT_ALARM</code></td><td>31 (Android 12)</td><td>Спрашивается у пользователя, может быть отозвано</td><td>Широкий набор кейсов</td></tr>
+                <tr><td><code>USE_EXACT_ALARM</code></td><td>33 (Android 13)</td><td>Выдаётся автоматически, не отзывается</td><td>Только будильники и календари</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>На приложениях, нацеленных на API 33+, <code>SCHEDULE_EXACT_ALARM</code> новым установкам по умолчанию не выдаётся — его нужно выпрашивать. <code>USE_EXACT_ALARM</code> выдаётся сам, но Google Play пускает с ним только приложения, где точное время — суть продукта (будильник, календарь). Поэтому перед постановкой точного аларма проверяют доступность и держат запасной путь:</p>
+          <div class="code-label">ExactAlarm.kt</div>
+<pre><code class="language-kotlin">if (alarmManager.canScheduleExactAlarms()) {
+    alarmManager.setExactAndAllowWhileIdle(  // сработает даже в Doze
+        AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent
+    )
+} else {
+    // разрешения нет — деградируем до неточного, не падаем
+    alarmManager.setAndAllowWhileIdle(
+        AlarmManager.RTC_WAKEUP, triggerAtMillis, pendingIntent
+    )
+}</code></pre>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Exact-аларм — редкость.</strong> Календарь, будильник, таймер готовки — да. «Раз в час дёрнуть синхронизацию», «через 5 минут напомнить о корзине» — нет, это inexact или WorkManager. Если на собесе предлагаете exact alarm под обычную задачу, это красный флаг: вы не в курсе ограничений.</div>
+          </div>
+          <details class="qa">
+            <summary>setExactAndAllowWhileIdle пробивает Doze — почему тогда им нельзя делать частые точные напоминания? <span class="q-badge">★</span></summary>
+            <div class="ans"><p>Технически он сработает в Doze, но система навешивает на него собственный троттлинг: гарантируется не больше одного срабатывания <code>...AllowWhileIdle</code> примерно раз в несколько минут на приложение в глубоком сне (исторически порог был около девяти минут). Поставите десять таких алармов на ближайшую минуту — выполнится один, остальные подождут окон. То есть «пробивает Doze» означает «имеет право на редкое пробуждение», а не «игнорирует энергосбережение». Плюс с Android 12 на это ещё накладывается разрешение <code>SCHEDULE_EXACT_ALARM</code>/<code>USE_EXACT_ALARM</code>, а Google Play фильтрует, кому вообще можно его держать. Поэтому частые точные напоминания через AlarmManager — это и троттлинг, и риск отзыва разрешения, и риск отклонения в сторе. Правильный паттерн для частых событий — не опрос по таймеру, а внешний триггер (push) либо переосмысление задачи как «гарантированной, но не точной» (WorkManager).</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="fcm">
+          <h2>FCM как стратегия пробуждения</h2>
+          <p>До сих пор всё было про «приложение само хочет что-то сделать в фоне». Но часто событие приходит <strong>снаружи</strong>: сообщение в чате, отмена заказа, обновление цены. Опрашивать сервер по таймеру — батарейное самоубийство и борьба с лимитами. Правильный способ — пусть сервер сам разбудит приложение через push. На Android это <strong>FCM</strong> (Firebase Cloud Messaging).</p>
+          <p>FCM держит одно постоянное соединение от устройства к серверам Google, по которому приходят сообщения для всех приложений. Это снимает с вашего приложения необходимость держать свой сокет — пробуждение приходит по общему каналу.</p>
+          <p class="subhead">Data vs notification messages</p>
+          <p>Два типа сообщений, и разница принципиальна для собеса.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Критерий</th><th>Notification message</th><th>Data message</th></tr></thead>
+              <tbody>
+                <tr><td>Кто обрабатывает</td><td>SDK сам, если приложение в фоне</td><td>Всегда ваш код</td></tr>
+                <tr><td>Приложение в фоне</td><td>Падает в системный трей, <code>onMessageReceived</code> <strong>не</strong> зовётся</td><td><code>onMessageReceived</code> зовётся</td></tr>
+                <tr><td>Приложение открыто</td><td><code>onMessageReceived</code> зовётся</td><td><code>onMessageReceived</code> зовётся</td></tr>
+                <tr><td>Контроль над логикой</td><td>Ограниченный</td><td>Полный</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Если нужно именно <em>сделать работу</em> по приходу пуша (а не просто показать готовый текст), берите <strong>data message</strong>: только тогда ваш <code>onMessageReceived</code> вызовется в обоих состояниях. Notification message хорош для простого «показать заголовок и текст» без логики.</p>
+          <div class="code-label">MyFcmService.kt</div>
+<pre><code class="language-kotlin">class MyFcmService : FirebaseMessagingService() {
+    override fun onMessageReceived(message: RemoteMessage) {
+        val payload = message.data
+        // окно выполнения здесь КОРОТКОЕ — не делаем долгую работу прямо тут
+        val work = OneTimeWorkRequestBuilder&lt;SyncWorker&gt;()
+            .setInputData(workDataOf("entity_id" to payload["id"]))
+            .build()
+        WorkManager.getInstance(this)
+            .enqueueUniqueWork("sync_${payload["id"]}", ExistingWorkPolicy.KEEP, work)
+    }
+    override fun onNewToken(token: String) { sendTokenToServer(token) }
+}</code></pre>
+          <p class="subhead">High-priority и Doze</p>
+          <p>Обычные (normal-priority) сообщения в Doze откладываются до maintenance-окна. <strong>High-priority</strong> сообщения FCM старается доставить немедленно и вправе разбудить спящее устройство, дав приложению короткое окно на обработку. Но это не бесплатно: high-priority выдаётся под реально срочные, видимые пользователю вещи (входящее сообщение, звонок); злоупотребление FCM наказывает понижением приоритета. Именно high-priority push даёт то самое окно-исключение, в котором с Android 12 можно поднять foreground service из фона.</p>
+          <p class="subhead">Дедуп и идемпотентность</p>
+          <p>FCM — best-effort: сообщение может прийти <strong>дважды</strong> (ретрансляция при потере ack), может прийти с задержкой, а несколько нормальных сообщений система вправе схлопнуть, доставив только последнее. Поэтому обработчик обязан быть идемпотентным: повторный приход того же события не должен дублировать эффект. Отсюда и <code>enqueueUniqueWork</code> с ключом по сущности в примере выше — два одинаковых пуша дадут одну задачу, а не две.</p>
+          <p class="subhead">Связка с WorkManager</p>
+          <p>Канонический паттерн виден в коде: <strong>push разбудил → onMessageReceived поставил Work → WorkManager гарантированно доделал</strong>. Почему не делать всё прямо в <code>onMessageReceived</code>? Окно выполнения там короткое и не гарантированное; если процесс убьют посреди сетевого запроса — работа потеряется. WorkManager же переживёт смерть процесса и доведёт дело до конца. FCM отвечает за «узнать вовремя», WorkManager — за «довести до конца». Про сетевой слой запроса — глава <a href="network.html">Сеть</a>.</p>
+          <details class="qa">
+            <summary>Почему FCM может «схлопнуть» несколько сообщений в одно и как с этим жить, если важно каждое событие? <span class="q-badge">★</span></summary>
+            <div class="ans"><p>Схлопывание (collapsing) — следствие того, что устройство может быть offline или в Doze, а FCM не держит безразмерную очередь на каждое приложение. Для сообщений с одинаковым <code>collapse_key</code> при недоступности устройства хранится только последнее — логика «зачем доставлять три устаревших обновления баланса, если есть свежее». Плюс normal-priority в Doze и так копятся до окна. Жить с этим так: не передавайте в payload само содержимое события как единственный источник истины. Push — это сигнал «сходи проверь», а не «вот тебе данные». Пришёл пуш → дёрнули сервер за актуальным состоянием (через Work) → синхронизировались. Тогда даже если два промежуточных пуша схлопнулись в один, вы всё равно подтянете полное актуальное состояние с бэкенда. Если же критична доставка именно каждого дискретного события (например, лента транзакций), его нельзя хранить только в push — сервер должен отдавать недостающее при следующей синхронизации, а push лишь ускоряет её.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="choose">
+          <h2>Выбор инструмента</h2>
+          <p>Весь разговор сводится к одному вопросу на собесе: «дано вот такая задача — чем её решать?». Ответ выводится из двух осей: нужна ли <strong>гарантия выполнения</strong> и нужна ли <strong>точность по времени / мгновенность</strong>.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Инструмент</th><th>Гарантия</th><th>Точность времени</th><th>Батарея</th><th>Типичный кейс</th></tr></thead>
+              <tbody>
+                <tr><td><strong>WorkManager</strong></td><td>Да (переживает рестарт)</td><td>Нет (когда удобно системе)</td><td>Бережёт (батчит, ждёт условий)</td><td>Синхронизация, выгрузка, аналитика</td></tr>
+                <tr><td><strong>Foreground service</strong></td><td>Пока работает и виден</td><td>Длится сейчас, непрерывно</td><td>Тратит (но честно и видимо)</td><td>Плеер, навигация, запись, активная выгрузка</td></tr>
+                <tr><td><strong>AlarmManager</strong></td><td>Срабатывание аларма</td><td>Точное время (exact, под разрешением)</td><td>Тратит на пробуждение</td><td>Будильник, календарь, таймер</td></tr>
+                <tr><td><strong>FCM</strong></td><td>Best-effort (возможны дубли/потери)</td><td>Мгновенно (high-priority)</td><td>Дёшево (общий канал)</td><td>Внешнее событие: чат, звонок, обновление</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>Дерево решений ниже — рабочая шпаргалка. Идём сверху вниз по вопросам.</p>
+          <div class="diagram">
+          <div class="mermaid">
+flowchart TD
+A["Откуда задача?"] --> B{"Событие<br/>извне?"}
+B -->|да| C["FCM<br/>(+ WorkManager<br/>на доделку)"]
+B -->|нет| D{"Видна<br/>пользователю<br/>сейчас?"}
+D -->|"да, длится"| E["Foreground<br/>service"]
+D -->|нет| F{"Нужно<br/>точное<br/>время?"}
+F -->|да| G["AlarmManager<br/>(exact)"]
+F -->|нет| H["WorkManager"]
+          </div>
+          <div class="cap">Дерево выбора: источник задачи → видимость → точность времени</div>
+          </div>
+          <details class="qa">
+            <summary>Куда отнести «выгрузить большой файл, начатую пользователем, которая должна доделаться даже если он свернёт приложение»? <span class="q-badge">★</span></summary>
+            <div class="ans"><p>Это пограничный случай, и правильный ответ — «зависит от того, видна ли задача и сколько длится», а не один инструмент. Если выгрузка короткая и пользователь следит за прогрессом — <code>foreground service</code> типа <code>dataSync</code> с прогрессом в нотификации; пока сервис виден, лимиты не действуют. Если выгрузка может быть долгой, переживать рестарт и не требует, чтобы пользователь смотрел — <code>WorkManager</code> с constraint на сеть, при необходимости <code>setExpedited</code> для срочности. На практике у WorkManager есть встроенная поддержка длительных воркеров через <code>setForeground()</code>/<code>getForegroundInfo()</code> — он сам поднимет foreground service под капотом, дав и гарантию, и видимость. То есть зрелый ответ: «беру WorkManager как каркас гарантии, а если нужна непрерывная видимая работа — перевожу воркер в foreground через ForegroundInfo, не плодя отдельный сервис руками». Это показывает, что вы понимаете, как инструменты сочетаются, а не выбираете один из списка.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="faq">
+          <h2>Частые вопросы интервьюера</h2>
+          <details class="qa">
+            <summary>Чем WorkManager лучше старого комбо JobScheduler + AlarmManager + Service? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p>Это единый API, который сам выбирает нижележащий механизм под версию ОС, переживает перезагрузку и смерть процесса (состояние в БД), даёт constraints, цепочки, повторы с backoff и наблюдаемость через Flow/LiveData. Раньше всё это писалось руками с развилками по API level и легко ломалось на Doze. WorkManager — рекомендованный Google способ для отложенной гарантированной работы.</p></div>
+          </details>
+          <details class="qa">
+            <summary>В чём разница между Result.retry() и Result.failure()? <span class="q-badge">Middle</span></summary>
+            <div class="ans"><p><code>retry()</code> — временный сбой, перепланировать по <code>BackoffPolicy</code> (экспоненциальной по умолчанию). <code>failure()</code> — неустранимый провал, повторять бессмысленно. Путаница опасна: <code>retry()</code> на постоянной ошибке даёт бесконечный цикл повторов и расход батареи; <code>failure()</code> на сетевом таймауте теряет задачу. Сетевые/IO-сбои → retry, битые данные / ошибка валидации → failure.</p></div>
+          </details>
+          <details class="qa">
+            <summary>Можно ли WorkManager'ом сделать «каждые 5 минут» или «ровно в 9:00»? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Нет в обоих случаях. Минимальный период <code>PeriodicWorkRequest</code> — 15 минут (лимит JobScheduler), меньше фреймворк молча поднимет. И WorkManager не даёт гарантии момента — только факта выполнения, выбирая удобное системе время внутри окна. «Ровно в 9:00» — это <code>AlarmManager</code> (exact, под разрешением), а не Work.</p></div>
+          </details>
+          <details class="qa">
+            <summary>Почему мой foreground service падает с ForegroundServiceStartNotAllowedException? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>С Android 12 (API 31) нельзя стартовать FGS, когда приложение в фоне, кроме оговорённых исключений (недавнее взаимодействие, high-priority push, точный аларм, действие из нотификации). Типичная причина — пытаетесь поднять сервис из фонового broadcast'а или по таймеру. Решение: либо войти в исключение (например, разбудиться high-priority push'ем), либо вообще не использовать FGS, а отдать задачу WorkManager.</p></div>
+          </details>
+          <details class="qa">
+            <summary>Что обязательно нужно для foreground service на Android 14? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Объявить тип через <code>android:foregroundServiceType</code> в <code>&lt;service&gt;</code>, запросить базовое <code>FOREGROUND_SERVICE</code> и профильное <code>FOREGROUND_SERVICE_*</code> под этот тип, при необходимости — runtime-разрешение (например <code>RECORD_AUDIO</code> для microphone). В рантайме вызвать <code>startForeground()</code> с тем же типом и нотификацией в пределах дедлайна после <code>startForegroundService()</code>. Без объявленного типа — <code>MissingForegroundServiceTypeException</code>.</p></div>
+          </details>
+          <details class="qa">
+            <summary>Когда брать data message, а когда notification message в FCM? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Notification message при фоновом приложении обрабатывает SDK — он сам кладёт уведомление в трей, а <code>onMessageReceived</code> не зовётся. Если нужна своя логика по приходу пуша (поставить Work, синхронизироваться, кастомное уведомление) — только data message: его <code>onMessageReceived</code> вызывается и в фоне, и при открытом приложении. Notification message — для простого «показать заголовок и текст».</p></div>
+          </details>
+          <details class="qa">
+            <summary>Push может прийти дважды или не прийти. Как проектировать обработчик? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>FCM — best-effort: возможны дубли, задержки, схлопывание по <code>collapse_key</code>. Обработчик делают идемпотентным: повторный приход того же события не должен дублировать эффект (отсюда <code>enqueueUniqueWork</code> с ключом по сущности). И push трактуют как сигнал «сходи проверь», а не как источник данных: по приходу дёргают сервер за актуальным состоянием. Тогда схлопнутые промежуточные пуши не теряют данные — финальное состояние всё равно подтягивается.</p></div>
+          </details>
+          <details class="qa">
+            <summary>Как WorkManager выполняет срочную работу и что такое OutOfQuotaPolicy? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p><code>setExpedited()</code> (с WorkManager 2.7) просит выполнить как можно скорее. У срочной работы есть системная квота времени; на её исчерпание обязательно указать <code>OutOfQuotaPolicy</code>: <code>RUN_AS_NON_EXPEDITED_WORK_REQUEST</code> — доделать как обычную работу. На старых API expedited бежит как foreground service, поэтому <code>CoroutineWorker</code> должен реализовать <code>getForegroundInfo()</code> с нотификацией.</p></div>
+          </details>
+        </section>
+
+        <section class="section" id="tasks">
+          <h2>Задачи</h2>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 1.</strong> Напишите <code>CoroutineWorker</code>, который синхронизирует данные только по Wi-Fi и при зарядке, корректно различает временные и постоянные ошибки. Поставьте его уникальной задачей так, чтобы повторный вызов не плодил дублей.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">class SyncWorker(
+    ctx: Context, params: WorkerParameters
+) : CoroutineWorker(ctx, params) {
+    override suspend fun doWork(): Result = try {
+        repository.sync()
+        Result.success()
+    } catch (e: IOException) {
+        Result.retry()                 // сеть отвалилась — повторим
+    } catch (e: IllegalStateException) {
+        Result.failure()               // неустранимо — не зацикливаемся
+    }
+}
+
+fun scheduleSync(context: Context) {
+    val constraints = Constraints.Builder()
+        .setRequiredNetworkType(NetworkType.UNMETERED)
+        .setRequiresCharging(true)
+        .build()
+    val request = OneTimeWorkRequestBuilder&lt;SyncWorker&gt;()
+        .setConstraints(constraints)
+        .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+        .build()
+    WorkManager.getInstance(context)
+        .enqueueUniqueWork("sync", ExistingWorkPolicy.KEEP, request)
+}</code></pre>
+                <p>Ключевые моменты: <code>UNMETERED</code> = безлимитная сеть (Wi-Fi), <code>setRequiresCharging</code> отложит до зарядки. <code>IOException → retry</code>, неустранимое → <code>failure</code>, иначе словим бесконечный backoff. <code>ExistingWorkPolicy.KEEP</code> гарантирует одну активную задачу — повторные вызовы не создадут дублей.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 2.</strong> Для каждого кейса выберите инструмент и обоснуйте: (а) показывать прогресс скачивания фильма; (б) раз в сутки отправлять накопленную аналитику; (в) разбудить чат при новом сообщении; (г) напомнить о встрече ровно в её время.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">// (а) Foreground service (dataSync) — длительная видимая задача,
+//     прогресс в нотификации, лимиты фона не действуют пока виден.
+// (б) WorkManager (Periodic, ~раз в сутки) — гарантия без точности,
+//     constraint на сеть, батчится, бережёт батарею.
+// (в) FCM (data, high-priority) + WorkManager на доделку —
+//     внешнее событие, мгновенность, идемпотентность через unique work.
+// (г) AlarmManager (setExactAndAllowWhileIdle) — точное время суть кейса,
+//     под разрешением SCHEDULE_EXACT_ALARM/USE_EXACT_ALARM.</code></pre>
+                <p>Логика выбора: внешнее событие → FCM; видимая длительная работа → FGS; точное время → exact alarm; всё остальное гарантированное, но не точное → WorkManager. Ошибка-ловушка — тянуть exact alarm на (б) или опрос сервера по таймеру вместо push на (в).</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 3.</strong> Корректно запустите foreground service типа <code>mediaPlayback</code> на Android 14: что в манифесте, что в коде, чего нельзя забыть.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">// AndroidManifest.xml
+// &lt;uses-permission android:name="android.permission.FOREGROUND_SERVICE"/&gt;
+// &lt;uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"/&gt;
+// &lt;service
+//     android:name=".PlaybackService"
+//     android:foregroundServiceType="mediaPlayback"
+//     android:exported="false"/&gt;
+
+class PlaybackService : Service() {
+    override fun onStartCommand(i: Intent?, f: Int, id: Int): Int {
+        ServiceCompat.startForeground(
+            this, NOTIF_ID, buildNotification(),
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+        )
+        return START_STICKY
+    }
+    override fun onBind(i: Intent?): IBinder? = null
+}</code></pre>
+                <p>Нельзя забыть: тип в манифесте и в <code>startForeground()</code> должны совпадать, иначе <code>MissingForegroundServiceTypeException</code>. Оба разрешения — базовое и профильное. <code>startForeground()</code> — в пределах дедлайна после старта. И главное: с Android 12 поднять сервис из чистого фона нельзя — старт должен идти из контекста взаимодействия (нажал play) или окна-исключения.</p>
+              </div>
+            </details>
+          </div>
+        </section>
+
+        <div class="sources">
+          <h2>Источники</h2>
+          <ol>
+            <li><a href="https://developer.android.com/training/monitoring-device-state/doze-standby" target="_blank" rel="noopener">Optimize for Doze and App Standby</a> — механика Doze, maintenance-окна, поведение алармов.</li>
+            <li><a href="https://developer.android.com/topic/performance/appstandby" target="_blank" rel="noopener">App Standby Buckets</a> — корзины active/working_set/frequent/rare/restricted и их лимиты.</li>
+            <li><a href="https://developer.android.com/develop/background-work/background-tasks/persistent/getting-started/define-work" target="_blank" rel="noopener">Define work requests</a> — Worker/CoroutineWorker, Result, constraints, минимальный период 15 мин, expedited.</li>
+            <li><a href="https://developer.android.com/reference/kotlin/androidx/work/CoroutineWorker" target="_blank" rel="noopener">CoroutineWorker (reference)</a> — suspend doWork(), getForegroundInfo().</li>
+            <li><a href="https://developer.android.com/develop/background-work/services/fgs/service-types" target="_blank" rel="noopener">Foreground service types</a> — полный список типов FGS и разрешений (Android 14+).</li>
+            <li><a href="https://developer.android.com/about/versions/14/changes/fgs-types-required" target="_blank" rel="noopener">Foreground service types are required</a> — обязательность типа с API 34.</li>
+            <li><a href="https://developer.android.com/develop/background-work/services/alarms" target="_blank" rel="noopener">Schedule alarms</a> — inexact vs exact, SCHEDULE_EXACT_ALARM/USE_EXACT_ALARM, canScheduleExactAlarms().</li>
+            <li><a href="https://firebase.google.com/docs/cloud-messaging/android-message-priority" target="_blank" rel="noopener">FCM: message priority</a> — normal vs high priority, доставка в Doze.</li>
+          </ol>
+        </div>
+      </article>
+    </div>
+    <aside id="toc"></aside>
+  </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="../assets/app.js?v=20260621-1"></script>
+</body>
+</html>

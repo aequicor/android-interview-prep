@@ -141,6 +141,35 @@ flowchart LR
             <div class="ic">💡</div>
             <div class="bd"><strong>Честный тезис для собеса.</strong> MVI — это MVVM с дисциплиной: то же дерево (ViewModel + observable state), но с жёсткими правилами (immutable state, интенты, редьюсер, отдельные эффекты). На простом экране MVI — это overhead; на экране с десятком взаимозависимых флагов он окупается предсказуемостью. Не противопоставляйте их как «или/или» — это спектр строгости UDF.</div>
           </div>
+          <details class="qa"><summary>Почему одноразовые события (навигация, snackbar) нельзя класть в <code>StateFlow</code>, и чем <code>Channel</code> надёжнее <code>SharedFlow(replay=0)</code> для их доставки? <span class="q-badge">★</span></summary><div class="ans">
+            <p><code>StateFlow</code> конфлейтит и всегда переигрывает последнее значение новому подписчику. После поворота экрана UI повторно «выполнит» событие — снова откроет экран, снова покажет тост. Для эффекта это катастрофа: эффект должен сработать ровно один раз.</p>
+            <p><code>SharedFlow(replay=0)</code> не реигрывает, но это горячий broadcast-поток. Если на момент <code>emit</code> подписчика нет (UI ушёл в фон), событие теряется; а при нескольких коллекторах оно доставится каждому — нежелательный fan-out. <code>Channel</code> через <code>receiveAsFlow()</code> семантически точнее: он буферизует, пока подписчика нет, и доставляет каждый элемент ровно один раз ровно одному получателю.</p>
+            <p>Поэтому каноничный носитель side-effects — <code>Channel(Channel.BUFFERED).receiveAsFlow()</code>, а не <code>StateFlow</code> и не <code>SharedFlow</code>. Тонкость: даже с <code>Channel</code> подписка через <code>repeatOnLifecycle(STARTED)</code> может пропустить эффект, эмитнутый пока экран в <code>STOPPED</code>, — отсюда и нужен буфер, чтобы элемент дождался нового коллектора.</p>
+          </div></details>
+        </section>
+
+        <section class="section" id="event-carriers">
+          <h2>Носитель события vs носитель состояния</h2>
+          <p>«Почему именно <code>Channel</code> для эффектов?» — частый каверзный вопрос. Разложим три кандидата по поведению: что происходит при повороте, при отсутствии подписчика и при нескольких коллекторах.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Поведение</th><th><code>StateFlow</code></th><th><code>SharedFlow(replay=0)</code></th><th><code>Channel.receiveAsFlow()</code></th></tr></thead>
+              <tbody>
+                <tr><td>Реигрывает при повороте</td><td>Да (конфлейт + последнее значение)</td><td>Нет</td><td>Нет</td></tr>
+                <tr><td>Без подписчика на момент emit</td><td>Хранит значение</td><td>Теряется</td><td>Буферизуется, дождётся</td></tr>
+                <tr><td>Несколько коллекторов</td><td>Все видят значение</td><td>Все получают (fan-out)</td><td>Один элемент — одному</td></tr>
+                <tr><td>Доставка ровно раз</td><td>Нет</td><td>Не гарантирована</td><td>Да</td></tr>
+                <tr><td>Назначение</td><td>Состояние экрана</td><td>Broadcast-события</td><td>Одноразовые side-effects</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Вывод.</strong> <code>StateFlow</code> — для состояния, которое должно переживать поворот; <code>Channel.receiveAsFlow()</code> — для эффекта, который должен сработать один раз и не повториться. <code>SharedFlow(replay=0)</code> уместен, когда событие действительно широковещательное и потеря допустима.</div>
+          </div>
+          <details class="qa"><summary>Когда <code>SharedFlow</code> всё-таки лучше <code>Channel</code> для событий? <span class="q-badge">★</span></summary><div class="ans">
+            <p>Когда событие по смыслу broadcast: его должны получить все активные подписчики, а не один. Пример — глобальный сигнал «токен протух, разлогиньтесь», на который реагируют сразу несколько экранов. <code>Channel</code> отдал бы его только первому, кто успел подписаться, остальные бы его не увидели. Здесь нужен именно fan-out <code>SharedFlow</code>. Для навигации и snackbar внутри одного экрана fan-out, наоборот, вреден — нужен <code>Channel</code>.</p>
+          </div></details>
         </section>
 
         <section class="section" id="clean">
@@ -219,6 +248,10 @@ class UserRepositoryImpl(
             <div class="ic">⚠️</div>
             <div class="bd"><strong>Подводный камень.</strong> Не тащите <code>UserDto</code> или Room-<code>Entity</code> в ViewModel — это «протечка» слоя data в presentation. Тогда смена бэкенда заставит править UI. Мапперы — не бюрократия, а граница, которая держит изменения локально. На простом CRUD-экране слой UseCase иногда схлопывают (VM зовёт репозиторий напрямую) — это допустимый прагматичный компромисс, но будьте готовы его обосновать.</div>
           </div>
+          <details class="qa"><summary>Где физически объявлен интерфейс репозитория — в <code>domain</code> или в <code>data</code> — и что сломается, если перенести его в <code>data</code>? <span class="q-badge">★</span></summary><div class="ans">
+            <p>Интерфейс репозитория живёт в <code>domain</code>, а его реализация (<code>RepositoryImpl</code>) — в <code>data</code>. Это инверсия зависимостей (DIP) и одновременно «dependency inversion» из правила зависимостей Clean Architecture: <code>data</code> зависит от <code>domain</code> и реализует его контракт, а <code>domain</code> про <code>data</code> ничего не знает. Стрелка зависимости от конкретики направлена к абстракции.</p>
+            <p>Перенесите интерфейс в <code>data</code> — и <code>domain.UseCase</code> будет вынужден импортировать <code>data</code>, стрелка развернётся наружу. <code>domain</code> потеряет независимость от Android/Retrofit/Room: его уже не собрать отдельным чистым Kotlin-модулем и не протестировать без моков инфраструктуры. В multi-module это видно буквально — модуль <code>:domain</code> не должен иметь <code>:data</code> в своём <code>build.gradle</code>.</p>
+          </div></details>
         </section>
 
         <section class="section" id="google-guide">
@@ -271,6 +304,11 @@ flowchart TB
         dao.upsertAll(remote.map { it.toEntity() })
     }
 }</code></pre>
+          <details class="qa"><summary>Чем по гайду Google <code>ViewModel</code> отличается от обычного state holder, и какие виды state и логики он разделяет? <span class="q-badge">★</span></summary><div class="ans">
+            <p>Google различает два типа state holder. <strong>ViewModel-класс</strong> — держатель business logic state: доступ к данным, правила приложения, переживает конфиг-изменения. <strong>Обычный plain-класс</strong>, запоминаемый в композиции (через <code>remember</code>), — держатель UI logic state: как показывать state (форматирование, видимость), состояние элемента вроде объекта скролла.</p>
+            <p>State тоже двух родов: <em>screen UI state</em> — что показать, продукт бизнес-логики, неизменяемый, его выставляет ViewModel; и <em>UI element state</em> — состояние самих элементов (раскрытие меню, позиция скролла), которое живёт в UI-слое. ViewModel выставляет screen UI state и не должен держать ссылок на View/<code>Context</code> уровня Activity.</p>
+            <p>Главная мысль для собеса: ViewModel — не «контейнер для всего», а именно держатель бизнес-логики и screen state. Часть состояния правильно оставить в UI-слое, а не тащить в ViewModel.</p>
+          </div></details>
         </section>
 
         <section class="section" id="multimodule">
@@ -330,6 +368,10 @@ dependencies {
 }
 // весь общий setup (compileSdk, Hilt, Compose, тест-раннеры)
 // живёт внутри convention-плагина, а не копируется в каждый модуль</code></pre>
+          <details class="qa"><summary>В чём разница между <code>api</code> и <code>implementation</code> в Gradle и как неверный выбор бьёт по инкрементальной сборке? <span class="q-badge">★</span></summary><div class="ans">
+            <p><code>implementation</code> делает зависимость видимой только внутри объявившего модуля; <code>api</code> экспортирует её транзитивно всем, кто зависит от модуля. Разница в сборке решающая: при изменении ABI зависимости, объявленной через <code>api</code>, Gradle перекомпилирует все модули вниз по цепочке — потребители видят её в своём compile-classpath. Через <code>implementation</code> перекомпилируется только сам модуль; потребители не трогаются, пока не меняется публичный API самого модуля.</p>
+            <p>Поэтому дефолт — <code>implementation</code>, а <code>api</code> берут только когда тип действительно фигурирует в публичной сигнатуре модуля (возвращается или принимается в его API). <code>:feature</code>-модули прячут детали за <code>implementation</code>, чтобы не протекали транзитивные зависимости и не раздувался граф пересборки. <code>api</code> оправдан в <code>:core:designsystem</code> или <code>:core:model</code>, чьи типы намеренно публичны для всех фич. Подробнее про механику сборки — в главе <a href="gradle-build.html">Gradle и сборка</a>.</p>
+          </div></details>
         </section>
 
         <section class="section" id="di-hilt">
@@ -438,6 +480,40 @@ class SyncWorker @AssistedInject constructor(
 
           <p class="subhead">Manual DI / Service Locator — когда уместно</p>
           <p>Hilt не всегда обязателен. <strong>Manual DI</strong> (передаём зависимости руками через конструкторы/фабрики) подходит для маленьких приложений, библиотек (не навязывать пользователю Dagger) и учебных проектов. <strong>Service Locator</strong> (глобальный реестр, у которого запрашивают зависимости) проще, но скрывает зависимости класса (их не видно в сигнатуре) и хуже тестируется — обычно считается анти-паттерном по сравнению с конструкторной инъекцией. Правило: предпочитайте конструкторную инъекцию; Hilt берите, когда граф вырастает и ручная проводка становится болью.</p>
+
+          <div class="diagram">
+          <svg viewBox="0 0 760 240" role="img" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:auto">
+            <title>Жизнь Hilt-компонентов на таймлайне Activity</title>
+            <desc>Горизонтальный таймлайн с тремя событиями: создание Activity, поворот, закрытие. Дорожка Singleton и ActivityRetained/ViewModel непрерывны до закрытия; Activity/Fragment рвутся на повороте.</desc>
+            <!-- ось времени -->
+            <line x1="40" y1="40" x2="40" y2="210" stroke="var(--border)" stroke-width="1" fill="none"/>
+            <line x1="180" y1="30" x2="180" y2="215" stroke="var(--text-dim)" stroke-width="1" stroke-dasharray="4 4" fill="none"/>
+            <line x1="540" y1="30" x2="540" y2="215" stroke="var(--text-dim)" stroke-width="1" stroke-dasharray="4 4" fill="none"/>
+            <text x="180" y="22" text-anchor="middle" fill="var(--text-dim)" font-size="12" font-family="Inter,sans-serif">поворот</text>
+            <text x="540" y="22" text-anchor="middle" fill="var(--text-dim)" font-size="12" font-family="Inter,sans-serif">закрытие</text>
+            <text x="60" y="22" text-anchor="middle" fill="var(--text-dim)" font-size="12" font-family="Inter,sans-serif">создание</text>
+            <!-- Singleton -->
+            <text x="48" y="62" fill="var(--text)" font-size="13" font-family="Inter,sans-serif">Singleton</text>
+            <line x1="200" y1="78" x2="700" y2="78" stroke="var(--accent)" stroke-width="6" fill="none" stroke-linecap="round"/>
+            <line x1="60" y1="78" x2="180" y2="78" stroke="var(--accent)" stroke-width="6" fill="none" stroke-linecap="round"/>
+            <!-- ActivityRetained / ViewModel -->
+            <text x="48" y="110" fill="var(--text)" font-size="13" font-family="Inter,sans-serif">ActivityRetained / ViewModel</text>
+            <line x1="60" y1="126" x2="180" y2="126" stroke="var(--accent-2)" stroke-width="6" fill="none" stroke-linecap="round"/>
+            <line x1="200" y1="126" x2="540" y2="126" stroke="var(--accent-2)" stroke-width="6" fill="none" stroke-linecap="round"/>
+            <!-- Activity / Fragment -->
+            <text x="48" y="170" fill="var(--text)" font-size="13" font-family="Inter,sans-serif">Activity / Fragment</text>
+            <line x1="60" y1="186" x2="178" y2="186" stroke="var(--text-dim)" stroke-width="6" fill="none" stroke-linecap="round"/>
+            <line x1="202" y1="186" x2="538" y2="186" stroke="var(--text-dim)" stroke-width="6" fill="none" stroke-linecap="round"/>
+            <text x="190" y="205" text-anchor="middle" fill="var(--warn)" font-size="11" font-family="Inter,sans-serif">рвётся</text>
+          </svg>
+          <div class="cap">На повороте рвутся только Activity/Fragment-скоупы (серая дорожка). Singleton и ActivityRetained/ViewModel переживают поворот и гаснут лишь на настоящем закрытии</div>
+          </div>
+
+          <details class="qa"><summary>Что произойдёт на этапе компиляции при циклической зависимости в графе Hilt, и как разорвать цикл через <code>Provider</code>/<code>Lazy</code>? <span class="q-badge">★</span></summary><div class="ans">
+            <p>Dagger/Hilt строит граф на этапе компиляции и при прямом цикле <code>A→B→A</code> выдаёт ошибку компиляции «Found a dependency cycle» — рантайм-сбоя не будет, сборка просто упадёт.</p>
+            <p>Разорвать цикл, не трогая дизайн, можно ленивой инъекцией: вместо <code>Foo</code> инжектить <code>dagger.Lazy&lt;Foo&gt;</code> или <code>javax.inject.Provider&lt;Foo&gt;</code> на одной из сторон. Тогда Dagger откладывает создание узла, и в момент конструирования цикл не замыкается: <code>Provider</code> создаёт по требованию, <code>Lazy</code> — лениво один раз. Работает это потому, что <code>Provider&lt;T&gt;</code>/<code>Lazy&lt;T&gt;</code> доступны в графе для любого биндинга без отдельной декларации.</p>
+            <p>Правильнее, конечно, устранить цикл архитектурно — он обычно сигнал о нарушении направления зависимостей. Но на собесе ждут именно знания про <code>Lazy</code>/<code>Provider</code> как штатный приём.</p>
+          </div></details>
         </section>
 
         <section class="section" id="navigation">
@@ -467,6 +543,43 @@ fun AppNavHost(navController: NavHostController) {
             <li><strong>Передача аргументов</strong>: складываются в data-class маршрута, читаются через <code>backStackEntry.toRoute&lt;T&gt;()</code> — без ручного парсинга строк и багов с ключами.</li>
             <li><strong>Deep links</strong>: <code>navDeepLink&lt;T&gt;</code> связывает внешний URL с той же type-safe целью; внешняя ссылка открывает нужный экран с аргументами.</li>
           </ul>
+
+          <p class="subhead">Back stack и single-activity</p>
+          <p>Современная рекомендация Google — <strong>single-activity</strong>: одна Activity-хост, а экраны — это destinations внутри одного <code>NavHost</code> (composable или фрагменты). Тогда у приложения единый back stack, общий <code>ViewModelStoreOwner</code> на уровне Activity для расшаривания состояния, единообразные deep links и меньше накладных расходов на пересоздание Activity. <code>NavController</code> ведёт стек: <code>navigate()</code> кладёт запись, системный «назад» снимает её. Управление стеком — через <code>popUpTo</code> (срезать до нужной точки), <code>inclusive</code> (включить саму цель), <code>launchSingleTop</code> (не плодить дубликат вершины).</p>
+          <p>Multi-activity всё ещё оправдан для по-настоящему независимых частей: отдельный флоу логина, экран-«запуск по интенту» извне, изоляция тяжёлого legacy. Подвох на собесе: при single-activity конфиг-изменения переживает не Activity, а ViewModel и back stack — поэтому скоупы (например <code>ActivityRetained</code>) и записи back stack становятся центральными.</p>
+
+          <p class="subhead">Scoping ViewModel на back stack entry</p>
+          <p>Каждая запись стека — <code>NavBackStackEntry</code> — сама является <code>ViewModelStoreOwner</code>. По умолчанию <code>hiltViewModel()</code> в <code>composable&lt;Route&gt;</code> скоупит ViewModel на запись этого destination: создаётся при входе, очищается (<code>onCleared</code>) при попе из стека. Чтобы ViewModel пережил несколько экранов одного флоу (мастер-визард), его скоупят на <em>родительский граф</em>:</p>
+          <div class="code-label">Расшаренный ViewModel на nested graph</div>
+<pre><code class="language-kotlin">@Composable
+fun WizardStep(navController: NavHostController) {
+    // backStackEntry графа-родителя, а не текущего экрана
+    val parentEntry = remember(navController) {
+        navController.getBackStackEntry&lt;WizardGraph&gt;()
+    }
+    // один инстанс на весь флоу: жив, пока в стеке есть запись графа
+    val vm: WizardViewModel = hiltViewModel(viewModelStoreOwner = parentEntry)
+}</code></pre>
+          <p>Без этого каждый шаг получит свой инстанс, и общее состояние флоу не сохранится между экранами. <code>SavedStateHandle</code> при этом автоматически наполняется аргументами навигации соответствующей записи.</p>
+
+          <p class="subhead">App Links, custom scheme и deferred deep links</p>
+          <p>Deep link бывает двух родов. <strong>Custom scheme</strong> (<code>myapp://profile/42</code>) ловит только ваше приложение, но не открывается из браузера и любой может его подделать. <strong>HTTPS App Links</strong> (<code>https://app.example.com/user/42</code>) — это обычный веб-URL, который Android может открыть прямо в приложении, минуя диалог выбора, если домен подтверждён.</p>
+          <p>Подтверждение делается через <code>android:autoVerify="true"</code> на <code>&lt;intent-filter&gt;</code> и файл <code>assetlinks.json</code>, выложенный по адресу <code>https://домен/.well-known/assetlinks.json</code> с отпечатком (SHA-256) подписи приложения. Система проверяет соответствие при установке — и тогда ссылки на этот домен открываются в приложении без диалога.</p>
+          <div class="code-label">AndroidManifest.xml — verified App Link</div>
+<pre><code class="language-xml">&lt;intent-filter android:autoVerify="true"&gt;
+    &lt;action android:name="android.intent.action.VIEW" /&gt;
+    &lt;category android:name="android.intent.category.DEFAULT" /&gt;
+    &lt;category android:name="android.intent.category.BROWSABLE" /&gt;
+    &lt;data android:scheme="https" android:host="app.example.com" /&gt;
+&lt;/intent-filter&gt;</code></pre>
+          <div class="callout info">
+            <div class="ic">ℹ️</div>
+            <div class="bd"><strong>Deferred deep links.</strong> Если приложение ещё не установлено, обычный deep link открывает браузер. «Отложенная» ссылка сохраняет цель (через стор или сторонний сервис), и после установки приложение читает её при первом запуске и ведёт пользователя на нужный экран. В самой платформе из коробки этого нет — нужен внешний механизм (Play Install Referrer или SDK вроде ветки диплинков).</div>
+          </div>
+          <details class="qa"><summary>Как заскоупить один ViewModel на nested navigation graph, и почему <code>hiltViewModel()</code> без скоупа на graph entry этого не даёт? <span class="q-badge">★</span></summary><div class="ans">
+            <p>По умолчанию <code>hiltViewModel()</code> в <code>composable&lt;Route&gt;</code> скоупит ViewModel на <code>NavBackStackEntry</code> этого destination — он создаётся при входе на экран и очищается при попе из back stack. Каждый экран получает свой инстанс.</p>
+            <p>Чтобы один ViewModel пережил несколько экранов флоу, его скоупят на родительский граф: берут <code>navController.getBackStackEntry(parentRoute)</code> и передают как <code>viewModelStoreOwner</code> в <code>hiltViewModel()</code>. Тогда инстанс живёт, пока в стеке есть запись графа-родителя, и общий для всех экранов флоу; при выходе из графа очищается целиком. Без этого расшаренное состояние визарда не сохранится между шагами, потому что у каждого экрана будет отдельный <code>ViewModelStore</code>.</p>
+          </div></details>
         </section>
 
         <section class="section" id="reactive">
@@ -491,6 +604,132 @@ class FeedViewModel(observeUnread: ObserveUnread) : ViewModel() {
             <div class="ic">💡</div>
             <div class="bd"><strong>Зачем <code>StateFlow</code> на границе с UI.</strong> Он всегда имеет текущее значение (UI получает state сразу при подписке) и конфлейтит обновления. <code>SharingStarted.WhileSubscribed(5_000)</code> держит upstream живым 5 секунд после ухода подписчика — переживает поворот экрана, но отписывается, когда экран действительно закрыт. Это стандартная связка для экспонирования состояния из ViewModel.</div>
           </div>
+          <div class="diagram">
+          <div class="mermaid">
+stateDiagram-v2
+  [*] --> NoSubscribers
+  NoSubscribers --> Active: появился подписчик
+  Active --> Paused: ушёл последний подписчик
+  Paused --> Active: новый подписчик за 5000 мс (поворот)
+  Paused --> Stopped: прошло 5000 мс (ушли с экрана)
+  Stopped --> Active: снова появился подписчик
+  Stopped: upstream остановлен
+  Active: upstream работает
+          </div>
+          <div class="cap">stateIn + WhileSubscribed(5000): при повороте новый подписчик успевает в окно 5 с — upstream не рестартует; при реальном уходе с экрана пауза истекает и upstream гаснет</div>
+          </div>
+          <details class="qa"><summary>Чем грозит <code>SharingStarted.Lazily</code>/<code>Eagerly</code> вместо <code>WhileSubscribed(5000)</code>, и почему именно 5000 мс? <span class="q-badge">★</span></summary><div class="ans">
+            <p><code>Eagerly</code> и <code>Lazily</code> никогда не останавливают upstream. После первого запуска подписка на источник (Room, сеть) держится до конца жизни <code>viewModelScope</code>, даже когда экран ушёл в фон — лишняя работа и расход батареи. <code>Eagerly</code> вдобавок стартует ещё до появления подписчика.</p>
+            <p><code>WhileSubscribed(stopTimeoutMillis)</code> останавливает upstream через заданную паузу после ухода последнего подписчика и перезапускает при новом. 5000 мс — эмпирический буфер: при повороте старый коллектор отписывается, а новый подписывается не мгновенно — пересоздание Activity/Composition занимает доли секунды. Таймаут в 5 с перекрывает этот разрыв: upstream не успевает остановиться и перезапуститься (нет лишнего рефетча из сети), но при настоящем уходе с экрана через 5 с подписка корректно гасится.</p>
+            <p>Дополнительно с <code>WhileSubscribed</code> учитывают <code>replayExpirationMillis</code> (по умолчанию <code>Long.MAX_VALUE</code>), чтобы во время паузы последнее значение не сбрасывалось на initial.</p>
+          </div></details>
+        </section>
+
+        <section class="section" id="testing">
+          <h2>Тестирование архитектуры и DI</h2>
+          <p>Главный заявленный смысл слоёв и конструкторной инъекции — тестируемость. На собесе это спрашивают почти всегда: «как тестировать каждый слой», «зачем инжектить <code>Dispatchers</code>», «как подменить модуль Hilt». Чем чище границы, тем меньше хаков в тестах.</p>
+
+          <p class="subhead">Слой за слоем</p>
+          <p><code>domain</code> тестируется проще всего — это чистый Kotlin без Android: <code>UseCase</code> покрывают юнит-тестами с подменённым (fake/mock) интерфейсом репозитория, без Robolectric и инструментальных тестов. ViewModel тестируют, подменяя <code>UseCase</code> и проверяя последовательность <code>UiState</code>. <code>Repository</code> — с fake-источниками: in-memory DAO и <code>MockWebServer</code> для сети.</p>
+          <div class="code-label">domain-тест: UseCase с fake-репозиторием</div>
+<pre><code class="language-kotlin">class GetUserUseCaseTest {
+    private val repo = FakeUserRepository()           // подменили интерфейс
+    private val useCase = GetUserUseCase(repo)
+
+    @Test
+    fun `returns user from repository`() = runTest {
+        repo.stub(User(id = "1", name = "Ann", isPremium = true))
+        val result = useCase("1")
+        assertEquals("Ann", result.getOrNull()?.name)
+    }
+}</code></pre>
+
+          <p class="subhead">Почему хардкод ломает тест</p>
+          <p>Два частых анти-паттерна делают класс непроверяемым. Первый — <code>Dispatchers.IO</code> прямо в теле корутины: в тесте его не подменить на <code>TestDispatcher</code>, и <code>runTest</code> не контролирует виртуальное время. Лечится инъекцией диспетчера через qualifier (см. <code>@IoDispatcher</code> выше). Второй — <code>new</code>/прямое создание зависимости внутри класса: её нечем заменить на fake. Конструкторная инъекция обе проблемы снимает.</p>
+          <div class="code-label">ViewModel-тест: TestDispatcher + последовательность state</div>
+<pre><code class="language-kotlin">@Test
+fun `emits loading then content`() = runTest {
+    val vm = FeedViewModel(repo, testDispatcher)      // диспетчер инжектится
+    vm.state.test {                                   // Turbine
+        assertEquals(FeedUiState(isLoading = true), awaitItem())
+        assertEquals(expectedContent, awaitItem())
+    }
+}</code></pre>
+
+          <p class="subhead">Hilt в инструментальных тестах</p>
+          <p>Когда тест всё же инструментальный, Hilt даёт штатную подмену графа: <code>@HiltAndroidTest</code> на классе, <code>@UninstallModules</code> снимает продакшен-модуль, а <code>@TestInstallIn</code> ставит вместо него тестовый с fake-биндингами. Никаких рефлексий и ручной проводки — граф собирается из тестовых модулей.</p>
+          <div class="callout tip">
+            <div class="ic">💡</div>
+            <div class="bd"><strong>Тезис.</strong> Интерфейсы на границах слоёв + конструкторная инъекция = подмена без хаков. Если для теста класса приходится поднимать половину приложения или мокать статику — это сигнал, что зависимости спрятаны (хардкод, service locator), а не приходят через конструктор. Про сами корутинные тесты подробнее — в главе <a href="background-work.html">Фоновая работа</a>.</div>
+          </div>
+          <details class="qa"><summary>Почему юнит-тест <code>UseCase</code> не требует Robolectric, а тест ViewModel иногда требует? <span class="q-badge">★</span></summary><div class="ans">
+            <p><code>UseCase</code> в правильной Clean-архитектуре — чистый Kotlin без единого Android-импорта, поэтому его тест гоняется на JVM мгновенно, без эмулятора и без Robolectric. ViewModel формально тоже не зависит от Android-UI, но тянет <code>androidx.lifecycle.ViewModel</code> и часто <code>SavedStateHandle</code>; для них хватает обычного JVM-теста, если не трогать <code>Looper</code>/<code>LiveData</code> с главным потоком. Robolectric нужен только когда в тест проникают настоящие Android-классы (<code>Context</code>, ресурсы, <code>LiveData.observeForever</code> с main looper). Если ViewModel тащит за собой Robolectric — обычно в нём протекла Android-зависимость, которую стоило вынести.</p>
+          </div></details>
+        </section>
+
+        <section class="section" id="state-survival">
+          <h2>Устойчивость состояния: поворот, process death, SavedStateHandle</h2>
+          <p>«Что переживает поворот, что — нет, а что — убийство процесса» — классическая senior-ловушка и прямой разговор про архитектуру state holder. Уровней устойчивости три, и путать их нельзя.</p>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Событие</th><th>ViewModel</th><th>viewModelScope / in-memory state</th><th>SavedStateHandle</th></tr></thead>
+              <tbody>
+                <tr><td>Поворот (конфиг-изменение)</td><td>Переживает</td><td>Цел</td><td>Цел</td></tr>
+                <tr><td>System-initiated process death</td><td>Пересоздаётся</td><td>Теряется</td><td>Восстанавливается из Bundle</td></tr>
+                <tr><td>Холодный старт (пользователь закрыл)</td><td>Создаётся заново</td><td>Пусто</td><td>Пусто</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <p>При нехватке памяти система убивает фоновый процесс. При возврате Activity и ViewModel создаются заново, <code>viewModelScope</code> и весь in-memory state теряются — это <em>не</em> то же самое, что поворот, где ViewModel остаётся жив. Кандидаты часто валят именно здесь: считают, что раз есть ViewModel, состояние в безопасности.</p>
+
+          <p class="subhead">SavedStateHandle и его лимит</p>
+          <p><code>SavedStateHandle</code> персистится в saved instance state <code>Bundle</code>, поэтому переживает process death, и Hilt автоматически наполняет его аргументами навигации. Но <code>Bundle</code> ограничен по размеру: крупные данные дают <code>TransactionTooLargeException</code>. Поэтому в <code>SavedStateHandle</code> кладут ключи и идентификаторы, а тяжёлые данные восстанавливают из источника истины.</p>
+          <div class="code-label">SavedStateHandle: ключ переживает process death</div>
+<pre><code class="language-kotlin">@HiltViewModel
+class ProfileViewModel @Inject constructor(
+    private val savedState: SavedStateHandle,        // Hilt даёт автоматически
+    private val repo: UserRepository
+) : ViewModel() {
+    // userId переживёт убийство процесса — он в Bundle
+    private val userId: String = savedState.toRoute&lt;ProfileRoute&gt;().userId
+
+    // сам профиль не храним в полях — перечитаем из SSOT после рестарта
+    val state: StateFlow&lt;User?&gt; = repo.observeUser(userId)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+}</code></pre>
+          <p>Отсюда и устойчивость offline-first: когда SSOT — локальная БД, после рестарта процесса UI просто перечитывает её, и восстанавливать руками нечего. Самый надёжный способ пережить process death — не держать критичные данные только в <code>MutableStateFlow</code>, а опираться на Room/DataStore.</p>
+          <details class="qa"><summary>Чем <code>rememberSaveable</code> в Compose отличается от <code>SavedStateHandle</code> и где проходит граница? <span class="q-badge">★</span></summary><div class="ans">
+            <p>Оба пишут в один и тот же saved instance state <code>Bundle</code> и оба переживают process death — разница в том, <em>чьё</em> состояние они хранят. <code>SavedStateHandle</code> живёт в ViewModel и держит state бизнес-уровня (id выбранной сущности, черновик формы), который переживает и поворот, и убийство процесса. <code>rememberSaveable</code> хранит UI element state самого компонента (позиция скролла, раскрытие, введённый, но не отправленный текст), привязанный к месту в дереве композиции. Граница ровно та же, что у Google между business logic state и UI element state: бизнес-данные — в <code>SavedStateHandle</code>, эфемерное состояние виджета — в <code>rememberSaveable</code>. Оба упираются в лимит <code>Bundle</code>.</p>
+          </div></details>
+        </section>
+
+        <section class="section" id="errors">
+          <h2>Обработка ошибок сквозь слои</h2>
+          <p>«Где обрабатывать ошибки и как доносить их до UI» — прямое продолжение разговора про слои и SSOT. Главный принцип: исключения не должны неуправляемо «пробивать» слои до UI.</p>
+          <p>Распространённый подход — репозиторий ловит сетевые/IO-ошибки и возвращает <code>Result&lt;T&gt;</code> (или собственный sealed <code>Resource</code>/<code>Either</code> с <code>Loading</code>/<code>Success</code>/<code>Error</code>), а не бросает наружу. Вызывающий сам решает, показать ошибку или проглотить, и кэш при этом не стирается. <code>domain</code> может мапить технические ошибки в доменные (<code>NoConnection</code>, <code>Unauthorized</code>), чтобы UI не разбирал <code>HttpException</code>.</p>
+          <div class="code-label">sealed Resource как контракт результата</div>
+<pre><code class="language-kotlin">sealed interface Resource&lt;out T&gt; {
+    data object Loading : Resource&lt;Nothing&gt;
+    data class Success&lt;T&gt;(val data: T) : Resource&lt;T&gt;
+    data class Error(val cause: DomainError) : Resource&lt;Nothing&gt;
+}
+
+sealed interface DomainError {            // технические ошибки -> доменные
+    data object NoConnection : DomainError
+    data object Unauthorized : DomainError
+    data class Unknown(val message: String?) : DomainError
+}</code></pre>
+
+          <p class="subhead">Куда ошибка попадает в UI</p>
+          <p>Тут важно различать два рода ошибок. <strong>Постоянная</strong> ошибка (баннер «нет сети», который висит, пока проблема не решена) — это часть screen UI state: поле <code>error</code>, которое переживает поворот. <strong>Одноразовая</strong> ошибка (snackbar «не удалось сохранить») — side-effect: её отдают через <code>Channel</code>, иначе после поворота она реигрывается из <code>StateFlow</code> и всплывёт повторно (тот же механизм, что для навигации в первом параграфе).</p>
+          <div class="callout warn">
+            <div class="ic">⚠️</div>
+            <div class="bd"><strong>Подвох.</strong> Ошибку-«показать тост» нельзя держать в постоянном state — после поворота тост повторится. Для постоянного баннера, наоборот, место именно в state, а не в одноразовом канале, иначе после пересоздания экрана баннер исчезнет. Граница та же, что между state и side-effect.</div>
+          </div>
+          <p>Связь с offline-first прямая: ошибка сети не должна стирать кэш. Запись в БД делается только на успешном ответе — тогда при сбое UI продолжает показывать старые данные, а ошибку получает отдельно (см. задачу 3 и новую задачу про <code>refresh</code>).</p>
+          <details class="qa"><summary>Когда <code>Result</code>/<code>runCatching</code> в репозитории — плохая идея, и что с <code>CancellationException</code>? <span class="q-badge">★</span></summary><div class="ans">
+            <p>Главная ловушка: <code>runCatching</code> ловит <code>Throwable</code>, включая <code>CancellationException</code>. Если корутину отменили (экран ушёл), исключение отмены попадёт в <code>Result.failure</code> и будет проглочено как «обычная ошибка» — структурированная конкурентность сломается, отмена не прорастёт вверх. Поэтому в suspend-коде либо ловят конкретные типы (<code>IOException</code>, <code>HttpException</code>), либо перебрасывают отмену вручную: <code>catch (e: CancellationException) { throw e }</code> перед общим <code>catch</code>. Второй момент: <code>Result</code> хорош как контракт одной операции, но не как способ протащить состояние загрузки сквозь весь поток — для потоковых данных естественнее sealed <code>Resource</code> с явным <code>Loading</code>, а не оборачивать каждый элемент <code>Flow</code> в <code>Result</code>.</p>
+          </div></details>
         </section>
 
         <section class="section" id="video">
@@ -554,6 +793,26 @@ class FeedViewModel(observeUnread: ObserveUnread) : ViewModel() {
           <details class="qa">
             <summary>Почему StateFlow на границе ViewModel→UI, а не cold Flow? <span class="q-badge">Senior</span></summary>
             <div class="ans"><p><code>StateFlow</code> — горячий и всегда имеет текущее значение: подписавшийся UI сразу получает актуальный state, без повторного запуска upstream на каждого коллектора. Cold <code>Flow</code> перезапускал бы пайплайн под каждую подписку. Стандарт — собрать состояние через <code>stateIn(scope, SharingStarted.WhileSubscribed(5000), initial)</code>: это конфлейтит обновления, шарит один upstream между подписчиками и держит его живым ещё 5 секунд после ухода последнего — чтобы пережить поворот экрана, но не работать, когда экран закрыт. Внутри слоёв data/domain, наоборот, держат cold <code>Flow</code> как «рецепт» данных.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Single-Activity vs Multi-Activity: что выбрать сегодня и почему? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Современная рекомендация Google — <strong>Single-Activity</strong>: одна Activity-хост, навигация между экранами через Navigation Component (фрагменты или composable-destinations). Плюсы: единый back stack и предсказуемая навигация, общий <code>ViewModelStoreOwner</code> на уровне Activity для расшаривания state, проще передавать аргументы и делать deep links, меньше накладных на пересоздание Activity и работу с <code>Intent</code>. Multi-Activity оправдан для по-настоящему независимых частей: отдельный флоу логина, экран-«запуск по интенту» извне, изоляция тяжёлого legacy. Подвох: при Single-Activity конфиг-изменения переживает уже не Activity, а ViewModel и back stack — поэтому скоупы (<code>ActivityRetained</code>) и записи back stack становятся центральными.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Что такое multibindings (@IntoSet/@IntoMap) и где они реально нужны? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Multibindings собирают вклад нескольких модулей в одну коллекцию: <code>@IntoSet</code> добавляет элемент в <code>Set&lt;T&gt;</code>, <code>@IntoMap</code> — в <code>Map&lt;K, T&gt;</code> по ключу (через <code>@MapKey</code>-аннотацию вроде <code>@StringKey</code>/<code>@ClassKey</code>). Инжектируется готовый <code>Set&lt;T&gt;</code>/<code>Map&lt;K, Provider&lt;T&gt;&gt;</code>, который дополняется из разных модулей, не трогая место потребления — это open/closed на практике. Типичные применения: набор инициализаторов приложения, плагины аналитики, регистрация ViewModel'ей по ключу-классу (multibinding-фабрика в Dagger без Hilt), список интерсепторов OkHttp. В multi-module особенно ценно: feature-модуль «вкладывает» свой инициализатор в общий <code>Set</code>, а <code>:app</code> о нём ничего не знает.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Как пробросить аргумент в ViewModel: SavedStateHandle vs assisted injection? <span class="q-badge">Senior</span></summary>
+            <div class="ans"><p>Если аргумент приходит из навигации, прокидывать руками не надо: при <code>@HiltViewModel</code> + Navigation Hilt кладёт аргументы destination в <code>SavedStateHandle</code>, и ViewModel читает их через <code>savedStateHandle.get&lt;String&gt;("userId")</code> или type-safe <code>savedStateHandle.toRoute&lt;ProfileRoute&gt;()</code>. К тому же <code>SavedStateHandle</code> переживает process death (лежит в <code>Bundle</code>). Assisted injection (<code>@AssistedInject</code> + <code>@AssistedFactory</code>) нужен, когда параметр <em>не</em> из навигации и не сериализуется в <code>Bundle</code> — рантайм-объект, переданный из другого экрана через память. Правило: аргумент навигации → <code>SavedStateHandle</code>; рантайм-зависимость, которую нельзя положить в <code>Bundle</code> → assisted. Хардкодить значение в конструктор <code>@HiltViewModel</code> нельзя — Hilt должен уметь построить VM без вашего участия.</p></div>
+          </details>
+
+          <details class="qa">
+            <summary>Чем grouping по слоям отличается от grouping по фичам при модуляризации? <span class="q-badge">Middle+</span></summary>
+            <div class="ans"><p>Layer-based (модули <code>:data</code>, <code>:domain</code>, <code>:ui</code> на весь проект) прост, но плохо масштабируется: фича размазана по трём модулям, команды конфликтуют, граница инкапсуляции слабая. Feature-based / по доменам (как в Now in Android: <code>:feature:home</code>, <code>:feature:profile</code>, каждый со своими ui+presentation поверх общих <code>:core</code>) даёт сильную инкапсуляцию (<code>internal</code> внутри фичи), параллельную работу команд и независимую сборку. На практике берут гибрид: фичи изолированы по вертикали, инфраструктура вынесена в <code>:core:*</code> (network, database, designsystem, common). Фичи не зависят друг от друга — общаются через <code>:app</code> (навигационный граф) и абстракции в <code>:core</code>. Подвох: модуляризация ради сборки без продуманных границ фич часто только усложняет граф, не ускоряя его.</p></div>
           </details>
 
         </section>
@@ -684,6 +943,91 @@ class FeedViewModel @Inject constructor(
             </details>
           </div>
 
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 4.</strong> Дан <code>@HiltViewModel</code>, в который аргумент <code>userId</code> захардкожен в конструктор как обычный <code>String</code>-параметр — Hilt падает с ошибкой, что не может предоставить <code>String</code>. Перепишите ViewModel так, чтобы <code>userId</code> приходил из навигационного аргумента через <code>SavedStateHandle</code>, и покажите type-safe чтение через <code>toRoute()</code>.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">// БЫЛО (не компилируется): Hilt не знает, откуда взять String
+@HiltViewModel
+class ProfileViewModel @Inject constructor(
+    private val userId: String,             // ошибка: нет биндинга String
+    private val repo: UserRepository
+) : ViewModel()
+
+// СТАЛО: аргумент навигации приходит через SavedStateHandle
+@Serializable data class ProfileRoute(val userId: String)
+
+@HiltViewModel
+class ProfileViewModel @Inject constructor(
+    savedStateHandle: SavedStateHandle,     // Hilt предоставляет автоматически
+    private val repo: UserRepository
+) : ViewModel() {
+    // вариант 1: по ключу
+    private val byKey: String = savedStateHandle.get&lt;String&gt;("userId")!!
+    // вариант 2: type-safe (Navigation 2.8)
+    private val userId: String = savedStateHandle.toRoute&lt;ProfileRoute&gt;().userId
+}</code></pre>
+                <p>Hilt сам наполняет <code>SavedStateHandle</code> аргументами destination, поэтому явный <code>String</code>-биндинг не нужен и был бы ошибкой. Бонус: значение переживает process death, так как лежит в <code>Bundle</code>, — в отличие от обычного поля.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 5.</strong> Реализуйте multibinding-набор инициализаторов: интерфейс <code>AppInitializer</code> с методом <code>init()</code>, несколько реализаций в разных модулях и единая точка в <code>Application</code>, вызывающая их все. Покажите Hilt-модуль с <code>@IntoSet</code> и инъекцию <code>Set&lt;AppInitializer&gt;</code>.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">interface AppInitializer { fun init() }
+
+// в каждом модуле — свой вклад в общий Set
+@Module
+@InstallIn(SingletonComponent::class)
+abstract class AnalyticsInitModule {
+    @Binds @IntoSet
+    abstract fun bind(impl: AnalyticsInitializer): AppInitializer
+}
+
+// точка сборки — Application
+@HiltAndroidApp
+class App : Application() {
+    @Inject lateinit var initializers: Set&lt;@JvmSuppressWildcards AppInitializer&gt;
+
+    override fun onCreate() {
+        super.onCreate()
+        initializers.forEach { it.init() }
+    }
+}</code></pre>
+                <p><code>@JvmSuppressWildcards</code> обязателен: иначе Kotlin сгенерирует <code>Set&lt;? extends AppInitializer&gt;</code>, и Dagger не найдёт биндинг. Главный поинт — новый модуль добавляет инициализатор, не трогая <code>Application</code> (open/closed): <code>:app</code> не знает, кто и что вложил в <code>Set</code>.</p>
+              </div>
+            </details>
+          </div>
+
+          <div class="task-card">
+            <p class="task-problem"><strong>Задача 6.</strong> Дан репозиторий, который при ошибке сети бросает исключение наружу и при этом перезаписывает кэш пустым списком. Исправьте: ошибка должна доходить до вызывающего как <code>Result</code>, а локальный кэш не должен стираться при сетевом сбое.</p>
+            <details class="task-solution">
+              <summary>Показать решение</summary>
+              <div class="task-ans">
+<pre><code class="language-kotlin">// БЫЛО (сломано): кэш затирается до проверки успеха
+suspend fun refresh() {
+    val remote = runCatching { api.fetch() }.getOrDefault(emptyList())
+    dao.upsertAll(remote.map { it.toEntity() })   // при сбое затрёт кэш пустым
+}
+
+// СТАЛО: upsert только на успехе, ошибка — наружу как Result
+suspend fun refresh(): Result&lt;Unit&gt; = runCatching {
+    val remote = api.fetch()                        // бросит IOException/HttpException
+    dao.upsertAll(remote.map { it.toEntity() })     // не выполнится при сбое
+}
+
+// observeAll() остаётся холодным Flow из БД (SSOT) — кэш цел
+fun observeAll(): Flow&lt;List&lt;Article&gt;&gt; =
+    dao.observeAll().map { it.map { e -&gt; e.toDomain() } }</code></pre>
+                <p>Ключ: <code>upsertAll</code> внутри <code>runCatching</code> выполняется только после успешного <code>api.fetch()</code>. Бросил <code>fetch</code> — <code>runCatching</code> поймал, <code>upsertAll</code> не вызвался, кэш цел. ViewModel: <code>repo.refresh().onFailure { ... }</code> отдаёт ошибку в side-effect-канал или в <code>error</code>-поле state. Тонкость: внутри suspend не глотайте <code>CancellationException</code> — при общем <code>catch</code> её перебрасывают вручную.</p>
+              </div>
+            </details>
+          </div>
+
         </section>
 
         <div class="sources">
@@ -707,6 +1051,6 @@ class FeedViewModel @Inject constructor(
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/kotlin.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="../assets/app.js?v=20260620-4"></script>
+  <script src="../assets/app.js?v=20260621-1"></script>
 </body>
 </html>
